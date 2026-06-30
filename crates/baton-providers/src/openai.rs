@@ -6,8 +6,9 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use async_trait::async_trait;
 use baton_core::{ContentPart, ModelOutput, ModelRequest, Role, StopReason, ToolCall, Usage};
 use baton_host::{ModelAdapter, ModelSink};
@@ -20,6 +21,13 @@ use serde_json::{Value, json};
 const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
 const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:together";
 
+// Transport-level retry defaults (ARCHITECTURE: retries are the adapter's job).
+// 4 attempts = 1 initial try + up to 3 retries, with exponential backoff capped
+// so a flaky network or a transient 429/5xx recovers without a long stall.
+const DEFAULT_MAX_ATTEMPTS: u32 = 4;
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
+const RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
+
 /// An adapter for the OpenAI Chat Completions API (or any compatible endpoint
 /// via `OPENAI_BASE_URL`).
 pub struct OpenAiAdapter {
@@ -27,6 +35,7 @@ pub struct OpenAiAdapter {
     api_key: String,
     model: String,
     base_url: String,
+    max_attempts: u32,
 }
 
 impl OpenAiAdapter {
@@ -37,6 +46,7 @@ impl OpenAiAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: DEFAULT_BASE_URL.to_string(),
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
         }
     }
 
@@ -60,6 +70,7 @@ impl OpenAiAdapter {
             api_key,
             model,
             base_url,
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
         })
     }
 
@@ -73,6 +84,21 @@ impl OpenAiAdapter {
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
         self
+    }
+
+    /// Set the maximum number of attempts per model call (initial try plus
+    /// retries) for *transient* transport failures — network errors, HTTP 429,
+    /// and 5xx (default [`DEFAULT_MAX_ATTEMPTS`]). A value of `0` or `1` disables
+    /// retries. Non-429 4xx (semantic) errors are never retried.
+    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = max_attempts.max(1);
+        self
+    }
+
+    /// The maximum number of attempts per model call (see
+    /// [`with_max_attempts`](Self::with_max_attempts)).
+    pub fn max_attempts(&self) -> u32 {
+        self.max_attempts
     }
 
     /// The concrete model id this adapter calls.
@@ -178,6 +204,69 @@ impl OpenAiAdapter {
         }
         body
     }
+
+    /// Send the chat-completions request, retrying *transient* transport
+    /// failures with exponential backoff (capped at [`RETRY_MAX_DELAY`]) up to
+    /// [`Self::max_attempts`].
+    ///
+    /// Retried: connection/timeout errors, HTTP 429, and 5xx. Never retried:
+    /// 4xx other than 429 — those are semantic errors that won't fix themselves
+    /// (per CLAUDE.md, semantic errors are not the adapter's to retry). On a
+    /// successful (2xx) response the streaming body is returned untouched; the
+    /// stream itself is consumed once and not retried.
+    async fn send_with_retry(&self, body: &Value) -> anyhow::Result<reqwest::Response> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let mut attempt = 1;
+        loop {
+            let outcome = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(body)
+                .send()
+                .await;
+
+            let err = match outcome {
+                Ok(resp) if resp.status().is_success() => return Ok(resp),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    let err = anyhow::anyhow!("OpenAI returned {status}: {text}");
+                    // 429 and 5xx are transient; other 4xx are semantic and final.
+                    if !is_retriable_status(status) {
+                        return Err(err);
+                    }
+                    err
+                }
+                // Transport-level failures (connect/timeout/reset) are transient.
+                Err(e) => anyhow::Error::new(e).context("failed to send request to OpenAI"),
+            };
+
+            if attempt >= self.max_attempts {
+                return Err(err.context(format!("giving up after {attempt} attempt(s)")));
+            }
+            sleep(backoff_delay(attempt)).await;
+            attempt += 1;
+        }
+    }
+}
+
+/// Whether an HTTP status should be retried: `429 Too Many Requests` and any
+/// `5xx`. All other 4xx are semantic errors and are never retried.
+fn is_retriable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Exponential backoff for `attempt` (1-based), capped at [`RETRY_MAX_DELAY`].
+fn backoff_delay(attempt: u32) -> Duration {
+    let factor = 1u32.checked_shl(attempt - 1).unwrap_or(u32::MAX);
+    RETRY_BASE_DELAY.saturating_mul(factor).min(RETRY_MAX_DELAY)
+}
+
+/// Sleep indirection so the retry path stays host-side (tokio) without leaking
+/// into core; see CLAUDE.md (all IO/clock work lives in the host).
+async fn sleep(dur: Duration) {
+    tokio::time::sleep(dur).await;
 }
 
 #[async_trait]
@@ -188,20 +277,7 @@ impl ModelAdapter for OpenAiAdapter {
         sink: &ModelSink,
     ) -> anyhow::Result<(ModelOutput, Usage)> {
         let body = self.build_body(&request);
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context("failed to send request to OpenAI")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("OpenAI returned {status}: {text}");
-        }
+        let resp = self.send_with_retry(&body).await?;
 
         let mut acc = Accumulator::default();
         let mut buf: Vec<u8> = Vec::new();
@@ -514,6 +590,45 @@ mod tests {
     fn with_model_overrides_model() {
         let adapter = OpenAiAdapter::new("test-key", "original").with_model("replacement");
         assert_eq!(adapter.model(), "replacement");
+    }
+
+    #[test]
+    fn max_attempts_defaults_and_is_overridable() {
+        let adapter = OpenAiAdapter::new("test-key", "gpt-test");
+        assert_eq!(adapter.max_attempts(), DEFAULT_MAX_ATTEMPTS);
+        // Override is honored; 0 is clamped to at least 1 (one attempt, no retry).
+        assert_eq!(adapter.with_max_attempts(7).max_attempts(), 7);
+        assert_eq!(
+            OpenAiAdapter::new("test-key", "gpt-test")
+                .with_max_attempts(0)
+                .max_attempts(),
+            1
+        );
+    }
+
+    #[test]
+    fn only_429_and_5xx_are_retriable() {
+        use reqwest::StatusCode;
+        assert!(is_retriable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_retriable_status(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(is_retriable_status(StatusCode::BAD_GATEWAY));
+        assert!(is_retriable_status(StatusCode::SERVICE_UNAVAILABLE));
+        // Non-429 4xx are semantic and must not be retried.
+        assert!(!is_retriable_status(StatusCode::BAD_REQUEST));
+        assert!(!is_retriable_status(StatusCode::UNAUTHORIZED));
+        assert!(!is_retriable_status(StatusCode::NOT_FOUND));
+        assert!(!is_retriable_status(StatusCode::UNPROCESSABLE_ENTITY));
+        // 2xx is success, not a retry.
+        assert!(!is_retriable_status(StatusCode::OK));
+    }
+
+    #[test]
+    fn backoff_grows_exponentially_and_caps() {
+        assert_eq!(backoff_delay(1), RETRY_BASE_DELAY);
+        assert_eq!(backoff_delay(2), RETRY_BASE_DELAY * 2);
+        assert_eq!(backoff_delay(3), RETRY_BASE_DELAY * 4);
+        // A large attempt count saturates at the cap rather than overflowing.
+        assert_eq!(backoff_delay(100), RETRY_MAX_DELAY);
     }
 
     #[test]

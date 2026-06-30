@@ -43,17 +43,17 @@ Done:
   - [`Frontend`] trait + streaming `StdoutFrontend`.
   - `EngineBuilder` that assembles the brain's `StaticPolicy` from registered capabilities (their schemas → advertised tools; sensitive ones → gated set).
 - Capabilities (`baton-host::capabilities`): `shell` (streams stdout), `fs_read` (read-only, no permission), `fs_write`, `http`.
-- `baton-providers`: `OpenAiAdapter` — chat completions with streaming SSE, tool-call assembly, usage accounting, configurable base URL/model. Defaults target the **Hugging Face router** (`https://router.huggingface.co/v1`, `google/gemma-4-31B-it:together`); the API key resolves from `OPENAI_API_KEY` → `HF_TOKEN` → the Hugging Face token file read directly (`HF_TOKEN_PATH`, else `$HF_HOME/token`, else `~/.cache/huggingface/token`) → `hf auth token` (last resort, only if no token file is present). Reading the token file directly means a logged-in user needs no `hf` binary on `PATH`.
+- `baton-providers`: `OpenAiAdapter` — chat completions with streaming SSE, tool-call assembly, usage accounting, configurable base URL/model. Defaults target the **Hugging Face router** (`https://router.huggingface.co/v1`, `google/gemma-4-31B-it:together`); the API key resolves from `OPENAI_API_KEY` → `HF_TOKEN` → the Hugging Face token file read directly (`HF_TOKEN_PATH`, else `$HF_HOME/token`, else `~/.cache/huggingface/token`) → `hf auth token` (last resort, only if no token file is present). Reading the token file directly means a logged-in user needs no `hf` binary on `PATH`. Transport-level **retry with exponential backoff** (the adapter's job, per CLAUDE.md): transient failures — network/connect errors, HTTP 429, and 5xx — are retried with capped exponential backoff up to a configurable `max_attempts` (`with_max_attempts`, default 4); non-429 4xx are semantic errors and are never retried.
 - `baton-cli`: the `baton` binary. One-shot (`baton "prompt"`) or interactive REPL; `-y/--yes` for allow-all. Prints a startup banner (model · endpoint · mode).
 - CLI observability: the `Frontend` trait gained lifecycle hooks (model start/end + token usage, tool start with args, tool result, permission decision); `StdoutFrontend` renders them with ANSI colors (auto-disabled off a TTY / under `NO_COLOR`).
 - Streaming is the **only** model mode (explicit contract on `ModelAdapter`): adapters stream deltas live via the sink, then return the consolidated output. No non-streaming path exists.
 
 Refinement to `baton-core` made for real providers: the durable `ToolResult` now carries the originating model `tool_call` id, so projection emits provider-correct `tool_call_id` correlation. Added `ModelOutput::new`, `ModelRequest::new` and `SamplingParams` builders (host-facing structs are `#[non_exhaustive]`).
 
-Tests (17 total across the workspace):
+Tests (25 total across the workspace):
 
 - `baton-host/tests/end_to_end.rs` — a real multi-turn session driven through the tokio loop with a scripted model + the **real shell capability**; plus a denied-permission round-trip.
-- `baton-providers` — unit tests for request building + SSE accumulation, and `tests/streaming.rs` driving the adapter against a **local mock SSE server** (real reqwest streaming path).
+- `baton-providers` — unit tests for request building + SSE accumulation + retry classification/backoff, `tests/streaming.rs` driving the adapter against a **local mock SSE server** (real reqwest streaming path), and `tests/retry.rs` driving retries against a **local mock HTTP server** (transient 429/5xx retried to success, persistent 5xx gives up after `max_attempts`, 4xx not retried).
 
 **Exit criteria:**
 
