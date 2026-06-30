@@ -63,14 +63,14 @@
 
 **Goal.** Sessions are first-class artifacts.
 
-- `baton-replay`: persist a **trace** (ordered event stream + log + blob refs).
-- Trace file format (versioned, portable, shareable).
+- ✅ **P3-1 — `baton-replay` crate + trace format.** New host-side persistence crate owning the versioned, portable **trace** container: `Trace { meta, events, log, blobs }` — an integer `format_version` (rejects unknown future versions), the ordered host→brain `Event` stream (the replay *input*), the consolidated seq-stamped `LogEntry` log (the *truth*; `BrainState` is never stored, always rederivable by folding the log), and a `BlobManifest` of content-addressed `BlobRef`s (structure in place for the P3-2 blob store; bytes referenced, not inlined). `Trace::save`/`load` are the **only** fs touch in the trace story; `baton-core` stays sans-IO (`baton-replay` uses it as pure data only). Round-trips a Phase 1/2 session to disk and back, byte-for-byte equal.
+- Trace file format (versioned, portable, shareable). ✅ (plain JSON; `FORMAT_VERSION`; forward-compatible).
 - `baton replay <trace>` reconstructs commands bit-for-bit; an inspector to step through a session.
 - Blob store capability (disk for native) with content-addressed payloads.
 - Update CLI to resume from a trace
 
 **Exit criteria.**
-- Record a real Phase 1/2 session, replay it bit-for-bit.
+- Record a real Phase 1/2 session, replay it bit-for-bit. (P3-1 lands the trace format + round-trip; bit-for-bit *replay* through the brain is P3-3.)
 
 ---
 

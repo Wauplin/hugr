@@ -61,9 +61,12 @@ crates/baton-host/       # default native host (tokio, IO) — Phase 1
 
 crates/baton-providers/  # model adapters — OpenAiAdapter (streaming)
 crates/baton-cli/        # the `baton` binary (~10 lines on top of baton-host)
+
+crates/baton-replay/     # versioned, portable trace format (save/load) — Phase 3
+  src/lib.rs         # Trace { meta, events, log, blobs }; std::fs save/load
 ```
 
-The remaining crates in `ARCHITECTURE.md` §10 (`baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`, `baton-replay`) arrive in later phases. **Never add environmental dependencies to `baton-core`** to make a host easier; put them in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or another host), never in the core.
+The remaining crates in `ARCHITECTURE.md` §10 (`baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`) arrive in later phases. `baton-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `baton-core` as *pure data only* and never pulls IO into the core. **Never add environmental dependencies to `baton-core`** to make a host easier; put them in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or another host), never in the core.
 
 When extending the host: capabilities are uniform (no privileged built-ins — shell/fs/http are ordinary `Capability`s); a model call is "an effect the host provides" registered like a capability; transport errors (retries, 429s) are the adapter's job, semantic errors route back to the model as tool results.
 

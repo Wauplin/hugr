@@ -554,7 +554,9 @@ baton-wasm         # wasm-bindgen host glue for browser/extension.
 baton-py           # PyO3 bindings (poll/submit exposed).
 baton-js           # napi/wasm bindings for Node/Deno.
 baton-plugin-abi   # WASM component world definition + host loader.
-baton-replay       # record/replay + session inspection tooling.
+baton-replay       # versioned, portable TRACE format (save/load) + replay/inspect.
+                   # Host-side persistence: depends on baton-core as pure data,
+                   # may use std::fs — never pulls IO into the core. (Phase 3.)
 ```
 
 Dependency rule: **`baton-core` depends on nothing environmental.** Everything async/IO/provider-specific lives outside it.

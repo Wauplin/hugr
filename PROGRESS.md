@@ -117,6 +117,36 @@ Tests (57 total across the workspace, +7):
 
 [`Coalescer`]: crates/baton-host/src/coalesce.rs
 
+## Phase 3 — Traces: save, replay, inspect (in progress)
+
+**Goal:** sessions are first-class artifacts (record, replay, resume).
+
+### P3-1 — `baton-replay` crate + trace format ✅
+
+New crate `baton-replay` owning the versioned, portable on-disk **trace** format (ARCHITECTURE §12). A trace is the saved form of a session: because the brain is a pure fold over an ordered event stream, the trace is just *that stream made durable*. P3-3 (replay) and P3-4 (resume) build on this container.
+
+- `baton-replay` (`src/lib.rs`): the [`Trace`] container — `{ meta, events, log, blobs }`:
+  - `meta: TraceMeta` — `{ codename, format_version, created_at }`. `FORMAT_VERSION` is a single integer (currently `1`) bumped on any breaking layout change; `Trace::from_json`/`load` reject an unknown *future* version with `TraceError::UnsupportedVersion` rather than mis-parsing (forward-compat).
+  - `events: Vec<baton_core::Event>` — the ordered host→brain stream, the **input** to replay (re-feed into a fresh brain → identical commands, §6.3).
+  - `log: Vec<baton_core::LogEntry>` — the consolidated, seq-stamped durable log, the **truth** (one record per logical message/tool-result, §4.5). `BrainState` is **never** stored — always rederivable by folding `log` (§12.1).
+  - `blobs: BlobManifest` — `Vec<BlobRef { hash, len, media }>`, references to content-addressed payloads (bytes live elsewhere). Empty for now; the structure is in place so the format is stable for the P3-2 blob store. Blobs are referenced, not inlined.
+- **IO boundary kept out of core.** `baton-replay` depends on `baton-core` only as pure data (serializing its `serde`-derived types) and is the *only* place in the trace story that uses `std::fs` (`Trace::save`/`load`). `cargo tree -p baton-core` stays free of any environmental deps — only `serde`/`serde_json`. Errors are a typed `TraceError` (`Io`/`Serde`/`UnsupportedVersion`).
+- Constructors throughout (`Trace::new`/`with_blobs`, `TraceMeta::new`, `BlobRef::new`, `BlobManifest::new`/`push`); every public struct/enum is `#[non_exhaustive]` (narrow-waist, forward-compatible).
+- Trace files are plain JSON (`to_json`/`from_json` are pure; `save`/`load` add the fs boundary), so a trace recorded on a server replays in a browser or a Python host — portability (§12.3).
+
+Tests (`baton-replay/tests/roundtrip.rs`, 5 passing; 62 total across the workspace, +5): the headline **write-then-load** round-trip persists a realistic Phase 1/2 session (user → model+tool-call → tool result → model → done, with a tick, permission decision, streamed delta, and `OpEnded`/`OpMeta` cost metadata) to disk and asserts the reconstructed `Trace` is byte-for-byte equal; an in-memory JSON round-trip; an empty-session round-trip; a blob-manifest round-trip; and a rejection of an unsupported future `format_version`.
+
+**Trace format shape (for P3-2/P3-3/P3-4 to consume):**
+
+```text
+Trace { meta: TraceMeta, events: Vec<Event>, log: Vec<LogEntry>, blobs: BlobManifest }
+TraceMeta { codename: String, format_version: u32, created_at: Option<u64> }
+BlobManifest { refs: Vec<BlobRef> }
+BlobRef { hash: String, len: u64, media: String }
+```
+
+[`Trace`]: crates/baton-replay/src/lib.rs
+
 [`Engine`]: crates/baton-host/src/engine.rs
 [`Capability`]: crates/baton-host/src/capability.rs
 [`ModelAdapter`]: crates/baton-host/src/model.rs
