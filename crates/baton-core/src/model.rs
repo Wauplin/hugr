@@ -245,18 +245,38 @@ pub enum StopReason {
 }
 
 /// Authoritative token accounting returned by the provider after a call.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `input_tokens`/`output_tokens` are the only fields the brain (and the host's
+/// budgeting) ever needs as numbers. Anything richer the provider reports —
+/// notably **cost**, which the brain never branches on — rides in the opaque
+/// `extra` field (narrow-waist passthrough, ARCHITECTURE §2.4). The brain stores
+/// and forwards `extra` verbatim; only the host (e.g. a metrics front-end) reads
+/// it. Adapters that learn real cost from the router response stash it there
+/// rather than baking a cost type into the core.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Provider-reported extras the brain never interprets (e.g. cost). Defaults
+    /// to `Value::Null` when the adapter has nothing to add.
+    pub extra: Value,
 }
 
 impl Usage {
+    /// Token-only usage; `extra` defaults to null.
     pub fn new(input_tokens: u64, output_tokens: u64) -> Self {
         Self {
             input_tokens,
             output_tokens,
+            extra: Value::Null,
         }
+    }
+
+    /// Attach opaque provider extras (e.g. a `{ "cost": … }` object). The brain
+    /// forwards this untouched; only the host reads it.
+    pub fn with_extra(mut self, extra: Value) -> Self {
+        self.extra = extra;
+        self
     }
 }

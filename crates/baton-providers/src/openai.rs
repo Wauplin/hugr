@@ -279,7 +279,10 @@ impl ModelAdapter for OpenAiAdapter {
         let body = self.build_body(&request);
         let resp = self.send_with_retry(&body).await?;
 
-        let mut acc = Accumulator::default();
+        let mut acc = Accumulator {
+            model: self.model.clone(),
+            ..Accumulator::default()
+        };
         let mut buf: Vec<u8> = Vec::new();
         let mut stream = resp.bytes_stream();
 
@@ -315,7 +318,15 @@ struct Accumulator {
     reasoning: String,
     tool_calls: BTreeMap<u64, ToolAccum>,
     stop: Option<StopReason>,
-    usage: Usage,
+    input_tokens: u64,
+    output_tokens: u64,
+    /// Real cost (USD) read from the router's response, when it reports one. The
+    /// HF router (and some OpenAI-compatible gateways) include this in the final
+    /// `usage` chunk; when present we use it verbatim instead of guessing.
+    reported_cost: Option<f64>,
+    /// The concrete model id, so the table fallback can look up a price when the
+    /// response carries no cost.
+    model: String,
 }
 
 #[derive(Default)]
@@ -329,15 +340,17 @@ struct ToolAccum {
 impl Accumulator {
     fn ingest(&mut self, value: &Value, sink: &ModelSink) {
         if let Some(usage) = value.get("usage").filter(|u| !u.is_null()) {
-            let input = usage
+            self.input_tokens = usage
                 .get("prompt_tokens")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            let output = usage
+            self.output_tokens = usage
                 .get("completion_tokens")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            self.usage = Usage::new(input, output);
+            if let Some(cost) = extract_cost(usage) {
+                self.reported_cost = Some(cost);
+            }
         }
 
         let Some(choice) = value.get("choices").and_then(|c| c.get(0)) else {
@@ -413,8 +426,72 @@ impl Accumulator {
         let reasoning = (!self.reasoning.is_empty()).then_some(self.reasoning);
         let stop = self.stop.unwrap_or(StopReason::EndTurn);
         let output = ModelOutput::new(self.text, reasoning, calls, stop);
-        (output, self.usage)
+
+        // Prefer the router's real cost; only fall back to the static price
+        // table when the response carried none (Task D).
+        let usage = build_usage(
+            self.input_tokens,
+            self.output_tokens,
+            self.reported_cost,
+            &self.model,
+        );
+        (output, usage)
     }
+}
+
+/// Pull a USD cost out of a provider `usage` object. Different OpenAI-compatible
+/// gateways spell it differently, so we accept the common shapes: a top-level
+/// `cost`/`total_cost`, or a nested `cost_details.total_cost`. Returns `None`
+/// when the response carries no cost at all.
+fn extract_cost(usage: &Value) -> Option<f64> {
+    usage
+        .get("cost")
+        .or_else(|| usage.get("total_cost"))
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            usage
+                .get("cost_details")
+                .and_then(|d| d.get("total_cost").or_else(|| d.get("cost")))
+                .and_then(Value::as_f64)
+        })
+}
+
+/// Build [`Usage`], stashing cost in its opaque `extra` as `{ "cost": <usd>,
+/// "cost_source": "router" | "estimated" }`. The brain never reads this; only a
+/// host metrics front-end does (narrow-waist passthrough, ARCHITECTURE §2.4).
+fn build_usage(input_tokens: u64, output_tokens: u64, reported: Option<f64>, model: &str) -> Usage {
+    let usage = Usage::new(input_tokens, output_tokens);
+    match reported {
+        // The router told us the real cost — use it, no table guess.
+        Some(cost) => usage.with_extra(json!({ "cost": cost, "cost_source": "router" })),
+        // No cost in the response: estimate from the static price table, if the
+        // model is known. Unknown models get no cost rather than a wrong guess.
+        None => match estimate_cost(input_tokens, output_tokens, model) {
+            Some(cost) => usage.with_extra(json!({ "cost": cost, "cost_source": "estimated" })),
+            None => usage,
+        },
+    }
+}
+
+/// Static fallback prices in USD **per million tokens** `(input, output)`, used
+/// only when the router response omits cost. Deliberately tiny — real cost from
+/// the provider is always preferred; this is a best-effort estimate.
+fn table_price(model: &str) -> Option<(f64, f64)> {
+    // Match on a normalized id so `:provider` routing suffixes don't defeat it.
+    let id = model.split(':').next().unwrap_or(model);
+    match id {
+        "gpt-4o" => Some((2.50, 10.00)),
+        "gpt-4o-mini" => Some((0.15, 0.60)),
+        _ => None,
+    }
+}
+
+/// Estimate USD cost from token counts and the static [`table_price`]. Returns
+/// `None` for models absent from the table (no guess beats a wrong guess).
+fn estimate_cost(input_tokens: u64, output_tokens: u64, model: &str) -> Option<f64> {
+    let (in_price, out_price) = table_price(model)?;
+    let cost = (input_tokens as f64 * in_price + output_tokens as f64 * out_price) / 1_000_000.0;
+    Some(cost)
 }
 
 fn map_stop(finish_reason: &str) -> StopReason {
@@ -717,6 +794,97 @@ mod tests {
             deltas += 1;
         }
         assert!(deltas >= 2, "expected streamed text deltas");
+    }
+
+    #[tokio::test]
+    async fn cost_from_response_is_used_verbatim_without_a_table_guess() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = ModelSink::new(baton_core::OpId(0), tx);
+
+        // The router reports a real cost in the final usage chunk. Use a model
+        // that *is* in the table so we can prove the table is NOT consulted.
+        let mut acc = Accumulator {
+            model: "gpt-4o".into(),
+            ..Accumulator::default()
+        };
+        acc.ingest(
+            &json!({ "choices": [{ "delta": { "content": "hi" } }] }),
+            &sink,
+        );
+        acc.ingest(
+            &json!({ "choices": [], "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 1000,
+                "cost": 0.000123
+            } }),
+            &sink,
+        );
+
+        let (_output, usage) = acc.finish(&sink);
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 1000);
+        // Cost comes straight from the response, tagged as router-sourced.
+        assert_eq!(usage.extra["cost"], json!(0.000123));
+        assert_eq!(usage.extra["cost_source"], json!("router"));
+    }
+
+    #[tokio::test]
+    async fn cost_falls_back_to_table_when_response_omits_it() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = ModelSink::new(baton_core::OpId(0), tx);
+
+        // No cost in the response → estimate from the static table for gpt-4o:
+        // 1M in @ $2.50 + 1M out @ $10.00 = $12.50.
+        let mut acc = Accumulator {
+            model: "gpt-4o".into(),
+            ..Accumulator::default()
+        };
+        acc.ingest(
+            &json!({ "choices": [], "usage": {
+                "prompt_tokens": 1_000_000,
+                "completion_tokens": 1_000_000
+            } }),
+            &sink,
+        );
+
+        let (_output, usage) = acc.finish(&sink);
+        assert_eq!(usage.extra["cost"], json!(12.5));
+        assert_eq!(usage.extra["cost_source"], json!("estimated"));
+    }
+
+    #[tokio::test]
+    async fn unknown_model_without_reported_cost_has_no_cost() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = ModelSink::new(baton_core::OpId(0), tx);
+
+        // Not in the table and no cost in the response → no guess at all.
+        let mut acc = Accumulator {
+            model: "google/gemma-4-31B-it".into(),
+            ..Accumulator::default()
+        };
+        acc.ingest(
+            &json!({ "choices": [], "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20
+            } }),
+            &sink,
+        );
+
+        let (_output, usage) = acc.finish(&sink);
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
+        assert!(usage.extra.is_null(), "no cost should be guessed");
+    }
+
+    #[test]
+    fn extract_cost_accepts_common_shapes() {
+        assert_eq!(extract_cost(&json!({ "cost": 0.5 })), Some(0.5));
+        assert_eq!(extract_cost(&json!({ "total_cost": 0.25 })), Some(0.25));
+        assert_eq!(
+            extract_cost(&json!({ "cost_details": { "total_cost": 0.75 } })),
+            Some(0.75)
+        );
+        assert_eq!(extract_cost(&json!({ "prompt_tokens": 5 })), None);
     }
 
     #[tokio::test]
