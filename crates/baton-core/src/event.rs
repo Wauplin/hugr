@@ -1,0 +1,129 @@
+//! Events: the host → brain half of the contract.
+//!
+//! An [`Event`] is something that happened, fed into the brain's inbox. The
+//! host merges many concurrent sources (model stream, shell, user, timers) into
+//! one ordered, sequence-stamped stream; the brain reduces them one at a time,
+//! atomically. `#[non_exhaustive]` so new variants don't break hosts.
+
+use serde::{Deserialize, Serialize};
+
+use crate::model::{ModelDelta, ModelOutput, Usage};
+use crate::primitives::{ObjectKey, OpId, Timestamp, Value};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Event {
+    /// New conversational input. May arrive **at any time**, including mid-turn;
+    /// the reducer consults `mode` (ARCHITECTURE §4.6). `content` is opaque/rich.
+    UserInput {
+        content: Value,
+        mode: SteerMode,
+    },
+    /// Pure control signal: cancel current activity, no new content (e.g. ESC).
+    UserAbort,
+
+    // --- model streaming (transport only; never logged) ---------------------
+    ModelDelta {
+        op: OpId,
+        delta: ModelDelta,
+    },
+    /// The authoritative, consolidated result. The brain's logic keys off this.
+    ModelDone {
+        op: OpId,
+        output: ModelOutput,
+        usage: Usage,
+    },
+    ModelError {
+        op: OpId,
+        error: Value,
+    },
+
+    // --- capability results --------------------------------------------------
+    /// A streamed chunk (transport only), e.g. a line of stdout.
+    CapabilityChunk {
+        op: OpId,
+        chunk: Value,
+    },
+    /// A capability finished. `version` carries the optimistic-concurrency
+    /// envelope (ARCHITECTURE §7.3) when the op read/refreshed a versioned object.
+    CapabilityDone {
+        op: OpId,
+        result: Value,
+        version: Option<VersionRef>,
+    },
+    /// A capability failed. `conflict` is set when the host's atomic CAS
+    /// rejected a stale mutation.
+    CapabilityError {
+        op: OpId,
+        error: Value,
+        conflict: Option<VersionRef>,
+    },
+
+    // --- sub-agents (full handling lands in Phase 6) -------------------------
+    AgentDone {
+        op: OpId,
+        result: Value,
+    },
+    AgentError {
+        op: OpId,
+        error: Value,
+    },
+
+    // --- brain asks ----------------------------------------------------------
+    UserAnswer {
+        op: OpId,
+        answer: Value,
+    },
+    PermissionDecision {
+        op: OpId,
+        decision: Decision,
+    },
+
+    /// An op the host aborted (in response to a [`Cancel`](crate::Command::Cancel),
+    /// or externally).
+    OpCancelled {
+        op: OpId,
+    },
+
+    // --- injected nondeterminism --------------------------------------------
+    /// Injected time. The brain stamps log entries with the latest `now`.
+    Tick {
+        now: Timestamp,
+    },
+}
+
+/// How conversational input is handled when it arrives mid-turn (ARCHITECTURE
+/// §4.6). The default is [`Queue`](SteerMode::Queue) (interrupt is reversible;
+/// an accidental interrupt would discard in-flight work).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SteerMode {
+    /// Append the input; process it at the next turn boundary. Non-disruptive.
+    #[default]
+    Queue,
+    /// Cancel in-flight ops, then start a fresh turn that sees both the partial
+    /// work and the new instruction.
+    Interrupt,
+    /// Add to context; the current op finishes and the next model call sees it.
+    AppendAndContinue,
+}
+
+/// A policy's decision on a permission request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Decision {
+    Allow,
+    Deny { reason: String },
+}
+
+/// Optimistic-concurrency envelope for stateful capabilities (ARCHITECTURE
+/// §7.3). Values are opaque to the brain — compared by equality, never parsed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct VersionRef {
+    pub object: ObjectKey,
+    pub version: Version,
+}
+
+/// An opaque version token: content hash / etag / git sha / row xmin / …
+pub type Version = String;

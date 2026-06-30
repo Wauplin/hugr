@@ -1,0 +1,16 @@
+[package]
+name = "baton-core"
+description = "The sans-IO, pure-reducer brain of the Baton agent harness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# serde/serde_json are pure data — NOT environmental (no IO, no runtime). They
+# carry the opaque `Value` payloads and make the log/trace serializable. The
+# hard rule (ARCHITECTURE §10) is "no tokio, no reqwest, no fs in baton-core";
+# data-only crates are fine and necessary for the trace work in later phases.
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -31,7 +31,7 @@
 **Goal.** A real, usable terminal agent driven by the Phase 0 core.
 
 - `baton-host`: tokio driver loop (`poll` / `next_event` / `submit`).
-- One provider adapter (Anthropic) in `baton-providers`, streaming model deltas.
+- One provider adapter (OpenAI chat completion) in `baton-providers`, streaming model deltas.
 - Capabilities: `shell`, `fs read/write`, `http` — all via the uniform `Capability` interface (no privileged built-ins).
 - Interactive `Policy` (prompts the user) + a `-y/--yes` style allow mode.
 - Minimal TUI/stdout front-end consuming `OutputEvent`s.
