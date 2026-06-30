@@ -5,6 +5,7 @@
 //! [`ModelSink`], and returns the consolidated [`ModelOutput`] + [`Usage`].
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use async_trait::async_trait;
@@ -41,8 +42,10 @@ impl OpenAiAdapter {
 
     /// Build from the environment:
     ///
-    /// - **API key:** `OPENAI_API_KEY`, else `HF_TOKEN`, else the output of
-    ///   `hf auth token` if the `hf` CLI is installed and logged in.
+    /// - **API key:** `OPENAI_API_KEY`, else `HF_TOKEN`, else the Hugging Face
+    ///   token file (`HF_TOKEN_PATH`, else `$HF_HOME/token`, else
+    ///   `~/.cache/huggingface/token`), else the output of `hf auth token` if
+    ///   the `hf` CLI is installed and logged in.
     /// - **Model:** `OPENAI_MODEL` (default `google/gemma-4-31B-it:together`).
     /// - **Base URL:** `OPENAI_BASE_URL` (default the Hugging Face router).
     pub fn from_env() -> anyhow::Result<Self> {
@@ -365,8 +368,9 @@ fn stringify(value: &Value) -> String {
     }
 }
 
-/// Resolve an API key from, in order: `OPENAI_API_KEY`, `HF_TOKEN`, then the
-/// `hf` CLI's stored token. Returns `None` if none are available.
+/// Resolve an API key from, in order: `OPENAI_API_KEY`, `HF_TOKEN`, the Hugging
+/// Face token file read directly, then (last resort) the `hf` CLI's stored
+/// token. Returns `None` if none are available.
 fn resolve_api_key() -> Option<String> {
     for var in ["OPENAI_API_KEY", "HF_TOKEN"] {
         if let Ok(value) = std::env::var(var) {
@@ -376,7 +380,51 @@ fn resolve_api_key() -> Option<String> {
             }
         }
     }
+    // Read the token file directly (mirrors `huggingface_hub`) before paying
+    // the cost of shelling out to `hf auth token`.
+    if let Some(token) = hf_token_file().and_then(read_token_file) {
+        return Some(token);
+    }
     hf_cli_token()
+}
+
+/// Infer the path to the Hugging Face token file the same way `huggingface_hub`
+/// does: `HF_TOKEN_PATH` if set, else `$HF_HOME/token`, else
+/// `~/.cache/huggingface/token`. Returns `None` only if no home directory can
+/// be determined and the path can't otherwise be inferred.
+fn hf_token_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("HF_TOKEN_PATH") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    if let Ok(home) = std::env::var("HF_HOME") {
+        let home = home.trim();
+        if !home.is_empty() {
+            return Some(PathBuf::from(home).join("token"));
+        }
+    }
+    let cache = home_dir()?.join(".cache").join("huggingface");
+    Some(cache.join("token"))
+}
+
+/// The user's home directory, from `$HOME` (Unix) or `$USERPROFILE` (Windows).
+fn home_dir() -> Option<PathBuf> {
+    for var in ["HOME", "USERPROFILE"] {
+        if let Ok(home) = std::env::var(var) {
+            if !home.is_empty() {
+                return Some(PathBuf::from(home));
+            }
+        }
+    }
+    None
+}
+
+/// Read and trim a token file, returning `None` if it is missing or empty.
+fn read_token_file(path: PathBuf) -> Option<String> {
+    let token = std::fs::read_to_string(path).ok()?.trim().to_string();
+    (!token.is_empty()).then_some(token)
 }
 
 /// The token stored by the `hf` CLI (`hf auth token`), if it is installed and
@@ -466,6 +514,56 @@ mod tests {
     fn with_model_overrides_model() {
         let adapter = OpenAiAdapter::new("test-key", "original").with_model("replacement");
         assert_eq!(adapter.model(), "replacement");
+    }
+
+    #[test]
+    fn token_file_path_honors_overrides_in_precedence_order() {
+        // `set_var`/`remove_var` mutate process-global state; serialize this
+        // test against itself and snapshot/restore the vars we touch.
+        use std::sync::Mutex;
+        static GUARD: Mutex<()> = Mutex::new(());
+        let _lock = GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved: Vec<(&str, Option<String>)> =
+            ["HF_TOKEN_PATH", "HF_HOME", "HOME", "USERPROFILE"]
+                .iter()
+                .map(|&k| (k, std::env::var(k).ok()))
+                .collect();
+        let restore = || {
+            for (k, v) in &saved {
+                match v {
+                    Some(val) => unsafe { std::env::set_var(k, val) },
+                    None => unsafe { std::env::remove_var(k) },
+                }
+            }
+        };
+
+        unsafe {
+            std::env::set_var("HOME", "/home/tester");
+            std::env::remove_var("USERPROFILE");
+            std::env::remove_var("HF_HOME");
+            std::env::remove_var("HF_TOKEN_PATH");
+        }
+
+        // 1. Default: ~/.cache/huggingface/token.
+        assert_eq!(
+            hf_token_file(),
+            Some(PathBuf::from("/home/tester/.cache/huggingface/token")),
+        );
+
+        // 2. HF_HOME takes precedence over the default cache dir.
+        unsafe { std::env::set_var("HF_HOME", "/custom/hf") };
+        assert_eq!(hf_token_file(), Some(PathBuf::from("/custom/hf/token")));
+
+        // 3. HF_TOKEN_PATH wins over HF_HOME (and the default).
+        unsafe { std::env::set_var("HF_TOKEN_PATH", "/secrets/hf-token") };
+        assert_eq!(hf_token_file(), Some(PathBuf::from("/secrets/hf-token")));
+
+        // Blank overrides are ignored (fall through to the next rule).
+        unsafe { std::env::set_var("HF_TOKEN_PATH", "  ") };
+        assert_eq!(hf_token_file(), Some(PathBuf::from("/custom/hf/token")));
+
+        restore();
     }
 
     #[tokio::test]
