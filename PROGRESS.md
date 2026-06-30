@@ -147,6 +147,23 @@ BlobRef { hash: String, len: u64, media: String }
 
 [`Trace`]: crates/baton-replay/src/lib.rs
 
+### P3-2 — Blob store capability ✅
+
+A content-addressed, disk-backed blob store (ARCHITECTURE §3.3) so large tool outputs / inputs are referenced by digest from the trace instead of inlined — keeping the log small and a trace shippable with or without its bytes. The store produces `BlobRef`s in the exact shape the trace's `BlobManifest` already carries (P3-1), so a large payload offloaded by digest rehydrates on load.
+
+- `baton-replay` ([`BlobStore`]): a disk-backed, content-addressed store rooted at a configurable directory. The key of a blob is the SHA-256 of its bytes, rendered `"sha256:<hex>"` (matching the manifest's `BlobRef.hash`). `BlobStore::put(bytes, media) -> BlobRef` writes the bytes to a file named by their hash (the `:` swapped for a filesystem-friendly `-`) and returns the ref; `get(hash) -> Vec<u8>` rehydrates them, returning `TraceError::BlobNotFound` (new variant) for an absent hash; `contains`/`root`/`hash` round it out. **Content-addressing gives dedup for free:** identical content lands on the same path, so a repeat `put` is a no-op (the file isn't rewritten). `BlobStore::hash` is pure (no IO); the writes/reads are this host-side crate's `std::fs` (never `baton-core`). The new `sha2` workspace dep is host-side only. `BlobStore` is `#[non_exhaustive]` with a `new` constructor (narrow-waist).
+- `baton-host` (`capabilities::Blob`): wraps a `BlobStore` as an **ordinary `Capability`** named `blob` — no privileged built-in, registered exactly like `shell`/`fs`/`http`. Args/results are kept **opaque `Value`** (ARCHITECTURE §2.4): `{ "op": "put", "content", "media"? }` → `{ "hash", "len", "media" }`, and `{ "op": "get", "hash" }` → `{ "hash", "content" }`. Like `fs_read` it is read-only/idempotent so it does not gate on a permission round-trip. Constructors `Blob::new(root)` / `Blob::with_store(store)` (share one store between the capability and trace persistence) / `store()` accessor. A bad `op`, a missing arg, an absent hash, or non-UTF-8 bytes are returned as **semantic errors** (`Err(Value)`) the model can react to — never transport failures (ARCHITECTURE §5.4). `baton-host` gained a `baton-replay` dependency for the store.
+
+Tests (72 total across the workspace, +10):
+
+- `baton-replay` `blob` unit tests — put/get round-trip of a 1 MiB payload (rehydrated bytes equal the original); same-content dedup (same hash, exactly one file on disk; different content → different hash); the hash matches the known `SHA-256("abc")` constant and is stable; a missing blob is `BlobNotFound` and `contains` is `false`.
+- `baton-replay/tests/blob_store.rs` — the **manifest integration**: a ~500 KiB payload offloaded to the store, referenced by a single `BlobRef` in a `Trace`'s `BlobManifest`; the trace JSON is an order of magnitude smaller than the payload (referenced, not inlined); round-tripping the trace and rehydrating from the manifest's hash yields the original bytes; plus a large-payload dedup check.
+- `baton-host` `capabilities::blob` unit tests — through the real `Capability::invoke`: a 200 KB put/get round-trip (and the stored ref is reachable from `store().contains`); same content → same hash; a missing-hash `get` and an unknown `op` are semantic `Err`s.
+
+**Trace integration (for P3-3/P3-4 to consume):** the recorder offloads a large tool result with `BlobStore::put`, pushes the returned `BlobRef` into the `Trace`'s `BlobManifest`, and stores the small ref in place of the bytes; replay/resume rehydrate the bytes with `BlobStore::get(ref.hash)`. The capability and the persistence layer share one `BlobStore` (via `Blob::with_store`) so they agree on the store root and hashes.
+
+[`BlobStore`]: crates/baton-replay/src/blob.rs
+
 [`Engine`]: crates/baton-host/src/engine.rs
 [`Capability`]: crates/baton-host/src/capability.rs
 [`ModelAdapter`]: crates/baton-host/src/model.rs

@@ -66,7 +66,7 @@
 - ✅ **P3-1 — `baton-replay` crate + trace format.** New host-side persistence crate owning the versioned, portable **trace** container: `Trace { meta, events, log, blobs }` — an integer `format_version` (rejects unknown future versions), the ordered host→brain `Event` stream (the replay *input*), the consolidated seq-stamped `LogEntry` log (the *truth*; `BrainState` is never stored, always rederivable by folding the log), and a `BlobManifest` of content-addressed `BlobRef`s (structure in place for the P3-2 blob store; bytes referenced, not inlined). `Trace::save`/`load` are the **only** fs touch in the trace story; `baton-core` stays sans-IO (`baton-replay` uses it as pure data only). Round-trips a Phase 1/2 session to disk and back, byte-for-byte equal.
 - Trace file format (versioned, portable, shareable). ✅ (plain JSON; `FORMAT_VERSION`; forward-compatible).
 - `baton replay <trace>` reconstructs commands bit-for-bit; an inspector to step through a session.
-- Blob store capability (disk for native) with content-addressed payloads.
+- ✅ **P3-2 — Blob store capability.** A content-addressed, disk-backed `BlobStore` (SHA-256 keys, `"sha256:<hex>"`) lives in `baton-replay` and produces `BlobRef`s compatible with the trace's `BlobManifest`. `baton-host` wraps it in an ordinary `blob` `Capability` (not a privileged built-in — registered like `shell`/`fs`/`http`, args/results opaque `Value`). Same content dedupes to one file; a large tool result is offloaded by digest and rehydrated on load. `baton-core` stays sans-IO (the new `sha2` dep is host-side only).
 - Update CLI to resume from a trace
 
 **Exit criteria.**

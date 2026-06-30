@@ -57,13 +57,14 @@ crates/baton-host/       # default native host (tokio, IO) — Phase 1
   src/model.rs       # ModelAdapter trait + ModelSink + registry
   src/policy.rs      # host permission Policy: AllowAll/DenyAll/Interactive
   src/frontend.rs    # Frontend trait + StdoutFrontend (ANSI colors)
-  src/capabilities/  # shell, fs_read, fs_write, http
+  src/capabilities/  # shell, fs_read, fs_write, http, blob (content-addressed store)
 
 crates/baton-providers/  # model adapters — OpenAiAdapter (streaming)
 crates/baton-cli/        # the `baton` binary (~10 lines on top of baton-host)
 
 crates/baton-replay/     # versioned, portable trace format (save/load) — Phase 3
   src/lib.rs         # Trace { meta, events, log, blobs }; std::fs save/load
+  src/blob.rs        # BlobStore: disk-backed content-addressed (sha256) store
 ```
 
 The remaining crates in `ARCHITECTURE.md` §10 (`baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`) arrive in later phases. `baton-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `baton-core` as *pure data only* and never pulls IO into the core. **Never add environmental dependencies to `baton-core`** to make a host easier; put them in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or another host), never in the core.

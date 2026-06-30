@@ -207,6 +207,8 @@ Tool outputs and large inputs are stored by hash; the log holds the reference. T
 pub struct BlobRef { hash: Hash, len: u64, media: MediaType }
 ```
 
+Implemented (P3-2): `baton-replay::BlobStore` is the disk-backed, content-addressed store (SHA-256 keys, `"sha256:<hex>"`; identical content dedupes to one file). It produces `BlobRef`s in the exact shape the trace's `BlobManifest` carries, so a large payload offloaded by digest rehydrates on load. `baton-host` exposes it as an ordinary `blob` capability (not a privileged built-in; opaque `Value` args/results) — a browser host can swap in a different store. The store's `std::fs` IO lives in the host-side persistence crate; `baton-core` stays sans-IO.
+
 ### 3.4 Compaction is a model op, not a function
 
 `ContextPolicy::project` is **pure and synchronous** — `log -> ModelRequest`. It only *reads* what's in the log (including any existing summaries) and decides include/evict/reference. It must never block or call a model, or the brain stops being a pure state machine.

@@ -9,6 +9,9 @@ rust-version.workspace = true
 
 [dependencies]
 baton-core = { workspace = true }
+# The content-addressed BlobStore (disk-backed) lives in the persistence crate;
+# the host wraps it in an ordinary Capability. baton-core is untouched.
+baton-replay = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 async-trait = { workspace = true }

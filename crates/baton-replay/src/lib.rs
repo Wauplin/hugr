@@ -26,7 +26,7 @@
 //! ├── meta: TraceMeta        // format version, codename, created-at
 //! ├── events: Vec<Event>     // the ordered host→brain stream (the replay input)
 //! ├── log:    Vec<LogEntry>  // the consolidated, seq-stamped durable log (the truth)
-//! └── blobs:  BlobManifest   // refs to content-addressed payloads (P3-2; not inlined)
+//! └── blobs:  BlobManifest   // refs to content-addressed payloads (BlobStore; not inlined)
 //! ```
 //!
 //! Two complementary views are stored deliberately:
@@ -57,6 +57,9 @@ use std::path::Path;
 use baton_core::{Event, LogEntry};
 use serde::{Deserialize, Serialize};
 
+mod blob;
+pub use blob::BlobStore;
+
 /// The current trace container format version. Bump on any breaking change to
 /// the [`Trace`] layout; older readers reject newer versions (see
 /// [`TraceError::UnsupportedVersion`]).
@@ -79,9 +82,8 @@ pub struct Trace {
     pub events: Vec<Event>,
     /// The consolidated, seq-stamped durable log — the *truth* (§4.5/§12.1).
     pub log: Vec<LogEntry>,
-    /// References to content-addressed payloads (the bytes live elsewhere). The
-    /// concrete blob store lands in P3-2; the manifest structure is here so the
-    /// format is stable for it.
+    /// References to content-addressed payloads (the bytes live in the
+    /// [`BlobStore`], not inlined here).
     pub blobs: BlobManifest,
 }
 
@@ -117,7 +119,7 @@ impl Default for TraceMeta {
 
 /// A reference to a content-addressed payload (ARCHITECTURE §3.3). Large tool
 /// outputs / inputs are stored by hash; the log carries the reference, the bytes
-/// live in a blob store (P3-2). The trace ships with or without those bytes.
+/// live in the [`BlobStore`]. The trace ships with or without those bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BlobRef {
@@ -140,8 +142,9 @@ impl BlobRef {
     }
 }
 
-/// The set of blobs a trace references. Empty until P3-2 wires the blob store;
-/// present now so the container layout is stable for it.
+/// The set of blobs a trace references. Populated by the host as it offloads
+/// large payloads to the content-addressed [`BlobStore`]; the bytes are never
+/// inlined here.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BlobManifest {
@@ -238,4 +241,8 @@ pub enum TraceError {
     /// The trace was written by a newer, incompatible format version.
     #[error("unsupported trace format version {found} (this build supports up to {supported})")]
     UnsupportedVersion { found: u32, supported: u32 },
+
+    /// A blob referenced by hash is not present in the [`BlobStore`].
+    #[error("blob not found in store: {hash}")]
+    BlobNotFound { hash: String },
 }

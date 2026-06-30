@@ -39,6 +39,8 @@ async-trait = "0.1"
 anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
+# Content-addressed blob hashing (host-side persistence; never in baton-core).
+sha2 = "0.10"
 
 # Release profile leaning toward the "tiny footprint" goal (ARCHITECTURE §11).
 # NOTE: `panic = "abort"` is intentionally NOT set here — it conflicts with the
