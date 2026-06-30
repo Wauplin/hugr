@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use baton_core::{Command, Event, ModelSelector};
 use baton_host::capabilities::{FsRead, FsWrite, Http, Shell};
 use baton_host::policy::{AllowAll, Interactive};
-use baton_host::{Engine, Inspector, Policy, StdoutFrontend, Trace};
+use baton_host::{Engine, EngineBuilder, Inspector, Policy, StdoutFrontend, Trace};
 use baton_providers::OpenAiAdapter;
 use clap::{Parser, Subcommand};
 
@@ -124,34 +124,20 @@ async fn main() -> Result<()> {
 
 /// Drive a live agent session (one-shot or interactive), optionally recording it.
 async fn run_session(cli: Cli) -> Result<()> {
-    let policy: Arc<dyn Policy> = if cli.yes {
-        Arc::new(AllowAll)
-    } else {
-        Arc::new(Interactive)
-    };
-
-    let mut adapter = OpenAiAdapter::from_env()?;
-    if let Some(model) = cli.model {
-        adapter = adapter.with_model(model);
-    }
+    let policy = select_policy(cli.yes);
+    let adapter = build_adapter(cli.model)?;
+    let recording = cli.record.is_some();
     let mode = if cli.yes {
         "auto-approve"
     } else {
         "interactive"
     };
-    let recording = cli.record.is_some();
-    let banner = format!(
+    print_banner(&format!(
         "baton · model {} · {} · {mode}{}",
         adapter.model(),
         adapter.base_url(),
         if recording { " · recording" } else { "" },
-    );
-    // Dim the banner only on a real terminal (and not under NO_COLOR).
-    if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
-        eprintln!("\x1b[2m{banner}\x1b[0m");
-    } else {
-        eprintln!("{banner}");
-    }
+    ));
 
     // The `--full-output` flag forces full tool-result rendering; otherwise the
     // frontend honours `BATON_FULL_OUTPUT` on its own.
@@ -163,45 +149,19 @@ async fn run_session(cli: Cli) -> Result<()> {
     };
 
     // --- the "CLI on a laptop" host: ~10 lines on top of baton-host ----------
-    let mut engine = Engine::builder()
-        .model(ModelSelector::named("big"), Arc::new(adapter))
-        .capability(Arc::new(Shell))
-        .capability(Arc::new(FsRead))
-        .capability(Arc::new(FsWrite))
-        .capability(Arc::new(Http::new()))
-        .system_prompt(SYSTEM_PROMPT)
-        .policy(policy)
+    let mut engine = base_builder(adapter, policy)
         .record(recording)
         .frontend(Box::new(frontend))
         .build();
     // -------------------------------------------------------------------------
 
-    if !cli.prompt.is_empty() {
-        engine.user_turn(cli.prompt.join(" ")).await;
-        engine.session_end();
-        save_recording(&engine, cli.record.as_deref())?;
-        return Ok(());
-    }
-
-    println!("baton — interactive session (Ctrl-D to exit)");
-    loop {
-        print!("\n› ");
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line)? == 0 {
-            println!();
-            engine.session_end();
-            break; // EOF
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        engine.user_turn(line.to_string()).await;
-    }
-
-    save_recording(&engine, cli.record.as_deref())?;
-    Ok(())
+    drive_session(
+        &mut engine,
+        cli.prompt,
+        "baton — interactive session (Ctrl-D to exit)",
+        cli.record.as_deref(),
+    )
+    .await
 }
 
 /// `baton resume <trace> [prompt...]` — load a trace, rebuild the brain from its
@@ -221,34 +181,64 @@ async fn run_resume(
     // Default: write the grown session back to the same file (so it accumulates).
     let out_path = record.unwrap_or_else(|| trace_path.clone());
 
-    let policy: Arc<dyn Policy> = if yes {
-        Arc::new(AllowAll)
-    } else {
-        Arc::new(Interactive)
-    };
-
-    let mut adapter = OpenAiAdapter::from_env()?;
-    if let Some(model) = model {
-        adapter = adapter.with_model(model);
-    }
+    let policy = select_policy(yes);
+    let adapter = build_adapter(model)?;
     let mode = if yes { "auto-approve" } else { "interactive" };
-    let banner = format!(
+    print_banner(&format!(
         "baton · resuming {} ({} events) · model {} · {} · {mode} · recording → {}",
         trace_path.display(),
         trace.events.len(),
         adapter.model(),
         adapter.base_url(),
         out_path.display(),
-    );
-    if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
-        eprintln!("\x1b[2m{banner}\x1b[0m");
-    } else {
-        eprintln!("{banner}");
-    }
+    ));
 
     // Resume rebuilds the brain from the trace (with zero IO) and restores the
     // recorded policy; `.resume` implies recording so the grown session re-saves.
-    let mut engine = Engine::builder()
+    let mut engine = base_builder(adapter, policy).resume(trace).build();
+
+    drive_session(
+        &mut engine,
+        prompt,
+        "baton — resumed interactive session (Ctrl-D to exit)",
+        Some(out_path.as_path()),
+    )
+    .await
+}
+
+/// The host permission policy for the chosen approval mode (`-y` = allow-all).
+fn select_policy(yes: bool) -> Arc<dyn Policy> {
+    if yes {
+        Arc::new(AllowAll)
+    } else {
+        Arc::new(Interactive)
+    }
+}
+
+/// Build the model adapter from the environment, applying a `--model` override.
+fn build_adapter(model: Option<String>) -> Result<OpenAiAdapter> {
+    let mut adapter = OpenAiAdapter::from_env()?;
+    if let Some(model) = model {
+        adapter = adapter.with_model(model);
+    }
+    Ok(adapter)
+}
+
+/// Print a startup banner to stderr, dimmed only on a real terminal (and not
+/// under `NO_COLOR`).
+fn print_banner(text: &str) {
+    if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+        eprintln!("\x1b[2m{text}\x1b[0m");
+    } else {
+        eprintln!("{text}");
+    }
+}
+
+/// The shared "CLI on a laptop" host: register the model + capabilities and the
+/// permission policy. Callers add `.record()`/`.resume()`/`.frontend()` and
+/// `.build()`. Keeping this in one place is what keeps the host setup ~10 lines.
+fn base_builder(adapter: OpenAiAdapter, policy: Arc<dyn Policy>) -> EngineBuilder {
+    Engine::builder()
         .model(ModelSelector::named("big"), Arc::new(adapter))
         .capability(Arc::new(Shell))
         .capability(Arc::new(FsRead))
@@ -256,17 +246,24 @@ async fn run_resume(
         .capability(Arc::new(Http::new()))
         .system_prompt(SYSTEM_PROMPT)
         .policy(policy)
-        .resume(trace)
-        .build();
+}
 
+/// Run the session: a one-shot turn if `prompt` is non-empty, otherwise an
+/// interactive REPL (`intro` is its header). Saves the recording to `out_path`
+/// (if any) at the end. Shared by the live and resumed paths.
+async fn drive_session(
+    engine: &mut Engine,
+    prompt: Vec<String>,
+    intro: &str,
+    out_path: Option<&std::path::Path>,
+) -> Result<()> {
     if !prompt.is_empty() {
         engine.user_turn(prompt.join(" ")).await;
         engine.session_end();
-        save_recording(&engine, Some(out_path.as_path()))?;
-        return Ok(());
+        return save_recording(engine, out_path);
     }
 
-    println!("baton — resumed interactive session (Ctrl-D to exit)");
+    println!("{intro}");
     loop {
         print!("\n› ");
         std::io::stdout().flush().ok();
@@ -283,8 +280,7 @@ async fn run_resume(
         engine.user_turn(line.to_string()).await;
     }
 
-    save_recording(&engine, Some(out_path.as_path()))?;
-    Ok(())
+    save_recording(engine, out_path)
 }
 
 /// Persist the recorded session, if `--record` was given.

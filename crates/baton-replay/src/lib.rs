@@ -62,7 +62,7 @@ mod blob;
 mod replay;
 pub use blob::BlobStore;
 pub use replay::{
-    Inspector, Replay, Step, policy_from_trace, replay, replay_with_policy, verify,
+    Inspector, Replay, Step, drive, policy_from_trace, replay, replay_with_policy, verify,
     verify_with_policy,
 };
 

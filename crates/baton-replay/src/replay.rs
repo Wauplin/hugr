@@ -70,21 +70,27 @@ pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
     }
 }
 
-/// Replay a trace through a fresh brain built with a specific [`TurnPolicy`].
-pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay {
-    let mut brain = Brain::new(policy);
+/// Fold an ordered event stream into `brain`, draining and returning every
+/// [`Command`] it emits — the pure, zero-IO equivalent of the host driver loop
+/// (ARCHITECTURE §2.3/§6.3). Both replay (which keeps the commands) and the
+/// host's resume path (which rebuilds state and discards them) drive a brain
+/// this way, so the loop lives here once.
+pub fn drive(brain: &mut Brain, events: &[Event]) -> Vec<Command> {
     let mut commands = Vec::new();
-
-    // Re-feed the exact ordered event stream and drain commands after each one —
-    // mirroring the host driver loop, but with zero IO (ARCHITECTURE §2.3/§6.3).
-    for event in &trace.events {
+    for event in events {
         brain.submit(event.clone());
         commands.extend(brain.poll());
     }
     // A final drain in case the last event queued commands the loop above did
     // not pick up (it always polls after each submit, but be defensive).
     commands.extend(brain.poll());
+    commands
+}
 
+/// Replay a trace through a fresh brain built with a specific [`TurnPolicy`].
+pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay {
+    let mut brain = Brain::new(policy);
+    let commands = drive(&mut brain, &trace.events);
     Replay {
         commands,
         log: brain.state().log().to_vec(),
