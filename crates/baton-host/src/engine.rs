@@ -64,6 +64,13 @@ impl Engine {
         &self.brain
     }
 
+    /// Signal the front-end that the session is finishing, so it can render any
+    /// accumulated totals (e.g. the metrics footer). Call this once after the
+    /// last turn of a one-shot run, or when an interactive session exits.
+    pub fn session_end(&mut self) {
+        self.frontend.on_session_end();
+    }
+
     /// Feed an event in, stamping it with a fresh injected `Tick` first.
     fn submit(&mut self, event: Event) {
         let now = Timestamp((self.clock)());

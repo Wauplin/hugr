@@ -58,6 +58,12 @@ impl ModelAdapter for MockModel {
 struct Capture {
     text: Arc<Mutex<String>>,
     done: Arc<Mutex<Vec<DoneReason>>>,
+    /// Token usage observed at each model-call end (drives metrics).
+    model_usage: Arc<Mutex<Vec<Usage>>>,
+    /// Tool names observed at each tool-call end.
+    tool_ends: Arc<Mutex<Vec<String>>>,
+    /// Number of times the session-end hook fired.
+    session_ends: Arc<Mutex<u32>>,
 }
 
 impl Frontend for Capture {
@@ -67,8 +73,23 @@ impl Frontend for Capture {
         }
     }
     fn on_notice(&mut self, _message: &str) {}
+    fn on_model_end(&mut self, _op: baton_core::OpId, usage: &Usage) {
+        self.model_usage.lock().unwrap().push(usage.clone());
+    }
+    fn on_tool_end(
+        &mut self,
+        _op: baton_core::OpId,
+        name: &str,
+        _result: &serde_json::Value,
+        _is_error: bool,
+    ) {
+        self.tool_ends.lock().unwrap().push(name.to_string());
+    }
     fn on_done(&mut self, reason: &DoneReason) {
         self.done.lock().unwrap().push(reason.clone());
+    }
+    fn on_session_end(&mut self) {
+        *self.session_ends.lock().unwrap() += 1;
     }
 }
 
@@ -181,4 +202,84 @@ async fn denied_permission_routes_error_back_to_model() {
 
     let text = capture.text.lock().unwrap().clone();
     assert!(text.contains("Okay, I won't run that."));
+}
+
+/// A scripted model that reports per-call **cost** in `Usage.extra` (mirroring a
+/// real router adapter), so the metrics path can be exercised end-to-end.
+struct CostModel {
+    responses: Mutex<VecDeque<ModelOutput>>,
+}
+
+impl CostModel {
+    fn new(responses: impl IntoIterator<Item = ModelOutput>) -> Arc<Self> {
+        Arc::new(Self {
+            responses: Mutex::new(responses.into_iter().collect()),
+        })
+    }
+}
+
+#[async_trait]
+impl ModelAdapter for CostModel {
+    async fn call(
+        &self,
+        _request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        let output = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("mock ran out of scripted responses"))?;
+        if !output.text.is_empty() {
+            sink.text(output.text.clone());
+        }
+        let usage =
+            Usage::new(100, 50).with_extra(json!({ "cost": 0.0010, "cost_source": "router" }));
+        Ok((output, usage))
+    }
+}
+
+/// A one-shot run drives the metrics hooks through the real engine: each model
+/// call surfaces token usage + cost via `on_model_end`, tool ends fire, and
+/// `Engine::session_end` triggers the front-end's `on_session_end` exactly once.
+#[tokio::test]
+async fn metrics_flow_through_engine() {
+    let capture = Capture::default();
+
+    let model = CostModel::new([
+        ModelOutput::tool_calls(vec![ToolCall::new(
+            "call-1",
+            "shell",
+            json!({ "cmd": "echo metrics" }),
+        )]),
+        ModelOutput::text("Done."),
+    ]);
+
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), model)
+        .capability(Arc::new(Shell))
+        .system_prompt("You are a test agent.")
+        .frontend(Box::new(capture.clone()))
+        .clock(deterministic_clock())
+        .build();
+
+    engine.user_turn("use the shell".into()).await;
+    engine.session_end(); // one-shot run: emit the totals footer
+
+    // Two model calls, each reporting tokens + cost in `Usage.extra`.
+    let usage = capture.model_usage.lock().unwrap();
+    assert_eq!(usage.len(), 2, "expected two model-call ends");
+    for u in usage.iter() {
+        assert_eq!(u.input_tokens, 100);
+        assert_eq!(u.output_tokens, 50);
+        assert_eq!(u.extra.get("cost").and_then(|c| c.as_f64()), Some(0.0010));
+    }
+
+    // The shell tool ran and its completion was observed.
+    let tools = capture.tool_ends.lock().unwrap();
+    assert_eq!(tools.as_slice(), &["shell".to_string()]);
+
+    // The session-end hook fired exactly once (the totals footer point).
+    assert_eq!(*capture.session_ends.lock().unwrap(), 1);
 }

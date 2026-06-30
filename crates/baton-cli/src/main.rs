@@ -99,6 +99,7 @@ async fn main() -> Result<()> {
 
     if !cli.prompt.is_empty() {
         engine.user_turn(cli.prompt.join(" ")).await;
+        engine.session_end();
         return Ok(());
     }
 
@@ -109,6 +110,7 @@ async fn main() -> Result<()> {
         let mut line = String::new();
         if std::io::stdin().read_line(&mut line)? == 0 {
             println!();
+            engine.session_end();
             break; // EOF
         }
         let line = line.trim();
