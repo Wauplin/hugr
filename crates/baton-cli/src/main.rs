@@ -33,6 +33,11 @@ struct Cli {
     /// Approve every tool call without prompting (the allow-all mode).
     #[arg(short = 'y', long = "yes")]
     yes: bool,
+
+    /// Override the default model id (defaults to the `OPENAI_MODEL` env var,
+    /// then the built-in `google/gemma-4-31B-it:together`).
+    #[arg(short = 'm', long = "model")]
+    model: Option<String>,
 }
 
 #[tokio::main]
@@ -44,7 +49,10 @@ async fn main() -> Result<()> {
         Arc::new(Interactive)
     };
 
-    let adapter = OpenAiAdapter::from_env()?;
+    let mut adapter = OpenAiAdapter::from_env()?;
+    if let Some(model) = cli.model {
+        adapter = adapter.with_model(model);
+    }
     let mode = if cli.yes {
         "auto-approve"
     } else {

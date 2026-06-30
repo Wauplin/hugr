@@ -2,13 +2,9 @@
 
 > A lightweight, embeddable, runtime-free agent harness written in Rust.
 
-**Baton** is the agent "brain" that can run **anywhere** — a browser tab (as
-WASM, with no backend), a Python or JS script via bindings, a serverless
-function, or a long-lived server — from a *single, portable core* with a small
-footprint and fast startup.
+**Baton** is the agent "brain" that can run **anywhere** — a browser tab (as WASM, with no backend), a Python or JS script via bindings, a serverless function, or a long-lived server — from a *single, portable core* with a small footprint and fast startup.
 
-The differentiator is not a feature list; it is an **architecture**. Baton
-keeps four things separate that most harnesses conflate:
+The differentiator is not a feature list; it is an **architecture**. Baton keeps four things separate that most harnesses conflate:
 
 | Concern           | What Baton does                                               |
 | ----------------- | ------------------------------------------------------------- |
@@ -17,13 +13,9 @@ keeps four things separate that most harnesses conflate:
 | **IO**            | A **sans-IO** core emits *commands*; the **host** does all IO |
 | **Permissions**   | **Externalized policy** (data), decided outside the core      |
 
-From those separations, resume, replay, multi-front-end, multi-provider,
-sub-agents, forks, and parallel streaming all *fall out* rather than being
-engineered as separate subsystems.
+From those separations, resume, replay, multi-front-end, multi-provider, sub-agents, forks, and parallel streaming all *fall out* rather than being engineered as separate subsystems.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the rationale,
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the concrete contract, and
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased plan.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the rationale, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the concrete contract, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased plan.
 
 ## The core ↔ host contract
 
@@ -39,13 +31,10 @@ loop {
 }
 ```
 
-- [`Command`] — what the brain wants the host to do (start a model call, invoke
-  a capability, request permission, cancel, checkpoint, …).
-- [`Event`] — what happened (user input, model deltas/result, tool results,
-  permission decisions, injected ticks, …).
+- [`Command`] — what the brain wants the host to do (start a model call, invoke a capability, request permission, cancel, checkpoint, …).
+- [`Event`] — what happened (user input, model deltas/result, tool results, permission decisions, injected ticks, …).
 
-`poll()` and `submit()` are **synchronous and pure**. All concurrency and IO
-live in the host; the brain is a single-threaded reducer.
+`poll()` and `submit()` are **synchronous and pure**. All concurrency and IO live in the host; the brain is a single-threaded reducer.
 
 [`Command`]: crates/baton-core/src/command.rs
 [`Event`]: crates/baton-core/src/event.rs
@@ -54,21 +43,14 @@ live in the host; the brain is a single-threaded reducer.
 
 Per the [roadmap](docs/ROADMAP.md):
 
-- **Phase 0** — the **pure core skeleton (no IO)**: the `Command`/`Event`
-  vocabulary, the append-only log and in-flight op table, the turn loop
-  (`user → model → tool → model → done`), a trivial pass-through projection
-  policy, and **deterministic replay**.
-- **Phase 1** — the **batteries-included CLI host**: a tokio driver loop, the
-  uniform capability + model-adapter interfaces, `shell`/`fs`/`http`
-  capabilities, an interactive permission policy, a streaming OpenAI adapter,
-  and the `baton` CLI.
+- **Phase 0** — the **pure core skeleton (no IO)**: the `Command`/`Event` vocabulary, the append-only log and in-flight op table, the turn loop (`user → model → tool → model → done`), a trivial pass-through projection policy, and **deterministic replay**.
+- **Phase 1** — the **batteries-included CLI host**: a tokio driver loop, the uniform capability + model-adapter interfaces, `shell`/`fs`/`http` capabilities, an interactive permission policy, a streaming OpenAI-compatible adapter, and the `baton` CLI.
 
 See [`PROGRESS.md`](PROGRESS.md) for the detailed status.
 
 ## Crate layout
 
-The workspace grows into the full layout from
-[`ARCHITECTURE.md` §10](docs/ARCHITECTURE.md). Today:
+The workspace grows into the full layout from [`ARCHITECTURE.md` §10](docs/ARCHITECTURE.md). Today:
 
 ```
 crates/
@@ -80,13 +62,11 @@ crates/
   baton-cli/        # the `baton` showcase binary.
 ```
 
-Planned (later phases): `baton-wasm`, `baton-py`, `baton-js`,
-`baton-plugin-abi`, `baton-replay`.
+Planned (later phases): `baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`, `baton-replay`.
 
 ## Running the CLI
 
-By default `baton` talks to the **Hugging Face router** (an OpenAI-compatible
-endpoint), so if you're logged in with the `hf` CLI it works with no setup:
+By default `baton` talks to the **Hugging Face router** (an OpenAI-compatible endpoint), so if you're logged in with the `hf` CLI it works with no setup:
 
 ```bash
 hf auth login                         # once; baton reads the stored token
@@ -104,12 +84,9 @@ Configuration (all optional) via environment:
 | `OPENAI_MODEL`    | `google/gemma-4-31B-it:together`                        | must support tool calling                     |
 | `OPENAI_BASE_URL` | `https://router.huggingface.co/v1`                      | set to `https://api.openai.com/v1` for OpenAI |
 
-> The model must support **function calling**, since baton always advertises its
-> tools. Small models that don't (e.g. some 8B instruct variants) return
-> `model features function calling not support`.
+> The model must support **function calling**, since baton always advertises its tools. Small models that don't (e.g. some 8B instruct variants) return `model features function calling not support`.
 
-The engine setup is ~10 lines on top of `baton-host` (see the marked block in
-[`crates/baton-cli/src/main.rs`](crates/baton-cli/src/main.rs)).
+The engine setup is ~10 lines on top of `baton-host` (see the marked block in [`crates/baton-cli/src/main.rs`](crates/baton-cli/src/main.rs)).
 
 ## Building & testing
 
@@ -123,13 +100,9 @@ cargo tree -p baton-core    # audit: must stay free of tokio/reqwest/fs
 
 Notable tests:
 
-- `baton-core/tests` — the Phase 0 exit criteria: a scripted session reduces to
-  the expected command sequence; the same event stream replays to identical
-  commands.
-- `baton-host/tests/end_to_end.rs` — a real multi-turn session through the
-  tokio driver loop using the real `shell` capability.
-- `baton-providers` — request building, SSE accumulation, and a streaming run
-  against a local mock SSE server.
+- `baton-core/tests` — the Phase 0 exit criteria: a scripted session reduces to the expected command sequence; the same event stream replays to identical commands.
+- `baton-host/tests/end_to_end.rs` — a real multi-turn session through the tokio driver loop using the real `shell` capability.
+- `baton-providers` — request building, SSE accumulation, and a streaming run against a local mock SSE server.
 
 ## License
 

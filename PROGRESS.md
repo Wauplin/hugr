@@ -11,10 +11,8 @@ Done:
 - Workspace set up (`crates/baton-core`), ready to grow into the full layout.
 - `baton-core` — the sans-IO reducer, split into modules:
   - `primitives.rs` — `OpId`, `Seq`, `Timestamp`, `Value`, `ObjectKey`.
-  - `model.rs` — canonical `ModelRequest`/`ModelDelta`/`ModelOutput`, `ToolCall`,
-    `ToolSchema`, `Usage`, `ModelSelector` (+ constructors).
-  - `command.rs` / `event.rs` — the two-enum brain↔host contract,
-    `#[non_exhaustive]` throughout.
+  - `model.rs` — canonical `ModelRequest`/`ModelDelta`/`ModelOutput`, `ToolCall`, `ToolSchema`, `Usage`, `ModelSelector` (+ constructors).
+  - `command.rs` / `event.rs` — the two-enum brain↔host contract, `#[non_exhaustive]` throughout.
   - `record.rs` — the append-only log (`LogEntry`, `Record`, `OpOutcome`, `OpMeta`).
   - `state.rs` — `BrainState` + in-flight op table (derived; foldable from the log).
   - `policy.rs` — pluggable `TurnPolicy` + `StaticPolicy` (trivial pass-through projection).
@@ -45,12 +43,12 @@ Done:
   - [`Frontend`] trait + streaming `StdoutFrontend`.
   - `EngineBuilder` that assembles the brain's `StaticPolicy` from registered capabilities (their schemas → advertised tools; sensitive ones → gated set).
 - Capabilities (`baton-host::capabilities`): `shell` (streams stdout), `fs_read` (read-only, no permission), `fs_write`, `http`.
-- `baton-providers`: `OpenAiAdapter` — chat completions with streaming SSE, tool-call assembly, usage accounting, configurable base URL. Defaults target the **Hugging Face router** (`https://router.huggingface.co/v1`, `google/gemma-4-31B-it:together`); the API key resolves from `OPENAI_API_KEY` → `HF_TOKEN` → `hf auth token`.
-- `baton-cli`: the `baton` binary. One-shot (`baton "prompt"`) or interactive REPL; `-y/--yes` for allow-all. Startup banner (model · endpoint · mode).
+- `baton-providers`: `OpenAiAdapter` — chat completions with streaming SSE, tool-call assembly, usage accounting, configurable base URL/model. Defaults target the **Hugging Face router** (`https://router.huggingface.co/v1`, `google/gemma-4-31B-it:together`); the API key resolves from `OPENAI_API_KEY` → `HF_TOKEN` → `hf auth token`.
+- `baton-cli`: the `baton` binary. One-shot (`baton "prompt"`) or interactive REPL; `-y/--yes` for allow-all. Prints a startup banner (model · endpoint · mode).
 - CLI observability: the `Frontend` trait gained lifecycle hooks (model start/end + token usage, tool start with args, tool result, permission decision); `StdoutFrontend` renders them with ANSI colors (auto-disabled off a TTY / under `NO_COLOR`).
 - Streaming is the **only** model mode (explicit contract on `ModelAdapter`): adapters stream deltas live via the sink, then return the consolidated output. No non-streaming path exists.
 
-Refinement to `baton-core` made for real providers: the durable `ToolResult` now carries the originating model `tool_call` id, so projection emits provider- correct `tool_call_id` correlation. Added `ModelOutput::new`, `ModelRequest::new` and `SamplingParams` builders (host-facing structs are `#[non_exhaustive]`).
+Refinement to `baton-core` made for real providers: the durable `ToolResult` now carries the originating model `tool_call` id, so projection emits provider-correct `tool_call_id` correlation. Added `ModelOutput::new`, `ModelRequest::new` and `SamplingParams` builders (host-facing structs are `#[non_exhaustive]`).
 
 Tests (17 total across the workspace):
 

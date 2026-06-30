@@ -66,6 +66,12 @@ impl OpenAiAdapter {
         self
     }
 
+    /// Override the concrete model id (e.g. from a CLI flag).
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
+
     /// The concrete model id this adapter calls.
     pub fn model(&self) -> &str {
         &self.model
@@ -454,6 +460,12 @@ mod tests {
         assert_eq!(body["temperature"], json!(0.5));
         assert_eq!(body["max_tokens"], json!(128));
         assert_eq!(body["tools"][0]["function"]["name"], "shell");
+    }
+
+    #[test]
+    fn with_model_overrides_model() {
+        let adapter = OpenAiAdapter::new("test-key", "original").with_model("replacement");
+        assert_eq!(adapter.model(), "replacement");
     }
 
     #[tokio::test]
