@@ -495,14 +495,14 @@ The honest limit: the generic table expresses only **whole-object** optimistic c
 
 #### Division of responsibility, summarized
 
-| Concern | Owner |
-| --- | --- |
-| Canonical object identity (`ObjectKey`) | Host (produces it) |
-| Version token meaning (hash/etag/sha) | Host (produces & interprets) |
-| Read-set: last-seen version per object | Brain (folded from the log) |
-| Stamping `expected_version` onto a mutation | Brain |
-| The atomic compare-and-swap check | Host |
-| Reacting to a `Conflict` (loop back to model) | Brain |
+| Concern                                       | Owner                        |
+| --------------------------------------------- | ---------------------------- |
+| Canonical object identity (`ObjectKey`)       | Host (produces it)           |
+| Version token meaning (hash/etag/sha)         | Host (produces & interprets) |
+| Read-set: last-seen version per object        | Brain (folded from the log)  |
+| Stamping `expected_version` onto a mutation   | Brain                        |
+| The atomic compare-and-swap check             | Host                         |
+| Reacting to a `Conflict` (loop back to model) | Brain                        |
 
 ## 8. Plugins
 
@@ -713,12 +713,12 @@ That is the payoff of "the conversation is *not* the state": every advanced runt
 
 ## 17. Risks & mitigations
 
-| Risk                                                  | Mitigation                                                                                          |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Risk                                                                          | Mitigation                                                                                                |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Interface over-/under-engineered (hard to host, weak, or breaks on extension) | Narrow waist: type only what the brain branches on; opaque payloads elsewhere; `#[non_exhaustive]` (§2.4) |
-| Traces balloon from per-token deltas                  | Deltas are transport-only; persist consolidated records + blobs (§4.5)                              |
-| Sans-IO makes the simple case painful                 | Ship `baton-host` + `baton-cli`; "CLI on laptop" ≈ 10 lines                                         |
-| Streaming re-entrancy complexity                      | Op table + cheap append handlers; coalesce host-side                                                |
-| WASM component model immaturity                       | Start with a simpler custom WASM ABI; migrate when stable                                           |
-| Canonical model type too thin to use providers well   | First-class cache/reasoning/tool-call fields + opaque `extra` from v1                               |
-| Plugin ABI ossifies too early                         | Keep contract narrow; version it; no internal access                                                |
+| Traces balloon from per-token deltas                                          | Deltas are transport-only; persist consolidated records + blobs (§4.5)                                    |
+| Sans-IO makes the simple case painful                                         | Ship `baton-host` + `baton-cli`; "CLI on laptop" ≈ 10 lines                                               |
+| Streaming re-entrancy complexity                                              | Op table + cheap append handlers; coalesce host-side                                                      |
+| WASM component model immaturity                                               | Start with a simpler custom WASM ABI; migrate when stable                                                 |
+| Canonical model type too thin to use providers well                           | First-class cache/reasoning/tool-call fields + opaque `extra` from v1                                     |
+| Plugin ABI ossifies too early                                                 | Keep contract narrow; version it; no internal access                                                      |

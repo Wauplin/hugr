@@ -151,10 +151,13 @@ impl ToolSchema {
     }
 }
 
-/// Streaming model output. **Transport only** — deltas accumulate in the op's
-/// live buffer and drive cosmetic [`OutputEvent`](crate::OutputEvent)s, but are
-/// never written to the log (ARCHITECTURE §4.5). The brain's logic keys off the
-/// consolidated [`ModelOutput`] in [`Event::ModelDone`](crate::Event::ModelDone).
+/// Streaming model output. Hosts always call models in streaming mode (the only
+/// supported mode), so these deltas arrive continuously during a model call.
+///
+/// **Transport only** — deltas accumulate in the op's live buffer and drive
+/// cosmetic [`OutputEvent`](crate::OutputEvent)s, but are never written to the
+/// log (ARCHITECTURE §4.5). The brain's logic keys off the consolidated
+/// [`ModelOutput`] in [`Event::ModelDone`](crate::Event::ModelDone).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ModelDelta {

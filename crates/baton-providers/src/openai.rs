@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 // `/v1` suffix is part of the base URL; the adapter appends `/chat/completions`.
 // Point `OPENAI_BASE_URL` at `https://api.openai.com/v1` to use OpenAI directly.
 const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
-const DEFAULT_MODEL: &str = "meta-llama/Llama-3.3-70B-Instruct";
+const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:together";
 
 /// An adapter for the OpenAI Chat Completions API (or any compatible endpoint
 /// via `OPENAI_BASE_URL`).
@@ -43,7 +43,7 @@ impl OpenAiAdapter {
     ///
     /// - **API key:** `OPENAI_API_KEY`, else `HF_TOKEN`, else the output of
     ///   `hf auth token` if the `hf` CLI is installed and logged in.
-    /// - **Model:** `OPENAI_MODEL` (default `meta-llama/Llama-3.3-70B-Instruct`).
+    /// - **Model:** `OPENAI_MODEL` (default `google/gemma-4-31B-it:together`).
     /// - **Base URL:** `OPENAI_BASE_URL` (default the Hugging Face router).
     pub fn from_env() -> anyhow::Result<Self> {
         let api_key = resolve_api_key().context(
@@ -64,6 +64,16 @@ impl OpenAiAdapter {
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// The concrete model id this adapter calls.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// The base URL this adapter posts to.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     fn build_body(&self, request: &ModelRequest) -> Value {
@@ -140,6 +150,8 @@ impl OpenAiAdapter {
             })
             .collect();
 
+        // Streaming is the only mode (see `ModelAdapter`): always request a
+        // streamed response, and ask for usage in the final SSE chunk.
         let mut body = json!({
             "model": self.model,
             "messages": messages,

@@ -39,6 +39,9 @@ pub struct Engine {
     tx: UnboundedSender<Event>,
     rx: UnboundedReceiver<Event>,
     tasks: HashMap<OpId, JoinHandle<()>>,
+    /// Capability name per in-flight op, so tool results can be labelled when
+    /// the engine observes their completion events.
+    op_labels: HashMap<OpId, String>,
 }
 
 impl Engine {
@@ -91,9 +94,29 @@ impl Engine {
 
             // Otherwise block until any task produces the next event.
             match self.rx.recv().await {
-                Some(event) => self.submit(event),
+                Some(event) => {
+                    self.observe(&event);
+                    self.submit(event);
+                }
                 None => break,
             }
+        }
+    }
+
+    /// Report incoming events to the front-end for observability, before the
+    /// brain folds them. (Commands are reported in [`perform`](Self::perform).)
+    fn observe(&mut self, event: &Event) {
+        match event {
+            Event::ModelDone { op, usage, .. } => self.frontend.on_model_end(*op, usage),
+            Event::CapabilityDone { op, result, .. } => {
+                let name = self.op_labels.remove(op).unwrap_or_default();
+                self.frontend.on_tool_end(*op, &name, result, false);
+            }
+            Event::CapabilityError { op, error, .. } => {
+                let name = self.op_labels.remove(op).unwrap_or_default();
+                self.frontend.on_tool_end(*op, &name, error, true);
+            }
+            _ => {}
         }
     }
 
@@ -102,6 +125,7 @@ impl Engine {
         match command {
             Command::StartModelCall { op, model, request } => match self.models.get(&model) {
                 Some(adapter) => {
+                    self.frontend.on_model_start(op, &model);
                     let tx = self.tx.clone();
                     let handle = tokio::spawn(async move {
                         let sink = ModelSink::new(op, tx.clone());
@@ -126,7 +150,8 @@ impl Engine {
 
             Command::StartCapability { op, name, args } => match self.caps.get(&name) {
                 Some(capability) => {
-                    self.frontend.on_notice(&format!("  → {name}"));
+                    self.frontend.on_tool_start(op, &name, &args);
+                    self.op_labels.insert(op, name.clone());
                     let tx = self.tx.clone();
                     let handle = tokio::spawn(async move {
                         let sink = ChunkSink::new(op, tx.clone());
@@ -157,6 +182,7 @@ impl Engine {
 
             Command::RequestPermission { op, request } => {
                 let decision = self.policy.decide(&request).await;
+                self.frontend.on_permission(&request.capability, &decision);
                 let _ = self.tx.send(Event::PermissionDecision { op, decision });
             }
 
@@ -330,6 +356,7 @@ impl EngineBuilder {
             tx,
             rx,
             tasks: HashMap::new(),
+            op_labels: HashMap::new(),
         }
     }
 }

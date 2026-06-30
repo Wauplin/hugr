@@ -13,6 +13,12 @@ use baton_core::{Event, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Op
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Translates the canonical [`ModelRequest`] to/from a concrete provider.
+///
+/// **Streaming is the only mode.** An adapter must request a streamed response
+/// and emit deltas through the [`ModelSink`] *as they arrive* (so front-ends can
+/// render live), then return the consolidated [`ModelOutput`] + [`Usage`] once
+/// the response completes. There is deliberately no non-streaming variant.
+///
 /// Transport errors (429, timeouts, 5xx) should be retried *inside* the adapter
 /// (ARCHITECTURE §5.4); only return `Err` once the host has genuinely given up.
 #[async_trait]

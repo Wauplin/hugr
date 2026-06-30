@@ -3,7 +3,7 @@
 //! The engine setup below is the "CLI on a laptop" host: ~10 lines on top of
 //! `baton-host` (ROADMAP Phase 1 exit criterion).
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -44,12 +44,27 @@ async fn main() -> Result<()> {
         Arc::new(Interactive)
     };
 
+    let adapter = OpenAiAdapter::from_env()?;
+    let mode = if cli.yes {
+        "auto-approve"
+    } else {
+        "interactive"
+    };
+    let banner = format!(
+        "baton · model {} · {} · {mode}",
+        adapter.model(),
+        adapter.base_url(),
+    );
+    // Dim the banner only on a real terminal (and not under NO_COLOR).
+    if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+        eprintln!("\x1b[2m{banner}\x1b[0m");
+    } else {
+        eprintln!("{banner}");
+    }
+
     // --- the "CLI on a laptop" host: ~10 lines on top of baton-host ----------
     let mut engine = Engine::builder()
-        .model(
-            ModelSelector::named("big"),
-            Arc::new(OpenAiAdapter::from_env()?),
-        )
+        .model(ModelSelector::named("big"), Arc::new(adapter))
         .capability(Arc::new(Shell))
         .capability(Arc::new(FsRead))
         .capability(Arc::new(FsWrite))

@@ -30,12 +30,12 @@ We keep the simplicity and extensibility that makes Pi pleasant, but remove the 
 
 Most harness pain traces back to **conflating four things that should be separate**. The whole design is organized around keeping them apart.
 
-| Concern | The trap (what harnesses do) | What we do |
-|---|---|---|
-| **Durable state** | The flat `messages[]` list *is* the state | Append-only **event log** is the source of truth |
-| **Model context** | Same `messages[]` is sent to the model | Context is a **projection** rendered from the log per turn |
-| **IO** | The loop owns tokio, sockets, fs, shell | **Sans-IO** core emits commands; the **host** does IO |
-| **Permissions** | `if dangerous { prompt() }` scattered in the loop | Policy is **externalized data**, decided outside the core |
+| Concern           | The trap (what harnesses do)                      | What we do                                                 |
+| ----------------- | ------------------------------------------------- | ---------------------------------------------------------- |
+| **Durable state** | The flat `messages[]` list *is* the state         | Append-only **event log** is the source of truth           |
+| **Model context** | Same `messages[]` is sent to the model            | Context is a **projection** rendered from the log per turn |
+| **IO**            | The loop owns tokio, sockets, fs, shell           | **Sans-IO** core emits commands; the **host** does IO      |
+| **Permissions**   | `if dangerous { prompt() }` scattered in the loop | Policy is **externalized data**, decided outside the core  |
 
 These four separations are the entire architecture. Everything else (resume, replay, multi-front-end, multi-provider, sub-agents, parallel streaming) falls out of them rather than being engineered separately.
 
@@ -159,11 +159,11 @@ The unifying idea: **trace = durable log; resume = re-fold a trace; fork = copy 
 
 "Lightweight, no-runtime Rust binary" pulls against "dynamically extensible like Pi." How we resolve it is itself a one-way door. Three plugin mechanisms, each with a real cost:
 
-| Mechanism | Pros | Cons |
-|---|---|---|
-| **Compile-time** (traits, cargo features) | Zero overhead, smallest binary | No third-party plugins without recompiling — not Pi-like |
-| **Subprocess + protocol** (MCP model) | Fully dynamic, language-agnostic | Heavy (process + JSON-RPC each), bad for mobile/browser, slow start |
-| **WASM components** | Dynamic *and* portable to browser/mobile, sandboxed | Adds a WASM runtime to the binary, FFI/serialization cost |
+| Mechanism                                 | Pros                                                | Cons                                                                |
+| ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
+| **Compile-time** (traits, cargo features) | Zero overhead, smallest binary                      | No third-party plugins without recompiling — not Pi-like            |
+| **Subprocess + protocol** (MCP model)     | Fully dynamic, language-agnostic                    | Heavy (process + JSON-RPC each), bad for mobile/browser, slow start |
+| **WASM components**                       | Dynamic *and* portable to browser/mobile, sandboxed | Adds a WASM runtime to the binary, FFI/serialization cost           |
 
 **Decision (provisional): WASM components as the primary extension ABI**, with a **narrow event/hook contract**. It is the only option that keeps *lightweight + run-anywhere + dynamically extensible* simultaneously true, and its sandbox aligns with the capability model. We still support subprocess/MCP as a secondary path for heavy, language-agnostic tools where weight is acceptable (server hosts), and compile-time tools for the batteries-included defaults.
 

@@ -34,13 +34,13 @@ The CLI reads naturally: `baton run ...`.
 
 ## Naming & namespaces
 
-| Namespace            | Name        | Status                                                       |
-| -------------------- | ----------- | ------------------------------------------------------------ |
-| Brand                | `Baton`     | Chosen.                                                      |
-| crates.io (publish)  | `baton-rs`  | Available. Used because bare `baton` is taken.               |
-| crates.io (bare)     | `baton`     | Taken — an unrelated, low-activity async channel crate.      |
-| GitHub               | `baton-rs`  | Available.                                                   |
-| npm                  | `baton-rs`  | Available.                                                   |
+| Namespace           | Name       | Status                                                  |
+| ------------------- | ---------- | ------------------------------------------------------- |
+| Brand               | `Baton`    | Chosen.                                                 |
+| crates.io (publish) | `baton-rs` | Available. Used because bare `baton` is taken.          |
+| crates.io (bare)    | `baton`    | Taken — an unrelated, low-activity async channel crate. |
+| GitHub              | `baton-rs` | Available.                                              |
+| npm                 | `baton-rs` | Available.                                              |
 
 ### Crate naming convention
 

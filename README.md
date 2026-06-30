@@ -10,12 +10,12 @@ footprint and fast startup.
 The differentiator is not a feature list; it is an **architecture**. Baton
 keeps four things separate that most harnesses conflate:
 
-| Concern | What Baton does |
-|---|---|
-| **Durable state** | An append-only **event log** is the source of truth |
-| **Model context** | A **projection** rendered from the log per turn |
-| **IO** | A **sans-IO** core emits *commands*; the **host** does all IO |
-| **Permissions** | **Externalized policy** (data), decided outside the core |
+| Concern           | What Baton does                                               |
+| ----------------- | ------------------------------------------------------------- |
+| **Durable state** | An append-only **event log** is the source of truth           |
+| **Model context** | A **projection** rendered from the log per turn               |
+| **IO**            | A **sans-IO** core emits *commands*; the **host** does all IO |
+| **Permissions**   | **Externalized policy** (data), decided outside the core      |
 
 From those separations, resume, replay, multi-front-end, multi-provider,
 sub-agents, forks, and parallel streaming all *fall out* rather than being
@@ -98,11 +98,11 @@ cargo run -p baton-cli -- -y "..."    # approve all tool calls (no prompts)
 
 Configuration (all optional) via environment:
 
-| Variable | Default | Notes |
-|---|---|---|
-| API key | `OPENAI_API_KEY`, else `HF_TOKEN`, else `hf auth token` | |
-| `OPENAI_MODEL` | `meta-llama/Llama-3.3-70B-Instruct` | must support tool calling |
-| `OPENAI_BASE_URL` | `https://router.huggingface.co/v1` | set to `https://api.openai.com/v1` for OpenAI |
+| Variable          | Default                                                 | Notes                                         |
+| ----------------- | ------------------------------------------------------- | --------------------------------------------- |
+| API key           | `OPENAI_API_KEY`, else `HF_TOKEN`, else `hf auth token` |                                               |
+| `OPENAI_MODEL`    | `google/gemma-4-31B-it:together`                        | must support tool calling                     |
+| `OPENAI_BASE_URL` | `https://router.huggingface.co/v1`                      | set to `https://api.openai.com/v1` for OpenAI |
 
 > The model must support **function calling**, since baton always advertises its
 > tools. Small models that don't (e.g. some 8B instruct variants) return
