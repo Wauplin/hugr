@@ -52,7 +52,12 @@ pub fn replay(trace: &Trace) -> Replay {
 
 /// Reconstruct the [`TurnPolicy`] a trace was recorded under: decode the
 /// captured [`StaticPolicy`] config if present, else the default.
-fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
+///
+/// This is the policy a faithful replay (or **resume**, P3-4) must run under —
+/// the brain branches on the policy's pure decisions, so continuing a session
+/// requires the same policy the trace was recorded with. A trace with no
+/// captured policy (or one we can't decode) falls back to the default.
+pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
     match &trace.policy {
         Some(value) => match serde_json::from_value::<StaticPolicy>(value.clone()) {
             Ok(policy) => Box::new(policy),

@@ -11,13 +11,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use baton_core::{
     Brain, Command, Event, ModelSelector, OpId, SamplingParams, StaticPolicy, SteerMode, Timestamp,
-    Value,
+    TurnPolicy, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
-use baton_replay::{Trace, TraceError};
+use baton_replay::{Trace, TraceError, policy_from_trace};
 
 use crate::ChunkSink;
 use crate::capability::CapabilityRegistry;
@@ -51,6 +51,15 @@ impl Recorder {
             }
         }
         self.events.push(event.clone());
+    }
+
+    /// Pre-load the recorder with a trace's already-recorded events, so a
+    /// **resumed** session (P3-4) re-saves the full history (old + new) and
+    /// still replays bit-for-bit. The events are copied verbatim (including the
+    /// recorded `Tick`s); `created_at` is taken from the trace's metadata so the
+    /// resumed trace keeps the original session's creation time, not a new one.
+    fn seed(events: Vec<Event>, created_at: Option<u64>) -> Self {
+        Self { events, created_at }
     }
 }
 
@@ -403,6 +412,17 @@ fn system_clock() -> u64 {
         .unwrap_or(0)
 }
 
+/// The pieces [`EngineBuilder::build`] assembles differently for a fresh vs. a
+/// resumed session: the brain's policy, the policy value captured into a
+/// recorded trace, the recorder, and (for resume) the events to re-fold into the
+/// brain to rebuild its state with no IO.
+struct BuildSetup {
+    policy: Box<dyn TurnPolicy>,
+    policy_config: Option<serde_json::Value>,
+    recorder: Option<Recorder>,
+    seed: Option<Vec<Event>>,
+}
+
 /// Builds an [`Engine`]: register models + capabilities, then `build()`. The
 /// builder also assembles the brain's [`StaticPolicy`] from the registered
 /// capabilities (their schemas become the advertised tools, and the ones that
@@ -417,6 +437,10 @@ pub struct EngineBuilder {
     system_prompt: Option<String>,
     sampling: SamplingParams,
     record: bool,
+    /// When set, the brain is pre-seeded by replaying this trace's recorded
+    /// events into it (with zero IO), and the recorder is pre-loaded with those
+    /// same events so the continued session re-saves the full history (P3-4).
+    resume: Option<Trace>,
 }
 
 impl Default for EngineBuilder {
@@ -431,6 +455,7 @@ impl Default for EngineBuilder {
             system_prompt: None,
             sampling: SamplingParams::default(),
             record: false,
+            resume: None,
         }
     }
 }
@@ -506,27 +531,85 @@ impl EngineBuilder {
         self
     }
 
-    pub fn build(self) -> Engine {
-        let mut policy_builder = StaticPolicy::default()
-            .with_model(self.selector.clone())
-            .with_tools(self.caps.schemas())
-            .with_permissioned(self.caps.permissioned_names())
-            .with_background(self.caps.background_names())
-            .with_params(self.sampling);
-        if let Some(system) = self.system_prompt {
-            policy_builder = policy_builder.with_system_prompt(system);
-        }
+    /// Resume a session from a saved [`Trace`] (P3-4). The built engine's brain
+    /// is reconstructed by re-feeding the trace's recorded events into it (with
+    /// **zero IO** — the host does *not* re-run the model/shell/http for events
+    /// that already happened; it only re-folds them to rebuild `BrainState`,
+    /// exactly as [`baton_replay::replay`] does). New live turns then continue
+    /// from that state.
+    ///
+    /// Resuming implies recording (so the continued session can be re-saved as a
+    /// trace that still verifies bit-for-bit): the recorder is pre-loaded with
+    /// the trace's events, and any new events are appended after them. The
+    /// session's [`TurnPolicy`] is restored from the trace ([`policy_from_trace`])
+    /// so the continued session branches identically; a trace without a captured
+    /// policy falls back to the default.
+    pub fn resume(mut self, trace: Trace) -> Self {
+        self.record = true;
+        self.resume = Some(trace);
+        self
+    }
 
-        // Serialize the policy once (for recorded traces) before it moves into
-        // the brain. `StaticPolicy` is serde-able; capture is best-effort.
-        let policy_config = self
-            .record
-            .then(|| serde_json::to_value(&policy_builder).ok())
-            .flatten();
+    pub fn build(self) -> Engine {
+        // The brain's policy and recorder depend on whether we are resuming a
+        // trace. Resume restores the *recorded* policy (so the continued session
+        // branches identically and re-verifies) and pre-seeds the brain + the
+        // recorder from the trace; a fresh session assembles the policy from the
+        // registered capabilities (§2.4).
+        let setup = match self.resume {
+            // The brain runs under the trace's policy; carry the captured value
+            // through verbatim so re-saving round-trips it bit-for-bit.
+            Some(trace) => BuildSetup {
+                policy: policy_from_trace(&trace),
+                policy_config: trace.policy,
+                recorder: Some(Recorder::seed(trace.events.clone(), trace.meta.created_at)),
+                seed: Some(trace.events),
+            },
+            None => {
+                let mut policy = StaticPolicy::default()
+                    .with_model(self.selector.clone())
+                    .with_tools(self.caps.schemas())
+                    .with_permissioned(self.caps.permissioned_names())
+                    .with_background(self.caps.background_names())
+                    .with_params(self.sampling);
+                if let Some(system) = self.system_prompt {
+                    policy = policy.with_system_prompt(system);
+                }
+                // Serialize the policy once (for recorded traces) before it moves
+                // into the brain. `StaticPolicy` is serde-able; best-effort.
+                let policy_config = self
+                    .record
+                    .then(|| serde_json::to_value(&policy).ok())
+                    .flatten();
+                BuildSetup {
+                    policy: Box::new(policy),
+                    policy_config,
+                    recorder: self.record.then(Recorder::default),
+                    seed: None,
+                }
+            }
+        };
+
+        let mut brain = Brain::new(setup.policy);
+        // Reconstruct the resumed session's state with ZERO IO: re-feed the
+        // recorded events into the fresh brain and discard the commands they
+        // re-emit (the host must not re-run the model/shell/http for work that
+        // already happened — this only re-folds events to rebuild `BrainState`,
+        // exactly like `baton_replay::replay`). The events are already in the
+        // recorder, so a later `save_trace` carries old + new (ARCHITECTURE §6.3).
+        if let Some(events) = setup.seed {
+            for event in events {
+                brain.submit(event);
+                let _ = brain.poll();
+            }
+            let _ = brain.poll();
+        }
+        let recorder = setup.recorder;
+        let policy_config = setup.policy_config;
 
         let (tx, rx) = mpsc::unbounded_channel();
         Engine {
-            brain: Brain::new(Box::new(policy_builder)),
+            brain,
             models: self.models,
             caps: self.caps,
             policy: self.policy.unwrap_or_else(|| Arc::new(AllowAll)),
@@ -539,7 +622,7 @@ impl EngineBuilder {
             tasks: HashMap::new(),
             op_labels: HashMap::new(),
             coalescer: Coalescer::new(),
-            recorder: self.record.then(Recorder::default),
+            recorder,
             policy_config,
         }
     }

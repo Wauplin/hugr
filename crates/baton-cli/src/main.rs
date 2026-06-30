@@ -74,14 +74,49 @@ enum Cmd {
         #[arg(long = "step")]
         step: bool,
     },
+
+    /// Resume a recorded session from a trace and continue it with a new turn.
+    /// The brain is rebuilt from the trace's events (with no IO — recorded work
+    /// is not re-run), the policy is restored from the trace, and the continued
+    /// session keeps recording so it can be saved again (the Phase 3 P3-4 goal).
+    Resume {
+        /// Path to a `.trace.json` file produced by `--record` (or a prior
+        /// `resume`). The continued session is written back here by default.
+        trace: PathBuf,
+
+        /// The new user turn to add. If omitted, starts an interactive session
+        /// continuing from the trace.
+        prompt: Vec<String>,
+
+        /// Approve every tool call without prompting (the allow-all mode).
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+
+        /// Override the default model id used for the new turn(s).
+        #[arg(short = 'm', long = "model")]
+        model: Option<String>,
+
+        /// Write the extended session to a different trace file instead of back
+        /// to `<trace>` (so the original recording is left untouched).
+        #[arg(long = "record", value_name = "PATH")]
+        record: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
-    if let Some(Cmd::Replay { trace, step }) = &cli.command {
-        return run_replay(trace, *step);
+    match cli.command.take() {
+        Some(Cmd::Replay { trace, step }) => return run_replay(&trace, step),
+        Some(Cmd::Resume {
+            trace,
+            prompt,
+            yes,
+            model,
+            record,
+        }) => return run_resume(trace, prompt, yes, model, record).await,
+        None => {}
     }
 
     run_session(cli).await
@@ -166,6 +201,89 @@ async fn run_session(cli: Cli) -> Result<()> {
     }
 
     save_recording(&engine, cli.record.as_deref())?;
+    Ok(())
+}
+
+/// `baton resume <trace> [prompt...]` — load a trace, rebuild the brain from its
+/// recorded events (no IO: the recorded model/shell/http work is *not* re-run),
+/// then continue the session with a new turn. The continued session keeps
+/// recording and is saved back to `<trace>` by default (or to `--record <path>`),
+/// so it grows into a trace that still replays bit-for-bit (Phase 3 P3-4).
+async fn run_resume(
+    trace_path: PathBuf,
+    prompt: Vec<String>,
+    yes: bool,
+    model: Option<String>,
+    record: Option<PathBuf>,
+) -> Result<()> {
+    let trace = Trace::load(&trace_path)
+        .with_context(|| format!("loading trace {}", trace_path.display()))?;
+    // Default: write the grown session back to the same file (so it accumulates).
+    let out_path = record.unwrap_or_else(|| trace_path.clone());
+
+    let policy: Arc<dyn Policy> = if yes {
+        Arc::new(AllowAll)
+    } else {
+        Arc::new(Interactive)
+    };
+
+    let mut adapter = OpenAiAdapter::from_env()?;
+    if let Some(model) = model {
+        adapter = adapter.with_model(model);
+    }
+    let mode = if yes { "auto-approve" } else { "interactive" };
+    let banner = format!(
+        "baton · resuming {} ({} events) · model {} · {} · {mode} · recording → {}",
+        trace_path.display(),
+        trace.events.len(),
+        adapter.model(),
+        adapter.base_url(),
+        out_path.display(),
+    );
+    if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+        eprintln!("\x1b[2m{banner}\x1b[0m");
+    } else {
+        eprintln!("{banner}");
+    }
+
+    // Resume rebuilds the brain from the trace (with zero IO) and restores the
+    // recorded policy; `.resume` implies recording so the grown session re-saves.
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(adapter))
+        .capability(Arc::new(Shell))
+        .capability(Arc::new(FsRead))
+        .capability(Arc::new(FsWrite))
+        .capability(Arc::new(Http::new()))
+        .system_prompt(SYSTEM_PROMPT)
+        .policy(policy)
+        .resume(trace)
+        .build();
+
+    if !prompt.is_empty() {
+        engine.user_turn(prompt.join(" ")).await;
+        engine.session_end();
+        save_recording(&engine, Some(out_path.as_path()))?;
+        return Ok(());
+    }
+
+    println!("baton — resumed interactive session (Ctrl-D to exit)");
+    loop {
+        print!("\n› ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            println!();
+            engine.session_end();
+            break; // EOF
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        engine.user_turn(line.to_string()).await;
+    }
+
+    save_recording(&engine, Some(out_path.as_path()))?;
     Ok(())
 }
 

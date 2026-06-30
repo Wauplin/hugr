@@ -117,11 +117,11 @@ Tests (57 total across the workspace, +7):
 
 [`Coalescer`]: crates/baton-host/src/coalesce.rs
 
-## Phase 3 — Traces: save, replay, inspect (in progress; P3-4 remains)
+## Phase 3 — Traces: save, replay, inspect ✅ (complete)
 
 **Goal:** sessions are first-class artifacts (record, replay, resume).
 
-**Phase 3 exit criterion — met (P3-3):** a real Phase 1/2 session is recorded through the engine, saved to a trace, reloaded, and replayed through a fresh brain **bit-for-bit** — the reconstructed command sequence and durable log are byte-identical to the recording (`baton-host/tests/end_to_end.rs::record_then_replay_reconstructs_the_session_bit_for_bit`).
+**Phase 3 exit criterion — met (P3-3):** a real Phase 1/2 session is recorded through the engine, saved to a trace, reloaded, and replayed through a fresh brain **bit-for-bit** — the reconstructed command sequence and durable log are byte-identical to the recording (`baton-host/tests/end_to_end.rs::record_then_replay_reconstructs_the_session_bit_for_bit`). **Resume (P3-4) closes the phase:** a saved trace can be reloaded into a fresh engine, continued with a new turn, and re-saved into a trace that still replays bit-for-bit.
 
 ### P3-1 — `baton-replay` crate + trace format ✅
 
@@ -175,6 +175,16 @@ Replay is the whole point of the sans-IO design: because the brain is a pure fol
 - `baton-cli`: `baton --record <path>` records a live one-shot/interactive session to a trace (banner shows `· recording`); `baton replay <trace>` loads a trace, reconstructs the session through a fresh brain, and `verify`s it bit-for-bit against the recorded log; `baton replay <trace> --step` first walks the session one event at a time via the `Inspector`, printing each event with the command(s) and log entry(ies) it produced.
 
 Tests (81 total across the workspace, +9): `baton-replay/tests/replay.rs` — replay reconstructs a hand-built Phase 1/2 trace's commands + log; `verify` passes on a faithful trace and returns `ReplayMismatch` on a tampered log; a trace round-trips through disk and still replays bit-for-bit; the `Inspector` yields one step per event (`run()` collects them all) and its appended log tails reassemble the full log; an empty trace replays to nothing. `baton-host/tests/end_to_end.rs::record_then_replay_reconstructs_the_session_bit_for_bit` — the exit criterion through the **real engine**: record a shell-tool session → save to disk → reload → replay through a fresh brain → reconstructed command sequence + log byte-identical to the live log, a second replay yields identical commands, and the inspector reassembles the same log step by step; `::engine_without_recording_has_no_trace` — a non-recording engine has no trace and `save_trace` errors cleanly.
+
+### P3-4 — CLI resume from a trace ✅
+
+Resume is replay turned into a starting point: because the brain is a pure fold over an ordered event stream, *resuming* a session = rebuild the brain by re-feeding the saved trace's events into a fresh brain (with **zero IO** — the host does **not** re-run the recorded model/shell/http calls; it only re-folds the events to reconstruct `BrainState`), then continue feeding NEW live events (a new user turn) while still recording, so the grown session can be saved again. Reuses the existing `replay`/`Recorder`/`Trace` machinery; `baton-core` is untouched.
+
+- `baton-replay` (`src/replay.rs`): `policy_from_trace(&Trace) -> Box<dyn TurnPolicy>` is now public — it decodes the trace's captured `StaticPolicy` (or the default if absent/undecodable). Both replay and resume run the continued brain under it, so the session branches identically.
+- `baton-host` (`engine.rs`): `EngineBuilder::resume(trace)` builds an engine whose brain is **pre-seeded** from the trace. At `build()` time it restores the recorded policy (`policy_from_trace`), re-feeds the trace's recorded events into the fresh brain draining (and discarding) the commands they re-emit (no IO — exactly like `baton_replay::replay`), and **pre-loads the `Recorder`** with those same events (carrying the original `created_at`), so any new live turns append after them and a later `save_trace` writes the full history (old + new). `resume` implies recording. The trace's opaque `policy` value is carried through verbatim, so re-saving round-trips it bit-for-bit. New events get fresh injected `Tick`s as usual; the seeded events are never double-counted.
+- `baton-cli`: `baton resume <trace> [prompt...]` — load a trace, rebuild the brain from it (no IO), restore the policy, then continue with a new one-shot turn or an interactive loop. The grown session is written back to `<trace>` by default (so it accumulates), or to `--record <path>` to leave the original untouched. `-y`/`--yes` and `-m`/`--model` mirror the live-session flags. The banner shows what is being resumed and where it will be saved.
+
+Tests (82 total across the workspace, +1 end-to-end resume test over P3-3, plus a new public `policy_from_trace` export): `baton-host/tests/end_to_end.rs::resume_from_trace_continues_the_session` — record a shell-tool session through the **real engine** → save → resume into a fresh engine and assert the brain reconstructs the original log *before* any new turn (with nothing in flight, and the new mock model un-invoked, proving the seed performed no IO) → add a NEW user turn → assert the grown log contains the original logical records as a prefix **and** the new turn's records → re-save and assert the grown trace appends new events after the recorded ones, its log equals the live grown log, its policy survived the round-trip, and the whole grown session still `verify()`s bit-for-bit through a fresh brain.
 
 [`replay`]: crates/baton-replay/src/replay.rs
 [`verify`]: crates/baton-replay/src/replay.rs

@@ -61,7 +61,10 @@ use serde::{Deserialize, Serialize};
 mod blob;
 mod replay;
 pub use blob::BlobStore;
-pub use replay::{Inspector, Replay, Step, replay, replay_with_policy, verify, verify_with_policy};
+pub use replay::{
+    Inspector, Replay, Step, policy_from_trace, replay, replay_with_policy, verify,
+    verify_with_policy,
+};
 
 /// The current trace container format version. Bump on any breaking change to
 /// the [`Trace`] layout; older readers reject newer versions (see

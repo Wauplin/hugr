@@ -910,6 +910,144 @@ async fn record_then_replay_reconstructs_the_session_bit_for_bit() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// P3-4 / Phase 3 exit criterion: record a session, save it, then **resume**
+/// from the trace and add a NEW user turn. The resumed engine rebuilds its brain
+/// from the trace's recorded events with zero IO (the original model/shell calls
+/// are *not* re-run), continues recording, and re-saving yields a trace whose log
+/// contains BOTH the original records AND the new turn's — and which still
+/// replays bit-for-bit.
+#[tokio::test]
+async fn resume_from_trace_continues_the_session() {
+    // --- Session 1: record an original session with a tool op, then save it. --
+    let model1 = MockModel::new([
+        ModelOutput::tool_calls(vec![ToolCall::new(
+            "call-1",
+            "shell",
+            json!({ "cmd": "echo resume-me" }),
+        )]),
+        ModelOutput::text("The shell printed resume-me."),
+    ]);
+
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), model1)
+        .capability(Arc::new(Shell))
+        .system_prompt("You are a test agent.")
+        .frontend(Box::new(Capture::default()))
+        .clock(deterministic_clock())
+        .record(true)
+        .build();
+
+    engine.user_turn("greet me using the shell".into()).await;
+    engine.session_end();
+
+    let original_log = engine.brain().state().log().to_vec();
+    let original_logical = logical_records(&original_log);
+    assert!(!original_logical.is_empty());
+
+    let dir = std::env::temp_dir().join(format!("baton-host-resume-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("session.trace.json");
+    engine.save_trace(&path).expect("recording was enabled");
+    let saved = baton_host::Trace::load(&path).expect("reload the trace");
+    let original_event_count = saved.events.len();
+
+    // --- Session 2: resume from the trace and add a NEW user turn. ------------
+    let capture2 = Capture::default();
+    // A *fresh* model with only the new turn's responses: if resume re-ran the
+    // recorded model calls this mock would be exhausted (proving no IO replay).
+    let model2 = MockModel::new([ModelOutput::text("You're welcome!")]);
+
+    let mut resumed = Engine::builder()
+        .model(ModelSelector::named("big"), model2.clone())
+        .capability(Arc::new(Shell))
+        .system_prompt("You are a test agent.")
+        .frontend(Box::new(capture2.clone()))
+        .clock(deterministic_clock())
+        .resume(saved.clone())
+        .build();
+
+    // The brain was rebuilt from the trace with no IO: the original log is fully
+    // present *before* any new turn runs, and nothing is in flight.
+    assert_eq!(
+        resumed.brain().state().log(),
+        original_log.as_slice(),
+        "resumed brain reconstructs the original log before continuing"
+    );
+    assert_eq!(resumed.brain().state().inflight_len(), 0);
+    // The recorded model was NOT re-invoked during the seed (its 0 requests).
+    assert!(
+        model2.requests.lock().unwrap().is_empty(),
+        "resume must not re-run recorded model calls"
+    );
+
+    // Continue with a NEW turn.
+    resumed.user_turn("thanks".into()).await;
+    resumed.session_end();
+
+    // The new turn's model call ran exactly once (the seed performed no IO).
+    assert_eq!(
+        model2.requests.lock().unwrap().len(),
+        1,
+        "only the new turn triggers a model call"
+    );
+    let text = capture2.text.lock().unwrap().clone();
+    assert!(text.contains("You're welcome!"));
+
+    // The grown log contains BOTH the original records AND the new turn's.
+    let grown_log = resumed.brain().state().log().to_vec();
+    let grown_logical = logical_records(&grown_log);
+    assert!(
+        grown_logical.len() > original_logical.len(),
+        "the resumed session added records: {} → {}",
+        original_logical.len(),
+        grown_logical.len()
+    );
+    assert_eq!(
+        &grown_logical[..original_logical.len()],
+        original_logical.as_slice(),
+        "the original records are preserved as a prefix of the grown log"
+    );
+    assert!(
+        grown_logical.iter().any(|r| matches!(
+            r,
+            Record::UserMessage { text } if text == "thanks"
+        )),
+        "the new user turn is in the grown log"
+    );
+
+    // --- Re-save the grown session: it still replays bit-for-bit. ------------
+    let path2 = dir.join("session.resumed.trace.json");
+    resumed
+        .save_trace(&path2)
+        .expect("resume implies recording");
+    let regrown = baton_host::Trace::load(&path2).expect("reload the grown trace");
+
+    // The grown trace carries the full event history (old + new), and its log is
+    // the grown log (no desync).
+    assert!(
+        regrown.events.len() > original_event_count,
+        "grown trace appends new events after the recorded ones"
+    );
+    assert_eq!(
+        &regrown.events[..original_event_count],
+        &saved.events[..],
+        "the original event stream is the prefix of the grown one"
+    );
+    assert_eq!(regrown.log, grown_log, "saved log == live grown log");
+    // The policy survived the round-trip (so replay branches identically).
+    assert_eq!(
+        regrown.policy, saved.policy,
+        "the resumed trace carries the original policy"
+    );
+
+    // The whole grown session replays bit-for-bit through a fresh brain.
+    let replay = baton_host::baton_replay::verify(&regrown)
+        .expect("the resumed session must replay bit-for-bit");
+    assert_eq!(replay.log, grown_log);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A non-recording engine has no trace, and `save_trace` errors cleanly.
 #[tokio::test]
 async fn engine_without_recording_has_no_trace() {
