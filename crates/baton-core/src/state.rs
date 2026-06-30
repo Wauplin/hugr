@@ -170,9 +170,13 @@ pub enum OpKind {
         text_so_far: String,
     },
     /// A capability (tool) invocation in progress.
-    Capability { name: String },
+    Capability { name: String, call_id: String },
     /// A tool call awaiting a permission decision before it can start.
-    AwaitingPermission { name: String, args: Value },
+    AwaitingPermission {
+        name: String,
+        args: Value,
+        call_id: String,
+    },
     /// A pending `AskUser` awaiting the user's answer.
     AwaitingUser,
     /// A sub-agent (full handling in Phase 6).
@@ -191,7 +195,17 @@ impl OpKind {
     /// The capability name, if this op has one.
     pub(crate) fn capability_name(&self) -> Option<&str> {
         match self {
-            OpKind::Capability { name } | OpKind::AwaitingPermission { name, .. } => Some(name),
+            OpKind::Capability { name, .. } | OpKind::AwaitingPermission { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The originating model `tool_call` id, if this op has one.
+    pub(crate) fn call_id(&self) -> Option<&str> {
+        match self {
+            OpKind::Capability { call_id, .. } | OpKind::AwaitingPermission { call_id, .. } => {
+                Some(call_id)
+            }
             _ => None,
         }
     }

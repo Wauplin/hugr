@@ -46,6 +46,19 @@ pub struct ModelRequest {
     pub extra: Value,
 }
 
+impl ModelRequest {
+    /// Construct a request. `extra` defaults to null; set it afterwards for
+    /// provider-specific passthrough.
+    pub fn new(blocks: Vec<ContextBlock>, tools: Vec<ToolSchema>, params: SamplingParams) -> Self {
+        Self {
+            blocks,
+            tools,
+            params,
+            extra: Value::Null,
+        }
+    }
+}
+
 /// One block of model context.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -102,6 +115,22 @@ pub struct SamplingParams {
     pub max_tokens: Option<u32>,
 }
 
+impl SamplingParams {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+}
+
 /// A tool schema advertised to the model. The brain treats the JSON-schema
 /// `parameters` as opaque; only the host and the model interpret it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -149,6 +178,21 @@ pub struct ModelOutput {
 }
 
 impl ModelOutput {
+    /// Full constructor, for adapters assembling a streamed result.
+    pub fn new(
+        text: String,
+        reasoning: Option<String>,
+        tool_calls: Vec<ToolCall>,
+        stop: StopReason,
+    ) -> Self {
+        Self {
+            text,
+            reasoning,
+            tool_calls,
+            stop,
+        }
+    }
+
     /// A final answer with no tool calls — ends the turn.
     pub fn text(text: impl Into<String>) -> Self {
         Self {

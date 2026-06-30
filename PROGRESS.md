@@ -41,21 +41,50 @@ Decisions:
 - Dropped `panic = "abort"` from the release profile (conflicts with the test
   harness; belongs in a WASM-specific profile in Phase 4).
 
-## Phase 1 — Batteries-included CLI host (the showcase) 🚧
+## Phase 1 — Batteries-included CLI host (the showcase) ✅
 
 **Goal:** a real, usable terminal agent driven by the Phase 0 core.
 
-Planned:
+Done:
 
-- [ ] `baton-host`: tokio driver loop (`poll` / `next_event` / `submit`),
-      capability + model-adapter traits, registries, host-side permission policy.
-- [ ] Capabilities: `shell`, `fs read/write`, `http` via the uniform interface.
-- [ ] `baton-providers`: OpenAI chat-completions adapter with streaming deltas.
-- [ ] Interactive `Policy` (prompts) + `--yes` allow mode.
-- [ ] Minimal stdout front-end consuming `OutputEvent`s.
-- [ ] `baton-cli`: the showcase binary (~10 lines on top of `baton-host`).
+- `baton-host`: the tokio [`Engine`] driver loop (drain `poll()` → perform
+  commands as concurrent tasks → await next event → `submit()`), plus:
+  - [`Capability`] + [`ModelAdapter`] traits and their registries.
+  - Host-side permission [`Policy`]: `AllowAll`, `DenyAll`, `Interactive` (prompts).
+  - [`Frontend`] trait + streaming `StdoutFrontend`.
+  - `EngineBuilder` that assembles the brain's `StaticPolicy` from registered
+    capabilities (their schemas → advertised tools; sensitive ones → gated set).
+- Capabilities (`baton-host::capabilities`): `shell` (streams stdout),
+  `fs_read` (read-only, no permission), `fs_write`, `http`.
+- `baton-providers`: `OpenAiAdapter` — chat completions with streaming SSE,
+  tool-call assembly, usage accounting, configurable base URL.
+- `baton-cli`: the `baton` binary. One-shot (`baton "prompt"`) or interactive
+  REPL; `-y/--yes` for allow-all.
+
+Refinement to `baton-core` made for real providers: the durable `ToolResult`
+now carries the originating model `tool_call` id, so projection emits provider-
+correct `tool_call_id` correlation. Added `ModelOutput::new`, `ModelRequest::new`
+and `SamplingParams` builders (host-facing structs are `#[non_exhaustive]`).
+
+Tests (17 total across the workspace):
+
+- `baton-host/tests/end_to_end.rs` — a real multi-turn session driven through
+  the tokio loop with a scripted model + the **real shell capability**; plus a
+  denied-permission round-trip.
+- `baton-providers` — unit tests for request building + SSE accumulation, and
+  `tests/streaming.rs` driving the adapter against a **local mock SSE server**
+  (real reqwest streaming path).
 
 **Exit criteria:**
 
-- [ ] Genuine multi-turn coding session in the terminal, end-to-end.
-- [ ] "CLI on a laptop" host setup ≈ 10 lines on top of `baton-host`.
+- ✅ "CLI on a laptop" host setup ≈ 10 lines on top of `baton-host` (see the
+  marked block in `crates/baton-cli/src/main.rs`).
+- ◑ Genuine multi-turn session end-to-end: the full mechanism is verified in
+  tests (driver loop + real shell + real HTTP/SSE path). A **live** OpenAI
+  session additionally needs `OPENAI_API_KEY` set — run `baton "..."`.
+
+[`Engine`]: crates/baton-host/src/engine.rs
+[`Capability`]: crates/baton-host/src/capability.rs
+[`ModelAdapter`]: crates/baton-host/src/model.rs
+[`Policy`]: crates/baton-host/src/policy.rs
+[`Frontend`]: crates/baton-host/src/frontend.rs

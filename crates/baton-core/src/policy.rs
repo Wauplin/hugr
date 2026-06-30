@@ -41,6 +41,7 @@ pub struct StaticPolicy {
     tools: Vec<ToolSchema>,
     permissioned: Vec<String>,
     params: SamplingParams,
+    system: Option<String>,
 }
 
 impl Default for StaticPolicy {
@@ -50,6 +51,7 @@ impl Default for StaticPolicy {
             tools: Vec::new(),
             permissioned: Vec::new(),
             params: SamplingParams::default(),
+            system: None,
         }
     }
 }
@@ -82,6 +84,12 @@ impl StaticPolicy {
         self.params = params;
         self
     }
+
+    /// Set the system prompt prepended to every projected request.
+    pub fn with_system_prompt(mut self, system: impl Into<String>) -> Self {
+        self.system = Some(system.into());
+        self
+    }
 }
 
 impl TurnPolicy for StaticPolicy {
@@ -93,6 +101,12 @@ impl TurnPolicy for StaticPolicy {
         // Trivial pass-through: one context block per logged message / result,
         // in log order. No compaction, no eviction (those arrive later).
         let mut blocks = Vec::new();
+        if let Some(system) = &self.system {
+            blocks.push(ContextBlock::new(
+                Role::System,
+                vec![ContentPart::Text(system.clone())],
+            ));
+        }
         for entry in log {
             match &entry.record {
                 Record::UserMessage { text } => {
@@ -117,11 +131,13 @@ impl TurnPolicy for StaticPolicy {
                         blocks.push(ContextBlock::new(Role::Assistant, parts));
                     }
                 }
-                Record::ToolResult { op, result, .. } => {
+                Record::ToolResult {
+                    call_id, result, ..
+                } => {
                     blocks.push(ContextBlock::new(
                         Role::Tool,
                         vec![ContentPart::ToolResult {
-                            id: op.to_string(),
+                            id: call_id.clone(),
                             result: result.clone(),
                         }],
                     ));

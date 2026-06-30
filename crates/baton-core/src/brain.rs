@@ -180,8 +180,13 @@ impl Brain {
         if let Some(v) = version {
             self.state.record_version(v.object, v.version);
         }
-        let name = self.capability_name(op);
-        self.append(Record::ToolResult { op, name, result });
+        let (name, call_id) = self.tool_ids(op);
+        self.append(Record::ToolResult {
+            op,
+            name,
+            call_id,
+            result,
+        });
         self.end_op(op, OpOutcome::Ok, None);
         self.maybe_resume_model_turn();
     }
@@ -193,10 +198,11 @@ impl Brain {
         if let Some(v) = conflict {
             self.state.record_version(v.object, v.version);
         }
-        let name = self.capability_name(op);
+        let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
             name,
+            call_id,
             result: error.clone(),
         });
         self.end_op(op, OpOutcome::Error(error), None);
@@ -206,9 +212,11 @@ impl Brain {
     fn on_agent_done(&mut self, op: OpId, result: Value) {
         // A sub-agent result returns to the parent as a tool-result-shaped value
         // (ARCHITECTURE §13.1). Full sub-agent support lands in Phase 6.
+        let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
-            name: "<agent>".to_string(),
+            name,
+            call_id,
             result,
         });
         self.end_op(op, OpOutcome::Ok, None);
@@ -216,9 +224,11 @@ impl Brain {
     }
 
     fn on_agent_error(&mut self, op: OpId, error: Value) {
+        let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
-            name: "<agent>".to_string(),
+            name,
+            call_id,
             result: error.clone(),
         });
         self.end_op(op, OpOutcome::Error(error), None);
@@ -228,9 +238,11 @@ impl Brain {
     fn on_user_answer(&mut self, op: OpId, answer: Value) {
         // The answer to an `AskUser` becomes a tool-result-shaped value the next
         // model turn consumes.
+        let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
-            name: "<ask_user>".to_string(),
+            name,
+            call_id,
             result: answer,
         });
         self.end_op(op, OpOutcome::Ok, None);
@@ -242,17 +254,23 @@ impl Brain {
             Decision::Allow => {
                 // Resume the stashed tool call, reusing the same op id.
                 if let Some(op_state) = self.state.remove_op(op) {
-                    if let OpKind::AwaitingPermission { name, args } = op_state.kind {
-                        self.start_capability(op, name, args);
+                    if let OpKind::AwaitingPermission {
+                        name,
+                        args,
+                        call_id,
+                    } = op_state.kind
+                    {
+                        self.start_capability(op, name, args, call_id);
                     }
                 }
             }
             Decision::Deny { reason } => {
-                let name = self.capability_name(op);
+                let (name, call_id) = self.tool_ids(op);
                 let result = json!({ "error": "permission_denied", "reason": reason });
                 self.append(Record::ToolResult {
                     op,
                     name,
+                    call_id,
                     result: result.clone(),
                 });
                 self.end_op(op, OpOutcome::Error(result), None);
@@ -316,6 +334,7 @@ impl Brain {
                 OpKind::AwaitingPermission {
                     name: call.name.clone(),
                     args: call.args.clone(),
+                    call_id: call.id.clone(),
                 },
             );
             self.state.push_command(Command::RequestPermission {
@@ -326,18 +345,23 @@ impl Brain {
                 },
             });
         } else {
-            self.start_capability(op, call.name, call.args);
+            self.start_capability(op, call.name, call.args, call.id);
         }
     }
 
-    fn start_capability(&mut self, op: OpId, name: String, args: Value) {
+    fn start_capability(&mut self, op: OpId, name: String, args: Value, call_id: String) {
         // Seam for optimistic-concurrency stamping (ARCHITECTURE §7.3): when a
         // capability's schema declares it mutates a versioned object, the brain
         // would stamp `expected_version` from `self.state.versions()` here. The
         // declarative schema metadata that drives it arrives in a later phase;
         // for Phase 0 args are forwarded verbatim.
-        self.state
-            .mark(op, OpKind::Capability { name: name.clone() });
+        self.state.mark(
+            op,
+            OpKind::Capability {
+                name: name.clone(),
+                call_id,
+            },
+        );
         self.state
             .push_command(Command::StartCapability { op, name, args });
     }
@@ -377,13 +401,16 @@ impl Brain {
         self.append(Record::OpEnded { op, outcome, meta });
     }
 
-    /// The capability name of an in-flight op, or a placeholder if unknown.
-    fn capability_name(&self, op: OpId) -> String {
-        self.state
-            .get_op(op)
-            .and_then(|o| o.kind.capability_name())
-            .unwrap_or("<unknown>")
-            .to_string()
+    /// The capability name and originating model `tool_call` id of an in-flight
+    /// op, with placeholders if unknown.
+    fn tool_ids(&self, op: OpId) -> (String, String) {
+        match self.state.get_op(op) {
+            Some(o) => (
+                o.kind.capability_name().unwrap_or("<unknown>").to_string(),
+                o.kind.call_id().unwrap_or_default().to_string(),
+            ),
+            None => ("<unknown>".to_string(), String::new()),
+        }
     }
 
     /// Whatever a cancelled op produced so far (e.g. partial model text).

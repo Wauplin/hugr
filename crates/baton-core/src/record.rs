@@ -36,7 +36,12 @@ pub enum Record {
     /// denials and conflicts, which are just error-shaped results to the model.)
     ToolResult {
         op: OpId,
+        /// The capability name.
         name: String,
+        /// The originating model `tool_call` id. Providers require a tool result
+        /// to reference the exact id of the call it answers, so projection uses
+        /// this (not the op id) to correlate the two.
+        call_id: String,
         result: Value,
     },
 

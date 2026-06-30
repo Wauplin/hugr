@@ -1,11 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/baton-core"]
+members = [
+    "crates/baton-core",
+    "crates/baton-host",
+    "crates/baton-providers",
+    "crates/baton-cli",
+]
 
 # The full crate layout (see docs/ARCHITECTURE.md §10) adds baton-model,
-# baton-providers, baton-host, baton-cli, baton-wasm, baton-py, baton-js,
-# baton-plugin-abi and baton-replay over later phases. Phase 0 ships only the
-# pure, sans-IO brain: `baton-core`.
+# baton-wasm, baton-py, baton-js, baton-plugin-abi and baton-replay over later
+# phases. Phase 0 shipped the pure, sans-IO brain (`baton-core`); Phase 1 adds
+# the native host, an OpenAI provider adapter, and the showcase CLI.
 
 [workspace.package]
 version = "0.0.0"
@@ -15,8 +20,21 @@ repository = "https://github.com/baton-rs/baton"
 rust-version = "1.85"
 
 [workspace.dependencies]
+# Pure data (used by baton-core too).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Host-side (IO/runtime) deps — never used by baton-core.
+baton-core = { path = "crates/baton-core" }
+baton-host = { path = "crates/baton-host" }
+baton-providers = { path = "crates/baton-providers" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
 
 # Release profile leaning toward the "tiny footprint" goal (ARCHITECTURE §11).
 # NOTE: `panic = "abort"` is intentionally NOT set here — it conflicts with the

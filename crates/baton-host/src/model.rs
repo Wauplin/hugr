@@ -1,0 +1,96 @@
+//! The model-adapter interface and its registry.
+//!
+//! A model call is "an effect the host provides", registered much like a
+//! capability (ARCHITECTURE §5.3). The brain names a logical [`ModelSelector`];
+//! the registry resolves it to a concrete adapter. The adapter streams deltas
+//! through a [`ModelSink`] and returns the consolidated output + usage.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use baton_core::{Event, ModelDelta, ModelOutput, ModelRequest, ModelSelector, OpId, Usage};
+use tokio::sync::mpsc::UnboundedSender;
+
+/// Translates the canonical [`ModelRequest`] to/from a concrete provider.
+/// Transport errors (429, timeouts, 5xx) should be retried *inside* the adapter
+/// (ARCHITECTURE §5.4); only return `Err` once the host has genuinely given up.
+#[async_trait]
+pub trait ModelAdapter: Send + Sync {
+    async fn call(
+        &self,
+        request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)>;
+}
+
+/// Lets an adapter stream model deltas (transport only) back to the brain as
+/// `ModelDelta` events while a completion is in flight.
+pub struct ModelSink {
+    op: OpId,
+    tx: UnboundedSender<Event>,
+}
+
+impl ModelSink {
+    /// Wrap an op id and an event sender. The [`Engine`](crate::Engine)
+    /// constructs these for adapters; it is also public so adapter authors can
+    /// unit-test their streaming logic against a channel.
+    pub fn new(op: OpId, tx: UnboundedSender<Event>) -> Self {
+        Self { op, tx }
+    }
+
+    /// A chunk of assistant text.
+    pub fn text(&self, text: impl Into<String>) {
+        self.delta(ModelDelta::Text(text.into()));
+    }
+
+    /// A chunk of model reasoning/thinking.
+    pub fn reasoning(&self, text: impl Into<String>) {
+        self.delta(ModelDelta::Reasoning(text.into()));
+    }
+
+    /// The model started emitting a tool call (id + name known).
+    pub fn tool_call_start(&self, id: impl Into<String>, name: impl Into<String>) {
+        self.delta(ModelDelta::ToolCallStart {
+            id: id.into(),
+            name: name.into(),
+        });
+    }
+
+    /// A fragment of a tool call's streamed JSON arguments.
+    pub fn tool_call_args(&self, id: impl Into<String>, json_fragment: impl Into<String>) {
+        self.delta(ModelDelta::ToolCallArgsDelta {
+            id: id.into(),
+            json_fragment: json_fragment.into(),
+        });
+    }
+
+    /// A tool call finished streaming its arguments.
+    pub fn tool_call_end(&self, id: impl Into<String>) {
+        self.delta(ModelDelta::ToolCallEnd { id: id.into() });
+    }
+
+    fn delta(&self, delta: ModelDelta) {
+        let _ = self.tx.send(Event::ModelDelta { op: self.op, delta });
+    }
+}
+
+/// Maps logical [`ModelSelector`]s to concrete adapters.
+#[derive(Default)]
+pub struct ModelRegistry {
+    map: HashMap<ModelSelector, Arc<dyn ModelAdapter>>,
+}
+
+impl ModelRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, selector: ModelSelector, adapter: Arc<dyn ModelAdapter>) {
+        self.map.insert(selector, adapter);
+    }
+
+    pub fn get(&self, selector: &ModelSelector) -> Option<Arc<dyn ModelAdapter>> {
+        self.map.get(selector).cloned()
+    }
+}

@@ -66,7 +66,7 @@ Consequences for code changes:
 ## Project layout
 
 ```
-crates/baton-core/
+crates/baton-core/       # the sans-IO brain (NO tokio/reqwest/fs)
   src/primitives.rs  # OpId, Seq, Timestamp, Value, ObjectKey
   src/model.rs       # ModelRequest/Delta/Output, ToolCall, Usage, selectors
   src/command.rs     # Command (brain → host) + OutputEvent
@@ -75,13 +75,29 @@ crates/baton-core/
   src/state.rs       # BrainState + in-flight op table (derived; foldable)
   src/policy.rs      # TurnPolicy trait + StaticPolicy
   src/brain.rs       # Brain: poll() + submit() + the reducer
-  tests/             # scripted_session.rs, determinism.rs (+ common/)
+
+crates/baton-host/       # default native host (tokio, IO) — Phase 1
+  src/engine.rs      # the tokio driver loop + EngineBuilder
+  src/capability.rs  # Capability trait + ChunkSink + registry
+  src/model.rs       # ModelAdapter trait + ModelSink + registry
+  src/policy.rs      # host permission Policy: AllowAll/DenyAll/Interactive
+  src/frontend.rs    # Frontend trait + StdoutFrontend
+  src/capabilities/  # shell, fs_read, fs_write, http
+
+crates/baton-providers/  # model adapters — OpenAiAdapter (streaming)
+crates/baton-cli/        # the `baton` binary (~10 lines on top of baton-host)
 ```
 
-The other crates in `ARCHITECTURE.md` §10 (`baton-host`, `baton-cli`,
-`baton-wasm`, …) don't exist yet — they arrive in later phases. Don't add
-environmental dependencies to `baton-core` to make a future host easier; put
-them in that host's crate.
+The remaining crates in `ARCHITECTURE.md` §10 (`baton-wasm`, `baton-py`,
+`baton-js`, `baton-plugin-abi`, `baton-replay`) arrive in later phases. **Never
+add environmental dependencies to `baton-core`** to make a host easier; put them
+in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or
+another host), never in the core.
+
+When extending the host: capabilities are uniform (no privileged built-ins —
+shell/fs/http are ordinary `Capability`s); a model call is "an effect the host
+provides" registered like a capability; transport errors (retries, 429s) are the
+adapter's job, semantic errors route back to the model as tool results.
 
 ## Commands
 

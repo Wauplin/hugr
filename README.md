@@ -50,50 +50,72 @@ live in the host; the brain is a single-threaded reducer.
 [`Command`]: crates/baton-core/src/command.rs
 [`Event`]: crates/baton-core/src/event.rs
 
-## Status — Phase 0 ✅
+## Status — Phases 0 & 1 ✅
 
-Per the [roadmap](docs/ROADMAP.md), Phase 0 ships the **pure core skeleton (no
-IO)**: the `Command`/`Event` vocabulary, the append-only log and in-flight op
-table, the turn loop (`user → model → tool → model → done`), a trivial
-pass-through projection policy, and **deterministic replay**.
+Per the [roadmap](docs/ROADMAP.md):
 
-Only [`baton-core`](crates/baton-core) exists today. Later phases add the
-native host, provider adapters, the CLI, WASM/Python/JS bindings, traces,
-plugins, sub-agents and scheduling (see the roadmap).
+- **Phase 0** — the **pure core skeleton (no IO)**: the `Command`/`Event`
+  vocabulary, the append-only log and in-flight op table, the turn loop
+  (`user → model → tool → model → done`), a trivial pass-through projection
+  policy, and **deterministic replay**.
+- **Phase 1** — the **batteries-included CLI host**: a tokio driver loop, the
+  uniform capability + model-adapter interfaces, `shell`/`fs`/`http`
+  capabilities, an interactive permission policy, a streaming OpenAI adapter,
+  and the `baton` CLI.
+
+See [`PROGRESS.md`](PROGRESS.md) for the detailed status.
 
 ## Crate layout
 
-Phase 0 is a single crate; the workspace is structured to grow into the full
-layout from [`ARCHITECTURE.md` §10](docs/ARCHITECTURE.md):
+The workspace grows into the full layout from
+[`ARCHITECTURE.md` §10](docs/ARCHITECTURE.md). Today:
 
 ```
 crates/
-  baton-core/     # the sans-IO brain (this is all that exists in Phase 0)
-                  #   — state, log, projection, op table, reducer.
-                  #   NO tokio, NO reqwest, NO fs.
+  baton-core/       # the sans-IO brain — state, log, projection, op table,
+                    #   reducer. NO tokio, NO reqwest, NO fs.
+  baton-host/       # default native host: tokio driver loop, Capability +
+                    #   ModelAdapter traits, shell/fs/http, policy, front-end.
+  baton-providers/  # model adapters — OpenAI chat completions (streaming).
+  baton-cli/        # the `baton` showcase binary.
 ```
 
-Planned (later phases): `baton-model`, `baton-providers`, `baton-host`,
-`baton-cli`, `baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`,
-`baton-replay`.
+Planned (later phases): `baton-wasm`, `baton-py`, `baton-js`,
+`baton-plugin-abi`, `baton-replay`.
+
+## Running the CLI
+
+```bash
+export OPENAI_API_KEY=sk-...          # required
+export OPENAI_MODEL=gpt-4o-mini       # optional (this is the default)
+
+cargo run -p baton-cli -- "list the rust files and summarise the workspace"
+cargo run -p baton-cli                # interactive REPL
+cargo run -p baton-cli -- -y "..."    # approve all tool calls (no prompts)
+```
+
+The engine setup is ~10 lines on top of `baton-host` (see the marked block in
+[`crates/baton-cli/src/main.rs`](crates/baton-cli/src/main.rs)).
 
 ## Building & testing
 
 ```bash
-cargo build          # build the workspace
-cargo test           # run the unit + scripted/determinism tests
+cargo build --workspace
+cargo test                  # unit + scripted/determinism + end-to-end tests
 cargo clippy --all-targets
 cargo fmt --all
+cargo tree -p baton-core    # audit: must stay free of tokio/reqwest/fs
 ```
 
-The two Phase 0 exit criteria are covered by tests in
-[`crates/baton-core/tests`](crates/baton-core/tests):
+Notable tests:
 
-- `scripted_session.rs` — a scripted `user → model → tool → model → done`
-  session reduces to the expected command sequence.
-- `determinism.rs` — feeding the same event stream twice yields identical
-  commands; deltas never touch the durable log; the log round-trips through
-  JSON.
+- `baton-core/tests` — the Phase 0 exit criteria: a scripted session reduces to
+  the expected command sequence; the same event stream replays to identical
+  commands.
+- `baton-host/tests/end_to_end.rs` — a real multi-turn session through the
+  tokio driver loop using the real `shell` capability.
+- `baton-providers` — request building, SSE accumulation, and a streaming run
+  against a local mock SSE server.
 
 ## License
 
