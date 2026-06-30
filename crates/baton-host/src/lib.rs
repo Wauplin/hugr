@@ -29,6 +29,7 @@
 
 pub mod capabilities;
 mod capability;
+mod coalesce;
 mod engine;
 mod frontend;
 mod model;

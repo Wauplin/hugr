@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 
 use crate::ChunkSink;
 use crate::capability::CapabilityRegistry;
+use crate::coalesce::Coalescer;
 use crate::frontend::{Frontend, StdoutFrontend};
 use crate::model::{ModelRegistry, ModelSink};
 use crate::policy::{AllowAll, Policy};
@@ -63,6 +64,11 @@ pub struct Engine {
     /// Capability name per in-flight op, so tool results can be labelled when
     /// the engine observes their completion events.
     op_labels: HashMap<OpId, String>,
+    /// Batches consecutive streamed text on the *render* path only, to cut
+    /// per-token flush churn (ARCHITECTURE §4.4). It never touches the brain's
+    /// event stream — every `ModelDelta` is still submitted — so replay stays
+    /// bit-for-bit identical regardless of how the render was coalesced.
+    coalescer: Coalescer,
 }
 
 impl Engine {
@@ -102,6 +108,7 @@ impl Engine {
     /// accumulated totals (e.g. the metrics footer). Call this once after the
     /// last turn of a one-shot run, or when an interactive session exits.
     pub fn session_end(&mut self) {
+        self.flush_render();
         self.frontend.on_session_end();
     }
 
@@ -128,8 +135,10 @@ impl Engine {
                 }
             }
 
-            // No ops in flight → the turn is done.
+            // No ops in flight → the turn is done. Flush any text the coalescer
+            // is still holding so it lands before control returns to the caller.
             if self.brain.state().inflight_len() == 0 {
+                self.flush_render();
                 break;
             }
 
@@ -144,9 +153,27 @@ impl Engine {
         }
     }
 
+    /// Drain the coalescer's buffered streamed text to the front-end as one (or
+    /// zero) merged render. Called at every boundary where order matters — a
+    /// lifecycle hook, a completion event, the end of a turn — so withheld text
+    /// always reaches the screen before whatever follows it.
+    fn flush_render(&mut self) {
+        for rendered in self.coalescer.flush() {
+            self.frontend.on_output(&rendered);
+        }
+    }
+
     /// Report incoming events to the front-end for observability, before the
     /// brain folds them. (Commands are reported in [`perform`](Self::perform).)
     fn observe(&mut self, event: &Event) {
+        // A model/tool *completion* line must appear after the text it follows:
+        // flush any buffered streamed text before rendering the lifecycle hook.
+        if matches!(
+            event,
+            Event::ModelDone { .. } | Event::CapabilityDone { .. } | Event::CapabilityError { .. }
+        ) {
+            self.flush_render();
+        }
         match event {
             Event::ModelDone { op, usage, .. } => self.frontend.on_model_end(*op, usage),
             Event::CapabilityDone { op, result, .. } => {
@@ -163,6 +190,13 @@ impl Engine {
 
     /// Perform a single command from the brain.
     async fn perform(&mut self, command: Command) {
+        // Every command except `Emit` may render a front-end line (model/tool
+        // start, permission, done, notice) that must follow the streamed text
+        // it comes after: flush the coalescer's buffer first to keep order.
+        // `Emit` itself is the coalescing path and must not self-flush.
+        if !matches!(command, Command::Emit(_)) {
+            self.flush_render();
+        }
         match command {
             Command::StartModelCall { op, model, request } => match self.models.get(&model) {
                 Some(adapter) => {
@@ -242,7 +276,15 @@ impl Engine {
                 let _ = self.tx.send(Event::OpCancelled { op });
             }
 
-            Command::Emit(event) => self.frontend.on_output(&event),
+            // Cosmetic output goes through the coalescer: consecutive streamed
+            // text is batched into fewer, larger renders (ARCHITECTURE §4.4).
+            // The brain already saw every delta (the engine submits them all),
+            // so this affects only what the front-end draws, never the log.
+            Command::Emit(event) => {
+                for rendered in self.coalescer.push(event) {
+                    self.frontend.on_output(&rendered);
+                }
+            }
 
             // Phase 3 persists the trace here; Phase 1 just drops finished
             // task handles so they don't accumulate.
@@ -399,6 +441,7 @@ impl EngineBuilder {
             rx,
             tasks: HashMap::new(),
             op_labels: HashMap::new(),
+            coalescer: Coalescer::new(),
         }
     }
 }

@@ -63,7 +63,7 @@ Tests (40 total across the workspace):
 - ✅ "CLI on a laptop" host setup ≈ 10 lines on top of `baton-host` (see the marked block in `crates/baton-cli/src/main.rs`).
 - ✅ Genuine multi-turn session end-to-end. Verified **live** against the HF router: `baton -y "Use the shell tool to run 'echo baton-live-test', then tell me what it printed."` — the model called the shell tool, the host ran it and streamed the output, and the model produced a final answer. Also covered by the driver-loop + mock-SSE tests for CI (no key needed).
 
-## Phase 2 — Concurrency & streaming (the differentiator) 🚧
+## Phase 2 — Concurrency & streaming (the differentiator) ✅
 
 **Goal:** multiple in-flight operations; the LLM is "just another stream."
 
@@ -83,7 +83,7 @@ Tests (44 total across the workspace, +4):
 
 - ✅ Kick off a long background op and stream a model response simultaneously; react to its completion instantly (no polling/`sleep`).
 - ✅ Cancel an in-flight model stream cleanly; the log records "N tokens then cancelled"; replay reproduces it (P2-2 below).
-- ⏳ Delta coalescing remains (the last Phase 2 task).
+- ✅ Delta coalescing with exact recording (P2-3 below).
 
 ### P2-2 — First-class cancellation ✅
 
@@ -101,11 +101,21 @@ Tests (50 total across the workspace, +6):
 
 - ✅ Cancel an in-flight model stream cleanly (host aborts the task; partial text preserved). Background capability ops cancel cleanly too (no leaked work).
 - ✅ Replay reproduces the partial output then the cancel, deterministically.
-- ⏳ Delta coalescing remains (the last Phase 2 task).
+- ✅ Delta coalescing with exact recording (P2-3 below).
 
-Notes for the next Phase 2 task:
+### P2-3 — Delta coalescing with exact recording ✅
 
-- **Delta coalescing (P2-3):** lives entirely host-side (ARCHITECTURE §4.4/§4.5) — deltas are transport, never logged, so coalescing won't affect the durable log or replay; the recorded thing to assert is that the consolidated `ModelDone`/`ToolResult` is unchanged regardless of how deltas were batched. The cancellation work is orthogonal: a cancelled model op's partial is read from the brain's `text_so_far` (folded from deltas as they arrive), so coalescing must still feed each delta to the brain (or the partial would lose tokens) — batch the *front-end render*, not the `submit`.
+The host coalesces high-frequency streamed deltas for the **render** while still recording exactly **one** consolidated `Record` per message — deltas are transport, never durable (ARCHITECTURE §4.4/§4.5), so replay stays bit-for-bit identical regardless of how the stream was batched. Implemented entirely host-side; `baton-core` is untouched (no new `Command`/`Event`/`Record` variants — coalescing is invisible to the brain):
+
+- `baton-host` (`coalesce.rs`): a small, pure, IO-free [`Coalescer`] that buffers *consecutive same-op streamed text* (`ModelText` / `ModelReasoning`, kept separate since they render differently) and merges it into one larger `OutputEvent`. Any other event — a different op, a tool chunk, a tool start, a notice — first flushes the pending buffer (preserving order), then passes through. It takes `OutputEvent`s in and yields the `OutputEvent`s the front-end should render, so it is fully unit-testable without stdout.
+- `baton-host` (`engine.rs`): the `Engine` routes `Command::Emit` through the coalescer (`push` → render the merged result), and `flush_render`es it at every boundary where order matters — before any lifecycle hook (model/tool start, permission, done, notice; a single guard at the top of `perform` for every command except `Emit`), before a completion event in `observe` (`ModelDone`/`CapabilityDone`/`CapabilityError`, so the metric line follows its text), at the end of each turn (`drive_to_idle`), and in `session_end`. **Critically, the engine still submits *every* `ModelDelta` to the brain** (the `perform`/`observe` submit path is unchanged) — so the brain's `text_so_far` stays complete and a cancelled op's partial loses no tokens; coalescing batches only the front-end render, never the brain's event stream.
+
+Tests (57 total across the workspace, +7):
+
+- `baton-host` `coalesce` unit tests — consecutive same-op text merges on flush; a non-text event flushes first (order preserved); switching op flushes the previous op; text vs reasoning never merge; empty flush is a no-op; and the headline **chunking-invariant** property (per-char vs few-chunk vs single-chunk streams all render identical text, and per-char churn collapses to one render event).
+- `baton-host/tests/end_to_end.rs::delta_coalescing_keeps_recording_exact` — through the **real tokio engine**: the same answer streamed per-character, in 5-char chunks, and as a single delta yields byte-for-byte identical *logical* records (`UserMessage`/`ModelOutput`/`ToolResult`) and exactly **one** consolidated `ModelOutput` per call (no per-delta log entries), while the per-character stream is coalesced to a single render call.
+
+[`Coalescer`]: crates/baton-host/src/coalesce.rs
 
 [`Engine`]: crates/baton-host/src/engine.rs
 [`Capability`]: crates/baton-host/src/capability.rs

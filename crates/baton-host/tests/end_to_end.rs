@@ -65,12 +65,16 @@ struct Capture {
     tool_ends: Arc<Mutex<Vec<String>>>,
     /// Number of times the session-end hook fired.
     session_ends: Arc<Mutex<u32>>,
+    /// Number of `ModelText` render events the front-end actually received —
+    /// lets a test prove the host coalesced many deltas into fewer renders.
+    text_renders: Arc<Mutex<u32>>,
 }
 
 impl Frontend for Capture {
     fn on_output(&mut self, event: &OutputEvent) {
         if let OutputEvent::ModelText { text, .. } = event {
             self.text.lock().unwrap().push_str(text);
+            *self.text_renders.lock().unwrap() += 1;
         }
     }
     fn on_notice(&mut self, _message: &str) {}
@@ -668,5 +672,143 @@ impl ModelAdapter for BackgroundThenHang {
         let _ = self.streaming.send(());
         std::future::pending::<()>().await;
         unreachable!("aborted on cancel");
+    }
+}
+
+/// A model that streams its answer split into `chunk_size`-char pieces (the
+/// thing the host coalesces). Each `sink.text` is a separate `ModelDelta` event
+/// the engine submits to the brain *and* feeds to the coalescer — so the brain
+/// sees every delta (partial text complete), while the front-end render is
+/// batched. `chunk_size == 0` streams the whole answer in one delta.
+struct ChunkedModel {
+    text: String,
+    chunk_size: usize,
+}
+
+impl ChunkedModel {
+    fn new(text: &str, chunk_size: usize) -> Arc<Self> {
+        Arc::new(Self {
+            text: text.to_string(),
+            chunk_size,
+        })
+    }
+}
+
+#[async_trait]
+impl ModelAdapter for ChunkedModel {
+    async fn call(
+        &self,
+        _request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        let chars: Vec<char> = self.text.chars().collect();
+        let step = if self.chunk_size == 0 {
+            chars.len().max(1)
+        } else {
+            self.chunk_size
+        };
+        for piece in chars.chunks(step) {
+            let s: String = piece.iter().collect();
+            sink.text(s); // one ModelDelta per chunk
+        }
+        Ok((ModelOutput::text(self.text.clone()), Usage::new(1, 1)))
+    }
+}
+
+/// Run a one-shot turn against a `ChunkedModel` with the given chunk size and
+/// return `(durable log, rendered text, number of text-render calls)`.
+async fn run_chunked(answer: &str, chunk_size: usize) -> (Vec<baton_core::LogEntry>, String, u32) {
+    let capture = Capture::default();
+    let model = ChunkedModel::new(answer, chunk_size);
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), model)
+        .frontend(Box::new(capture.clone()))
+        .clock(deterministic_clock())
+        .build();
+    engine.user_turn("tell me something".into()).await;
+    let log = engine.brain().state().log().to_vec();
+    let text = capture.text.lock().unwrap().clone();
+    let renders = *capture.text_renders.lock().unwrap();
+    (log, text, renders)
+}
+
+/// Keep only the *logical* records (user/model/tool) — the consolidated content
+/// the durable trace is about. (`OpEnded` carries timestamps whose count tracks
+/// the number of injected ticks, which differs with delta count; the consolidated
+/// records do not, and they are what replay keys off — ARCHITECTURE §4.5.)
+fn logical_records(log: &[baton_core::LogEntry]) -> Vec<Record> {
+    log.iter()
+        .filter(|e| {
+            matches!(
+                e.record,
+                Record::UserMessage { .. } | Record::ModelOutput { .. } | Record::ToolResult { .. }
+            )
+        })
+        .map(|e| e.record.clone())
+        .collect()
+}
+
+/// P2-3 DONE criterion: the host coalesces streamed deltas for the *render*, but
+/// records exactly **one** consolidated `Record` per message — deltas never hit
+/// the durable log, so the log (and thus replay) is identical regardless of how
+/// the stream was chunked/batched.
+#[tokio::test]
+async fn delta_coalescing_keeps_recording_exact() {
+    let answer = "The quick brown fox jumps over the lazy dog.";
+
+    // Same answer streamed three ways: per-character (worst-case churn), in
+    // 5-char chunks, and as a single delta.
+    let (log_per_char, text_a, renders_a) = run_chunked(answer, 1).await;
+    let (log_chunks, text_b, renders_b) = run_chunked(answer, 5).await;
+    let (log_one, text_c, renders_c) = run_chunked(answer, 0).await;
+
+    // 1. The user sees identical text no matter how it was chunked/coalesced.
+    assert_eq!(text_a, answer);
+    assert_eq!(text_b, answer);
+    assert_eq!(text_c, answer);
+
+    // 2. Coalescing actually batched the render: 44 per-character deltas became
+    //    a single render (one contiguous text run, flushed once at turn end).
+    assert!(
+        renders_a < answer.chars().count() as u32,
+        "per-char stream should be coalesced into fewer renders, got {renders_a}"
+    );
+    assert_eq!(renders_a, 1, "contiguous text coalesces to one render");
+    assert_eq!(renders_b, 1);
+    assert_eq!(renders_c, 1);
+
+    // 3. The consolidated logical records are byte-for-byte identical across all
+    //    three chunkings — exactly one `ModelOutput` per call, no per-delta
+    //    entries. This is what makes replay bit-for-bit independent of batching.
+    let logical_a = logical_records(&log_per_char);
+    let logical_b = logical_records(&log_chunks);
+    let logical_c = logical_records(&log_one);
+    assert_eq!(logical_a, logical_b);
+    assert_eq!(logical_a, logical_c);
+
+    // 4. The log holds exactly one consolidated model output — never one record
+    //    per delta (deltas are transport, never durable; ARCHITECTURE §4.5).
+    for (label, log) in [
+        ("per-char", &log_per_char),
+        ("chunks", &log_chunks),
+        ("one", &log_one),
+    ] {
+        let model_outputs = log
+            .iter()
+            .filter(|e| matches!(e.record, Record::ModelOutput { .. }))
+            .count();
+        assert_eq!(
+            model_outputs, 1,
+            "{label}: expected exactly one consolidated ModelOutput, no per-delta entries"
+        );
+        let output = log.iter().find_map(|e| match &e.record {
+            Record::ModelOutput { output, .. } => Some(output.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            output.map(|o| o.text),
+            Some(answer.to_string()),
+            "{label}: consolidated output text must equal the full answer"
+        );
     }
 }
