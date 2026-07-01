@@ -84,7 +84,7 @@ cargo run -p hugr-cli -- --yolo "..." # allow all gated tool calls, skipping the
 
 By default gated tools are judged by the configured `small` tier and denied reasons are routed back to the model. `--yolo` / `-y` switches to allow-all.
 
-In the interactive REPL, `/context` prints the live `ContextPlan` (budget, included/summarized/referenced/omitted blocks, and reasons) and `/compact` runs one lossless manual compaction pass through the `small` tier.
+In the interactive REPL, `/context` prints the live `ContextPlan` (budget, included/summarized/referenced/omitted blocks, and reasons), `/compact` runs one lossless manual compaction pass through the `small` tier, and `/status` shows tier spend plus connected MCP servers/tools.
 
 Configuration (all optional) via environment and `HUGR_CONFIG`:
 
@@ -95,10 +95,12 @@ Configuration (all optional) via environment and `HUGR_CONFIG`:
 | `HUGR_MODEL_MEDIUM`  | `google/gemma-4-31B-it:cerebras`                                                                                                                    | model id for the `medium` tier (the CLI default tier); must support tool calling                                                     |
 | `HUGR_MODEL_BIG`     | `google/gemma-4-31B-it:cerebras`                                                                                                                    | model id for the `big` tier; must support tool calling                                                                               |
 | `HUGR_BASE_URL`      | `https://router.huggingface.co/v1`                                                                                                                  | set to `https://api.openai.com/v1` for OpenAI                                                                                        |
-| `HUGR_CONFIG`        | unset                                                                                                                                               | JSON config with a `models` section for `small`/`medium`/`big`, each with `model`, optional `temperature`, and optional `max_tokens` |
+| `HUGR_CONFIG`        | unset                                                                                                                                               | JSON config with `models` and optional `mcp` / `mcp_servers` sections                                                               |
 | `HUGR_FULL_OUTPUT`   | unset (collapse)                                                                                                                                    | truthy ⇒ show full tool output; same as the `--full-output` flag                                                                     |
 
-Example tier config:
+MCP stdio servers can be loaded either from config or with repeatable `--mcp <cmd>` flags. Their tools are advertised as ordinary capabilities named `mcp__<server>__<tool>`, so they go through the same permission, tracing, and tool-result path as built-ins.
+
+Example config:
 
 ```json
 {
@@ -107,7 +109,11 @@ Example tier config:
     "small": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.0, "max_tokens": 512 },
     "medium": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.2 },
     "big": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.2, "max_tokens": 4096 }
-  }
+  },
+  "mcp": [
+    { "name": "fs", "command": "mcp-filesystem", "args": ["."] },
+    "python3 -m my_mcp_server"
+  ]
 }
 ```
 

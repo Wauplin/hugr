@@ -22,10 +22,11 @@ use hugr_core::{
 use hugr_host::capabilities::{FsRead, FsWrite, Http, Shell};
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
-    CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, Policy, Schedule, SpendReport,
-    StdoutFrontend, Trace, TriggerTarget, spend_report,
+    Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, McpServerConfig,
+    Policy, Schedule, SpendReport, StdoutFrontend, Trace, TriggerTarget, spend_report,
 };
 use hugr_providers::TierModelConfigSet;
+use serde::Deserialize;
 
 const SYSTEM_PROMPT: &str = "\
 You are Hugr, a helpful coding agent running in a terminal. You can run shell \
@@ -68,6 +69,11 @@ struct Cli {
     /// registered as ordinary capabilities. E.g. `--plugin ./my-plugin`.
     #[arg(long = "plugin", value_name = "CMD")]
     plugins: Vec<String>,
+
+    /// Load an MCP stdio server from a command spec. Repeatable. Tools are
+    /// registered as ordinary capabilities named `mcp__<server>__<tool>`.
+    #[arg(long = "mcp", value_name = "CMD")]
+    mcp: Vec<String>,
 
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -245,6 +251,10 @@ async fn run_session(cli: Cli) -> Result<()> {
             builder = builder.capability(cap);
         }
     }
+    let (mcp_caps, mcp_status) = load_mcp_servers(&cli.mcp).await?;
+    for cap in mcp_caps {
+        builder = builder.capability(cap);
+    }
     let mut engine = builder.build();
     // -------------------------------------------------------------------------
 
@@ -254,6 +264,9 @@ async fn run_session(cli: Cli) -> Result<()> {
         "hugr — interactive session (Ctrl-D to exit)",
         &mapping,
         cli.record.as_deref(),
+        &HostStatus {
+            mcp_servers: mcp_status,
+        },
     )
     .await
 }
@@ -295,6 +308,7 @@ async fn run_resume(
         .resume(trace)
         .checkpoint(out_path.clone(), CheckpointCadence::EveryEvent)
         .build();
+    let host_status = HostStatus::default();
 
     drive_session(
         &mut engine,
@@ -302,6 +316,7 @@ async fn run_resume(
         "hugr — resumed interactive session (Ctrl-D to exit)",
         &mapping,
         Some(out_path.as_path()),
+        &host_status,
     )
     .await
 }
@@ -401,6 +416,124 @@ fn build_model_config(model: Option<String>) -> Result<TierModelConfigSet> {
     Ok(models)
 }
 
+#[derive(Clone, Debug, Default)]
+struct HostStatus {
+    mcp_servers: Vec<McpServerStatus>,
+}
+
+#[derive(Clone, Debug)]
+struct McpServerStatus {
+    name: String,
+    tools: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum McpConfigEntry {
+    Spec(String),
+    Object {
+        name: Option<String>,
+        #[serde(alias = "cmd")]
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
+}
+
+async fn load_mcp_servers(
+    cli_specs: &[String],
+) -> Result<(Vec<Arc<dyn Capability>>, Vec<McpServerStatus>)> {
+    let mut configs = read_mcp_config()?;
+    for (index, spec) in cli_specs.iter().enumerate() {
+        configs.push(mcp_config_from_spec(
+            format!("cli{}", index + 1),
+            spec,
+            Vec::new(),
+        )?);
+    }
+
+    let mut capabilities = Vec::new();
+    let mut status = Vec::new();
+    for config in configs {
+        let server_name = config.name.clone();
+        let caps = hugr_host::mcp::load_stdio(config)
+            .await
+            .with_context(|| format!("loading MCP server `{server_name}`"))?;
+        let tools = caps.iter().map(|cap| cap.name().to_string()).collect();
+        status.push(McpServerStatus {
+            name: server_name,
+            tools,
+        });
+        capabilities.extend(caps);
+    }
+    Ok((capabilities, status))
+}
+
+fn read_mcp_config() -> Result<Vec<McpServerConfig>> {
+    let Some(path) = std::env::var_os("HUGR_CONFIG") else {
+        return Ok(Vec::new());
+    };
+    let text = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "reading Hugr config from {}",
+            PathBuf::from(&path).display()
+        )
+    })?;
+    let root: serde_json::Value = serde_json::from_str(&text).with_context(|| {
+        format!(
+            "parsing Hugr config from {}",
+            PathBuf::from(&path).display()
+        )
+    })?;
+    let Some(raw) = root.get("mcp").or_else(|| root.get("mcp_servers")) else {
+        return Ok(Vec::new());
+    };
+    parse_mcp_entries(raw.clone())
+}
+
+fn parse_mcp_entries(raw: serde_json::Value) -> Result<Vec<McpServerConfig>> {
+    let entries: Vec<McpConfigEntry> = serde_json::from_value(raw)
+        .context("parsing `mcp` section; expected strings or { name, command, args } objects")?;
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(index, entry)| match entry {
+            McpConfigEntry::Spec(spec) => {
+                mcp_config_from_spec(format!("config{}", index + 1), &spec, Vec::new())
+            }
+            McpConfigEntry::Object {
+                name,
+                command,
+                args,
+            } => mcp_config_from_spec(
+                name.unwrap_or_else(|| format!("config{}", index + 1)),
+                &command,
+                args,
+            ),
+        })
+        .collect()
+}
+
+fn mcp_config_from_spec(
+    name: impl Into<String>,
+    spec: &str,
+    extra_args: Vec<String>,
+) -> Result<McpServerConfig> {
+    let name = name.into();
+    let mut parts = spec.split_whitespace();
+    let program = parts
+        .next()
+        .with_context(|| format!("empty MCP command spec for `{name}`"))?;
+    let mut config = McpServerConfig::new(name, program);
+    for arg in parts {
+        config = config.arg(arg);
+    }
+    for arg in extra_args {
+        config = config.arg(arg);
+    }
+    Ok(config)
+}
+
 /// Print a startup banner to stderr, dimmed only on a real terminal (and not
 /// under `NO_COLOR`).
 fn print_banner(text: &str) {
@@ -464,10 +597,11 @@ async fn drive_session(
     intro: &str,
     tier_mapping: &str,
     out_path: Option<&std::path::Path>,
+    host_status: &HostStatus,
 ) -> Result<()> {
     if !prompt.is_empty() {
         let text = prompt.join(" ");
-        if !handle_repl_command(engine, &text, tier_mapping).await? {
+        if !handle_repl_command(engine, &text, tier_mapping, host_status).await? {
             engine.user_turn(text).await;
         }
         engine.session_end();
@@ -488,7 +622,7 @@ async fn drive_session(
         if line.is_empty() {
             continue;
         }
-        if handle_repl_command(engine, line, tier_mapping).await? {
+        if handle_repl_command(engine, line, tier_mapping, host_status).await? {
             continue;
         }
         engine.user_turn(line.to_string()).await;
@@ -497,7 +631,12 @@ async fn drive_session(
     save_recording(engine, out_path)
 }
 
-async fn handle_repl_command(engine: &mut Engine, line: &str, tier_mapping: &str) -> Result<bool> {
+async fn handle_repl_command(
+    engine: &mut Engine,
+    line: &str,
+    tier_mapping: &str,
+    host_status: &HostStatus,
+) -> Result<bool> {
     let mut parts = line.split_whitespace();
     let Some(command) = parts.next() else {
         return Ok(false);
@@ -520,7 +659,7 @@ async fn handle_repl_command(engine: &mut Engine, line: &str, tier_mapping: &str
             Ok(true)
         }
         "/status" => {
-            print_status(engine, tier_mapping);
+            print_status(engine, tier_mapping, host_status);
             Ok(true)
         }
         _ if command.starts_with('/') => {
@@ -561,7 +700,7 @@ fn print_tier_override(engine: &Engine) {
     }
 }
 
-fn print_status(engine: &Engine, tier_mapping: &str) {
+fn print_status(engine: &Engine, tier_mapping: &str, host_status: &HostStatus) {
     let plan = engine.context_plan();
     let report = spend_report(engine.brain().state().log());
     println!("models: {tier_mapping}");
@@ -572,7 +711,23 @@ fn print_status(engine: &Engine, tier_mapping: &str) {
         plan.budget.max_tokens,
         context_percent(plan.totals.used_tokens, plan.budget.max_tokens)
     );
+    print_mcp_status(host_status);
     print_spend_report(&report);
+}
+
+fn print_mcp_status(host_status: &HostStatus) {
+    if host_status.mcp_servers.is_empty() {
+        println!("mcp: no connected servers");
+        return;
+    }
+    println!("mcp:");
+    for server in &host_status.mcp_servers {
+        if server.tools.is_empty() {
+            println!("- {} · no tools", server.name);
+        } else {
+            println!("- {} · {}", server.name, server.tools.join(", "));
+        }
+    }
 }
 
 fn print_spend_report(report: &SpendReport) {
@@ -783,5 +938,50 @@ fn summarize_command(cmd: &Command) -> String {
         Command::Checkpoint => "Checkpoint".to_string(),
         Command::Done { reason } => format!("Done({reason:?})"),
         other => format!("{other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::ffi::OsString;
+
+    #[test]
+    fn mcp_command_spec_splits_program_and_args() {
+        let config = mcp_config_from_spec("cli1", "server --root .", vec!["--extra".into()])
+            .expect("valid command spec");
+        assert_eq!(config.name, "cli1");
+        assert_eq!(config.program, OsString::from("server"));
+        assert_eq!(
+            config.args,
+            vec![
+                OsString::from("--root"),
+                OsString::from("."),
+                OsString::from("--extra")
+            ]
+        );
+    }
+
+    #[test]
+    fn mcp_config_accepts_strings_and_named_objects() {
+        let configs = parse_mcp_entries(json!([
+            "python3 -m first",
+            { "name": "fs", "command": "mcp-filesystem", "args": ["."] },
+            { "name": "git", "cmd": "mcp-git --stdio" }
+        ]))
+        .expect("valid mcp config");
+
+        assert_eq!(configs.len(), 3);
+        assert_eq!(configs[0].name, "config1");
+        assert_eq!(configs[0].program, OsString::from("python3"));
+        assert_eq!(
+            configs[0].args,
+            vec![OsString::from("-m"), OsString::from("first")]
+        );
+        assert_eq!(configs[1].name, "fs");
+        assert_eq!(configs[1].args, vec![OsString::from(".")]);
+        assert_eq!(configs[2].name, "git");
+        assert_eq!(configs[2].args, vec![OsString::from("--stdio")]);
     }
 }

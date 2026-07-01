@@ -190,6 +190,20 @@ Tests:
 - `crates/hugr-host/tests/end_to_end.rs::mcp_stdio_tool_runs_through_real_engine` starts a tiny external stdio MCP server, loads its tool into the real engine, has the model call it, and verifies the result is logged with zero core changes.
 - Verification run: `cargo test -p hugr-host`.
 
+### C2 — CLI MCP configuration and status ✅
+
+Done:
+
+- `hugr-cli` now accepts repeatable `--mcp <cmd>` flags and reads MCP servers from the shared `HUGR_CONFIG` JSON root through either `mcp` or `mcp_servers`. Entries may be command strings or objects with `name`, `command`/`cmd`, and optional `args`.
+- Loaded MCP stdio servers are registered on the same `EngineBuilder` as built-in tools and plugins, so their namespaced tools appear in the `ModelRequest` tool list with no core change.
+- `/status` now reports connected MCP servers and their advertised capability names alongside model tier mapping, context fullness, spend, and routing reasons.
+- `README.md` documents the config shape and `--mcp` behavior.
+
+Tests:
+
+- `crates/hugr-cli/src/main.rs` unit tests pin command-spec splitting and JSON config parsing for string and object MCP entries.
+- Verification run: `cargo test -p hugr-cli`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.
