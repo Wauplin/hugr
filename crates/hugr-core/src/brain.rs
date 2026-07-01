@@ -677,6 +677,29 @@ impl Brain {
     /// start it immediately.
     fn begin_tool_call(&mut self, call: ToolCall) {
         let op = self.state.alloc_op();
+        if let Some(skill) = self.policy.activate_skill(&call.name) {
+            let name = call.name;
+            let call_id = call.id;
+            self.append(Record::SkillActivated {
+                id: skill.id.clone(),
+                title: skill.title.clone(),
+                summary: skill.summary.clone(),
+                instructions: skill.instructions.clone(),
+                est_tokens: skill.est_tokens,
+            });
+            self.append(Record::ToolResult {
+                op,
+                name,
+                call_id,
+                result: json!({
+                    "skill_id": skill.id,
+                    "active": true,
+                }),
+                est_tokens: 0,
+            });
+            self.end_op(op, OpOutcome::Ok, None);
+            return;
+        }
         // A policy-designated sub-agent (ARCHITECTURE §13/§14): fork the log
         // prefix per the seed strategy and hand it to the host as a child brain.
         // The brain owns the log, so resolving the fork is a pure operation here.
@@ -871,6 +894,9 @@ fn render_summary_record(seq: Seq, record: &Record) -> Option<String> {
             Some(format!("log:{} tool {}: {}", seq.0, name, result))
         }
         Record::Summary { text, .. } => Some(format!("log:{} summary: {}", seq.0, text)),
+        Record::SkillActivated { id, title, .. } => {
+            Some(format!("log:{} skill {} ({}) activated", seq.0, id, title))
+        }
         Record::OpEnded { .. } => None,
     }
 }

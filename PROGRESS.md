@@ -229,6 +229,19 @@ Tests:
 - `hugr-host::skills::tests::discovers_skill_bundle_metadata_and_tool_schemas` creates a bundle on disk, discovers it, and verifies metadata plus optional tool-schema loading.
 - Verification run: `cargo test -p hugr-host skills`.
 
+### C5 — Core skill descriptors and activation ✅
+
+Done:
+
+- `hugr-core` now has a pure `SkillDescriptor` that hosts can supply to `StaticPolicy::with_skills`. Each descriptor advertises a lightweight model-invocable tool named `skill__<id>` with no host IO.
+- `TurnPolicy::activate_skill(capability)` makes skill selection a policy decision, analogous to background ops and sub-agent seeding. The reducer asks the policy; it does not hardcode skill names.
+- When the model invokes a skill descriptor, the brain appends a durable `Record::SkillActivated` containing id, title, summary, instructions, and host-supplied token estimate, then appends the correlated tool result and resumes the model turn. Later projection renders those instructions from the durable record, so replay does not depend on rediscovering the skill bundle from disk.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::skill_invocation_records_activation_and_projects_instructions` proves the descriptor is advertised, invocation records durable activation, the next request includes the skill instructions, and no core IO is involved.
+- Verification run: `cargo test -p hugr-core`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.
