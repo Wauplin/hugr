@@ -14,7 +14,7 @@ It can **read pages** (text, links, headings, interactive elements) and **naviga
    ```
 2. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select `crates/hugr-wasm/extension/`.
 3. Click the Hugr toolbar icon to open the side panel. Open **Settings (⚙)** and paste an API key:
-   - **Hugging Face router** (default): a `hf_…` token, base URL `https://router.huggingface.co/v1`, model e.g. `Qwen/Qwen2.5-72B-Instruct`.
+   - **Hugging Face router** (default): a `hf_…` token, base URL `https://router.huggingface.co/v1`, model e.g. `google/gemma-4-31B-it:cerebras`.
    - **OpenAI**: an `sk-…` key, base URL `https://api.openai.com/v1`, model e.g. `gpt-4o-mini`.
 4. Chat. See [`DEMOS.md`](./DEMOS.md) for things to try.
 
@@ -22,16 +22,20 @@ Requires Chrome 116+ (side panel API). Your key lives in `chrome.storage.local` 
 
 ## How it maps to the architecture
 
-| Piece | File | Native equivalent |
-| --- | --- | --- |
-| The brain (WASM) | `wasm/hugr_wasm.js` + `crates/hugr-wasm` | `hugr-core` |
-| Driver loop | `host/engine.js` | `hugr-host/src/engine.rs` |
-| Model adapter (fetch/SSE) | `host/model.js` | `hugr-providers/src/openai.rs` |
-| Capabilities (tabs/pages) | `host/tools.js` + `host/schemas.js` | `hugr-host/src/capabilities/` |
-| Front-end (DOM) | `sidepanel.js` | `StdoutFrontend` |
-| Permission policy | `host/engine.js` (`requestPermission`) | `hugr-host` `Interactive`/`AllowAll` |
+| Piece                     | File                                     | Native equivalent                    |
+| ------------------------- | ---------------------------------------- | ------------------------------------ |
+| The brain (WASM)          | `wasm/hugr_wasm.js` + `crates/hugr-wasm` | `hugr-core`                          |
+| Driver loop               | `host/engine.js`                         | `hugr-host/src/engine.rs`            |
+| Model adapter (fetch/SSE) | `host/model.js`                          | `hugr-providers/src/openai.rs`       |
+| Capabilities (tabs/pages) | `host/tools.js` + `host/schemas.js`      | `hugr-host/src/capabilities/`        |
+| Front-end (DOM)           | `sidepanel.js`                           | `StdoutFrontend`                     |
+| Permission policy         | `host/engine.js` (`requestPermission`)   | `hugr-host` `Interactive`/`AllowAll` |
 
 The brain is `submit(eventJson)` / `poll() -> commandsJson`, synchronous and pure, exactly as in the terminal. Everything asynchronous (streaming fetches, tab tools, permission prompts) lives in the JS host and is merged into the one ordered event stream the brain consumes an event at a time.
+
+Assistant output and confirmation prompts render Markdown directly in the side panel, including headings, lists, quotes, code blocks, links, tables, emphasis, and task checkboxes. The renderer is dependency-free and builds DOM nodes rather than injecting model text as HTML.
+
+The header includes a new-chat button that clears the panel and starts a fresh WASM brain, plus an export button that downloads a `.jsonl` trace envelope containing metadata, the static policy, the exact submitted event stream (including injected `Tick`s), and the folded durable log. Export does not include your API key, and browser-side resume/import from that file is not wired yet.
 
 ## The tools
 

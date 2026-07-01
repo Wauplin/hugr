@@ -50,6 +50,10 @@ export class Engine {
     this.aborters = new Map();
     /** @type {Map<number, string>} per-op capability label, for result rendering */
     this.opLabels = new Map();
+    /** @type {Array<any>} exact submitted event stream, including injected Tick events */
+    this.events = [];
+    /** @type {number|null} first injected Tick timestamp */
+    this.createdAt = null;
   }
 
   now() {
@@ -71,7 +75,10 @@ export class Engine {
 
   /** Feed one event into the brain, stamping a Tick first (§6.1: injected time). */
   feed(value) {
-    this.brain.submit(JSON.stringify({ Tick: { now: this.now() } }));
+    const tick = { Tick: { now: this.now() } };
+    if (this.createdAt == null) this.createdAt = tick.Tick.now;
+    this.events.push(tick, value);
+    this.brain.submit(JSON.stringify(tick));
     this.brain.submit(JSON.stringify(value));
   }
 

@@ -10,7 +10,7 @@ export const DEFAULTS = {
   // The base URL the adapter posts to; it appends `/chat/completions`.
   baseUrl: "https://router.huggingface.co/v1",
   // A capable, widely-available default on the HF router.
-  model: "Qwen/Qwen2.5-72B-Instruct",
+  model: "google/gemma-4-31B-it:cerebras",
   // When true, navigation tools run without a permission prompt (the "-y" mode).
   autoApprove: false,
   temperature: 0.2,
