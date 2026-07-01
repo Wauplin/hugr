@@ -24,6 +24,7 @@ export function buildPolicy(config) {
       permissioned: PERMISSIONED,
       background: [],
       agents: [],
+      skills: config.skills || [],
       params: { temperature: config.temperature, max_tokens: null },
       system: SYSTEM_PROMPT,
     },
@@ -63,6 +64,8 @@ export class Engine {
     this.createdAt = null;
     /** @type {string|null} pending one-turn tier override */
     this.tierOverride = null;
+    /** @type {string|null} last active skill id observed in projected context */
+    this.activeSkill = null;
   }
 
   now() {
@@ -197,6 +200,11 @@ export class Engine {
   startModel({ op, model, request }) {
     const controller = new AbortController();
     this.aborters.set(op, controller);
+    const activeSkill = activeSkillFromRequest(request);
+    if (activeSkill) {
+      this.activeSkill = activeSkill;
+      this.frontend.onSkillActive?.(activeSkill);
+    }
     this.frontend.onModelStart(op, model);
     if (request?.extra?.kind !== "compaction") this.tierOverride = null;
     callModel(request, this.config, {
@@ -298,6 +306,18 @@ export class Engine {
     }
     this.pushEvent({ OpCancelled: { op } });
   }
+}
+
+function activeSkillFromRequest(request) {
+  for (const block of request?.blocks || []) {
+    for (const part of block?.content || []) {
+      const text = part?.Text;
+      if (typeof text !== "string") continue;
+      const match = text.match(/Active skill `([^`]+)`/);
+      if (match) return match[1];
+    }
+  }
+  return null;
 }
 
 function estimateTextTokens(text) {

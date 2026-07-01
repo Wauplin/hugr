@@ -104,6 +104,10 @@
   <textarea id="mcpServers" spellcheck="false" placeholder='[{ "name": "fs", "command": "mcp-filesystem", "args": ["."] }]'></textarea>
   <div class="hint">Chrome extensions cannot spawn stdio MCP servers directly. These declarations are stored for a native bridge; use the CLI <code>--mcp</code> path today.</div>
 
+  <label for="skills">Skills</label>
+  <textarea id="skills" spellcheck="false" placeholder='[{ "id": "rust-reviewer", "title": "Rust Reviewer", "summary": "Review Rust diffs.", "instructions": "Check ownership, errors, and tests." }]'></textarea>
+  <div class="hint">Skill descriptors are advertised as model-invocable tools and their instructions become durable context when activated.</div>
+
   <div class="footer">
     <button id="save" class="btn primary">Save</button>
     <span id="saved" class="saved"></span>

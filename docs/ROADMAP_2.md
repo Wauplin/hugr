@@ -93,7 +93,7 @@ These narrow the design deliberately. The architecture doc keeps the general mec
 - **C3** `[Browser]` — ✅ Implemented. MCP over a browser-compatible transport where feasible (or document the limitation); configure servers in settings. **Exit:** at least one MCP server's tools are usable from the side panel, or the constraint is documented with a fallback.
 - **C4** `[Engine]` — ✅ Implemented. **Skills loader**: discover skill bundles (a `SKILL.md` + optional scripts/tools) from well-known locations; a skill contributes on-demand instructions and optionally registers capabilities. **Exit:** a skill bundle on disk is discovered and its metadata is available to the host.
 - **C5** `[Brain]` — ✅ Implemented. Skills are exposed to the model as lightweight, model-invocable descriptors; when invoked, the skill's instructions are projected into context (durably referenced, not silently inlined). Skill selection is a `TurnPolicy` decision, not reducer-hardcoded. **Exit:** the model can "invoke" a skill and the skill's instructions appear in the next projection; the choice is replay-deterministic.
-- **C6** `[CLI][Browser]` — Surface available skills (a `/skills` command; a browser skill list) and show which skill is active. **Exit:** users can list skills and see the active one in both hosts.
+- **C6** `[CLI][Browser]` — ✅ Implemented. Surface available skills (a `/skills` command; a browser skill list) and show which skill is active. **Exit:** users can list skills and see the active one in both hosts.
 
 ---
 

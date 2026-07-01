@@ -84,7 +84,7 @@ cargo run -p hugr-cli -- --yolo "..." # allow all gated tool calls, skipping the
 
 By default gated tools are judged by the configured `small` tier and denied reasons are routed back to the model. `--yolo` / `-y` switches to allow-all.
 
-In the interactive REPL, `/context` prints the live `ContextPlan` (budget, included/summarized/referenced/omitted blocks, and reasons), `/compact` runs one lossless manual compaction pass through the `small` tier, and `/status` shows tier spend plus connected MCP servers/tools.
+In the interactive REPL, `/context` prints the live `ContextPlan` (budget, included/summarized/referenced/omitted blocks, and reasons), `/compact` runs one lossless manual compaction pass through the `small` tier, `/skills` lists discovered skills and the active skill, and `/status` shows tier spend plus connected MCP servers/tools.
 
 Configuration (all optional) via environment and `HUGR_CONFIG`:
 

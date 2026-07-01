@@ -242,6 +242,19 @@ Tests:
 - `crates/hugr-core/tests/scripted_session.rs::skill_invocation_records_activation_and_projects_instructions` proves the descriptor is advertised, invocation records durable activation, the next request includes the skill instructions, and no core IO is involved.
 - Verification run: `cargo test -p hugr-core`.
 
+### C6 — Skill surfacing in CLI and browser ✅
+
+Done:
+
+- `EngineBuilder::skills` threads `SkillDescriptor`s into the fresh-session `RoutingPolicy`, so host-discovered/configured skills are advertised as model-invocable descriptors.
+- The CLI discovers disk skill bundles through `hugr-host::skills::discover()`, registers them with the engine, shows the count in the startup banner, adds `/skills`, and reports the active skill in `/status` by scanning durable `Record::SkillActivated` entries.
+- The Chrome extension settings now store skill descriptors as JSON, passes them into the WASM brain policy, adds a Skills drawer, and updates the drawer when a projected request shows an active skill.
+- `README.md` and the extension README document the skill list/active-skill surfaces.
+
+Tests:
+
+- Verification run: `cargo check -p hugr-cli`; `cargo test -p hugr-wasm`; `cargo test -p hugr-host skills`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

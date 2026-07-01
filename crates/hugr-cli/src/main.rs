@@ -17,13 +17,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hugr_core::{
     AgentSeed, Command, ContextDisposition, ContextPlan, ContextSource, Event, ModelSelector,
-    ToolSchema,
+    Record, SkillDescriptor, ToolSchema,
 };
 use hugr_host::capabilities::{FsRead, FsWrite, Http, Shell};
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
     Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, McpServerConfig,
-    Policy, Schedule, SpendReport, StdoutFrontend, Trace, TriggerTarget, spend_report,
+    Policy, Schedule, SkillBundle, SpendReport, StdoutFrontend, Trace, TriggerTarget, spend_report,
 };
 use hugr_providers::TierModelConfigSet;
 use serde::Deserialize;
@@ -216,10 +216,12 @@ async fn run_session(cli: Cli) -> Result<()> {
     let base_url = models.base_url.clone();
     let recording = cli.record.is_some();
     let mode = if cli.yolo { "yolo" } else { "auto-approve" };
+    let skills = hugr_host::skills::discover().context("discovering skill bundles")?;
     print_banner(&format!(
-        "hugr · model {} · {} · {mode}{}",
+        "hugr · model {} · {} · {mode} · {} skills{}",
         mapping,
         base_url,
+        skills.len(),
         if recording { " · recording" } else { "" },
     ));
 
@@ -234,6 +236,7 @@ async fn run_session(cli: Cli) -> Result<()> {
 
     // --- the "CLI on a laptop" host: ~10 lines on top of hugr-host ----------
     let mut builder = base_builder(models, policy)?
+        .skills(skill_descriptors(&skills))
         .record(recording)
         .frontend(Box::new(frontend));
     if let Some(path) = cli.record.clone() {
@@ -266,6 +269,7 @@ async fn run_session(cli: Cli) -> Result<()> {
         cli.record.as_deref(),
         &HostStatus {
             mcp_servers: mcp_status,
+            skills: skill_status(&skills),
         },
     )
     .await
@@ -419,12 +423,20 @@ fn build_model_config(model: Option<String>) -> Result<TierModelConfigSet> {
 #[derive(Clone, Debug, Default)]
 struct HostStatus {
     mcp_servers: Vec<McpServerStatus>,
+    skills: Vec<SkillStatus>,
 }
 
 #[derive(Clone, Debug)]
 struct McpServerStatus {
     name: String,
     tools: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SkillStatus {
+    id: String,
+    title: String,
+    summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -532,6 +544,36 @@ fn mcp_config_from_spec(
         config = config.arg(arg);
     }
     Ok(config)
+}
+
+fn skill_descriptors(skills: &[SkillBundle]) -> Vec<SkillDescriptor> {
+    skills
+        .iter()
+        .map(|skill| {
+            let mut descriptor = SkillDescriptor::new(&skill.id, &skill.title, &skill.instructions)
+                .with_est_tokens(estimate_text_tokens(&skill.instructions));
+            if let Some(summary) = &skill.summary {
+                descriptor = descriptor.with_summary(summary.clone());
+            }
+            descriptor
+        })
+        .collect()
+}
+
+fn skill_status(skills: &[SkillBundle]) -> Vec<SkillStatus> {
+    skills
+        .iter()
+        .map(|skill| SkillStatus {
+            id: skill.id.clone(),
+            title: skill.title.clone(),
+            summary: skill.summary.clone(),
+        })
+        .collect()
+}
+
+fn estimate_text_tokens(text: &str) -> u32 {
+    let bytes = text.len() as u64;
+    bytes.div_ceil(4).max(1).min(u32::MAX as u64) as u32
 }
 
 /// Print a startup banner to stderr, dimmed only on a real terminal (and not
@@ -662,6 +704,10 @@ async fn handle_repl_command(
             print_status(engine, tier_mapping, host_status);
             Ok(true)
         }
+        "/skills" => {
+            print_skills(engine, host_status);
+            Ok(true)
+        }
         _ if command.starts_with('/') => {
             eprintln!("unknown command: {line}");
             Ok(true)
@@ -712,6 +758,7 @@ fn print_status(engine: &Engine, tier_mapping: &str, host_status: &HostStatus) {
         context_percent(plan.totals.used_tokens, plan.budget.max_tokens)
     );
     print_mcp_status(host_status);
+    print_active_skill(engine);
     print_spend_report(&report);
 }
 
@@ -728,6 +775,48 @@ fn print_mcp_status(host_status: &HostStatus) {
             println!("- {} · {}", server.name, server.tools.join(", "));
         }
     }
+}
+
+fn print_skills(engine: &Engine, host_status: &HostStatus) {
+    if host_status.skills.is_empty() {
+        println!("skills: none discovered");
+        return;
+    }
+    let active = active_skill(engine);
+    println!("skills:");
+    for skill in &host_status.skills {
+        let marker = if active.as_deref() == Some(skill.id.as_str()) {
+            " · active"
+        } else {
+            ""
+        };
+        match &skill.summary {
+            Some(summary) if !summary.is_empty() => {
+                println!("- {} · {}{} — {}", skill.id, skill.title, marker, summary);
+            }
+            _ => println!("- {} · {}{}", skill.id, skill.title, marker),
+        }
+    }
+}
+
+fn print_active_skill(engine: &Engine) {
+    match active_skill(engine) {
+        Some(id) => println!("active skill: {id}"),
+        None => println!("active skill: none"),
+    }
+}
+
+fn active_skill(engine: &Engine) -> Option<String> {
+    engine
+        .brain()
+        .state()
+        .log()
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.record {
+            Record::SkillActivated { id, .. } => Some(id.clone()),
+            _ => None,
+        })
 }
 
 fn print_spend_report(report: &SpendReport) {

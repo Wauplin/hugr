@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
     AgentSeed, Brain, Command, ContextPlan, Event, ModelSelector, OpId, RoutingPolicy,
-    SamplingParams, StaticPolicy, SteerMode, Timestamp, ToolSchema, Value,
+    SamplingParams, SkillDescriptor, StaticPolicy, SteerMode, Timestamp, ToolSchema, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -624,6 +624,7 @@ pub struct EngineBuilder {
     /// Capabilities that spawn sub-agents (ARCHITECTURE §13): each advertises a
     /// tool schema to the model and carries a fork seed strategy (§14).
     agents: Vec<(ToolSchema, AgentSeed)>,
+    skills: Vec<SkillDescriptor>,
     record: bool,
     checkpoint_path: Option<PathBuf>,
     checkpoint_cadence: CheckpointCadence,
@@ -647,6 +648,7 @@ impl Default for EngineBuilder {
             system_prompt: None,
             sampling: SamplingParams::default(),
             agents: Vec::new(),
+            skills: Vec::new(),
             record: false,
             checkpoint_path: None,
             checkpoint_cadence: CheckpointCadence::OnCommand,
@@ -696,6 +698,13 @@ impl EngineBuilder {
     /// registries (optionally narrowed by a `tools` allowlist in its args).
     pub fn agent(mut self, schema: ToolSchema, seed: AgentSeed) -> Self {
         self.agents.push((schema, seed));
+        self
+    }
+
+    /// Register skill descriptors. The brain advertises them as lightweight
+    /// model-invocable tools and records activation durably (ROADMAP_2 C5/C6).
+    pub fn skills(mut self, skills: impl IntoIterator<Item = SkillDescriptor>) -> Self {
+        self.skills.extend(skills);
         self
     }
 
@@ -815,6 +824,7 @@ impl EngineBuilder {
                     .with_tools(tools)
                     .with_permissioned(self.caps.permissioned_names())
                     .with_background(self.caps.background_names())
+                    .with_skills(self.skills)
                     .with_params(self.sampling);
                 for (schema, seed) in &self.agents {
                     base_policy = base_policy.with_agent(schema.name.clone(), *seed);

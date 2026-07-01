@@ -15,6 +15,7 @@
       </div>
       <div class="header-actions">
         <button id="new-chat-btn" class="icon-btn" type="button" title="New chat" aria-label="New chat">+</button>
+        <button id="skills-btn" class="icon-btn" type="button" title="Skills" aria-label="Skills">✦</button>
         <button id="context-btn" class="icon-btn" type="button" title="Context" aria-label="Context">▤</button>
         <button id="compact-btn" class="icon-btn" type="button" title="Compact context" aria-label="Compact context">⇣</button>
         <button id="export-trace-btn" class="icon-btn" type="button" title="Export trace" aria-label="Export trace">⇩</button>
@@ -30,6 +31,14 @@
         <button id="context-close" class="icon-btn" type="button" title="Close context" aria-label="Close context">×</button>
       </div>
       <div id="context-body" class="context-body"></div>
+    </aside>
+
+    <aside id="skills-drawer" class="context-drawer hidden" aria-label="Skills">
+      <div class="context-head">
+        <strong>Skills</strong>
+        <button id="skills-close" class="icon-btn" type="button" title="Close skills" aria-label="Close skills">×</button>
+      </div>
+      <div id="skills-body" class="context-body"></div>
     </aside>
 
     <main id="log" class="log">

@@ -41,6 +41,8 @@ Each assistant response shows the logical tier it used (`small`, `medium`, or `b
 
 MCP server declarations can be saved in Settings, but Chrome MV3 pages cannot spawn local stdio subprocesses, so the browser host does not load stdio MCP directly. The supported fallback today is the native CLI `--mcp <cmd>` / `HUGR_CONFIG` path; the stored browser declarations are reserved for a future native bridge or browser-compatible MCP transport.
 
+Skill descriptors can be saved in Settings as JSON (`id`, `title`, optional `summary`, and `instructions`). The side panel's Skills drawer lists configured skills and marks the active skill after the model invokes its `skill__<id>` descriptor.
+
 ## The tools
 
 Read-only (no permission): `list_tabs`, `get_current_page`, `get_page_text`, `get_page_links`, `get_page_outline`, `get_interactive_elements`, `wait_for_page`.

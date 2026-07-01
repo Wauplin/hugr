@@ -22,6 +22,9 @@ function el(tag, cls, text) {
 function scrollDown() {
   logEl.scrollTop = logEl.scrollHeight;
 }
+function estimateTextTokens(text) {
+  return Math.max(1, Math.ceil(String(text || "").length / 4));
+}
 function isSafeUrl(url) {
   try {
     const parsed = new URL(url, "https://example.invalid");
@@ -417,6 +420,26 @@ function renderContextPlan(plan) {
   body.replaceChildren(summary, entries);
 }
 
+function renderSkills() {
+  const body = $("skills-body");
+  const skills = currentConfig?.skills || [];
+  if (!skills.length) {
+    body.replaceChildren(el("div", "context-entry", "No skills configured."));
+    return;
+  }
+  const active = engine?.activeSkill || null;
+  const entries = el("div", "context-entries");
+  for (const skill of skills) {
+    const row = el("div", "context-entry");
+    row.appendChild(el("span", "context-source", skill.id || "skill"));
+    row.appendChild(el("span", "context-disposition", active === skill.id ? "active" : "available"));
+    row.appendChild(el("span", "context-tokens", `${skill.est_tokens || estimateTextTokens(skill.instructions || "")}`));
+    row.appendChild(el("span", "context-reason", skill.summary || skill.title || ""));
+    entries.appendChild(row);
+  }
+  body.replaceChildren(entries);
+}
+
 // ---------------------------------------------------------------------------
 // The front-end: turns brain OutputEvents + lifecycle hooks into DOM.
 // ---------------------------------------------------------------------------
@@ -538,6 +561,10 @@ class Frontend {
     /* the composer re-enables in runTurn's finally */
   }
 
+  onSkillActive() {
+    if (!$("skills-drawer").classList.contains("hidden")) renderSkills();
+  }
+
   // --- interactive prompts (return promises) ------------------------------
   choice(title, bodyContent, buttons) {
     return new Promise((resolve) => {
@@ -639,6 +666,7 @@ function setBusy(v) {
   $("input").disabled = v;
   $("new-chat-btn").disabled = v;
   $("context-btn").disabled = v;
+  $("skills-btn").disabled = v;
   $("compact-btn").disabled = v;
   $("export-trace-btn").disabled = v;
   $("tier-override").disabled = v;
@@ -658,6 +686,7 @@ function startSession(config, resetLog = false) {
   engine = new Engine({ brain, config, tools, frontend });
   $("tier-override").value = "";
   if (!$("context-drawer").classList.contains("hidden")) refreshContextDrawer();
+  if (!$("skills-drawer").classList.contains("hidden")) renderSkills();
 }
 
 function refreshContextDrawer() {
@@ -673,6 +702,11 @@ function refreshContextDrawer() {
 function openContextDrawer() {
   $("context-drawer").classList.remove("hidden");
   refreshContextDrawer();
+}
+
+function openSkillsDrawer() {
+  $("skills-drawer").classList.remove("hidden");
+  renderSkills();
 }
 
 async function boot() {
@@ -736,6 +770,14 @@ $("context-btn").addEventListener("click", () => {
 
 $("context-close").addEventListener("click", () => $("context-drawer").classList.add("hidden"));
 
+$("skills-btn").addEventListener("click", () => {
+  if (busy) return;
+  if ($("skills-drawer").classList.contains("hidden")) openSkillsDrawer();
+  else $("skills-drawer").classList.add("hidden");
+});
+
+$("skills-close").addEventListener("click", () => $("skills-drawer").classList.add("hidden"));
+
 $("compact-btn").addEventListener("click", async () => {
   if (busy || !engine) return;
   setBusy(true);
@@ -769,6 +811,7 @@ $("new-chat-btn").addEventListener("click", () => {
   if (busy || !currentConfig) return;
   $("input").value = "";
   startSession(currentConfig, true);
+  renderSkills();
   $("input").focus();
 });
 

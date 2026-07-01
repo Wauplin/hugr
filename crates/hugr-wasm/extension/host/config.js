@@ -4,7 +4,8 @@
 
 /** @typedef {{ small: string, medium: string, big: string }} TierModels */
 /** @typedef {{ name?: string, command?: string, cmd?: string, args?: string[] }} McpServer */
-/** @typedef {{ apiKey: string, baseUrl: string, model?: string, models: TierModels, autoApprove: boolean, temperature: number, mcpServers: McpServer[] }} Config */
+/** @typedef {{ id: string, title: string, summary?: string, instructions: string, est_tokens?: number }} SkillDescriptor */
+/** @typedef {{ apiKey: string, baseUrl: string, model?: string, models: TierModels, autoApprove: boolean, temperature: number, mcpServers: McpServer[], skills: SkillDescriptor[] }} Config */
 
 /** Defaults mirror the native adapter: the Hugging Face router, OpenAI-compatible. */
 export const DEFAULTS = {
@@ -25,6 +26,7 @@ export const DEFAULTS = {
   // Browser MV3 cannot spawn stdio MCP servers. Keep declarations here so the
   // settings UI can document the fallback and a future bridge can reuse them.
   mcpServers: [],
+  skills: [],
 };
 
 /** Load the merged config (defaults + stored overrides). @returns {Promise<Config>} */
@@ -40,6 +42,7 @@ export async function loadConfig() {
     if (!merged.models[tier]) merged.models[tier] = legacyModel;
   }
   merged.mcpServers = Array.isArray(stored.mcpServers) ? stored.mcpServers : DEFAULTS.mcpServers;
+  merged.skills = Array.isArray(stored.skills) ? stored.skills : DEFAULTS.skills;
   return merged;
 }
 
