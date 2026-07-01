@@ -30,10 +30,11 @@
 //! This started as the Phase 0 deliverable (see `docs/ROADMAP.md`): the turn loop
 //! (`user → model → tool → model → done`), the op table, a trivial pass-through
 //! [`projection`](TurnPolicy::project_context), and deterministic replay. Later
-//! phases added, still sans-IO: cancellation & background ops (Phase 2), and
+//! phases added, still sans-IO: cancellation & background ops (Phase 2),
 //! **sub-agents & forks** (Phase 6 — [`Command::StartAgent`], [`AgentSeed`],
-//! [`Brain::from_log`]). Compaction and blob stores remain wired conceptually
-//! for later phases; resume lives in the host (`hugr-replay`).
+//! [`Brain::from_log`]), and lossless summary-backed compaction (Roadmap 2
+//! Phase A). Blob stores remain host-side; resume lives in the host
+//! (`hugr-replay`).
 
 #![forbid(unsafe_code)]
 // `hugr-core` aspires to be `#![no_std]`-friendly (ARCHITECTURE §10/§11). It is
@@ -57,7 +58,7 @@ pub use model::{
     ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
     ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
 };
-pub use policy::{AgentSeed, StaticPolicy, TurnPolicy};
+pub use policy::{AgentSeed, CompactionTarget, StaticPolicy, TurnPolicy};
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};
 pub use record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage};
 pub use state::{BrainState, InflightOp, OpKind};

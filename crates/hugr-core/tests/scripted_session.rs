@@ -407,3 +407,112 @@ fn summary_records_round_trip_and_evict_covered_span_to_refs() {
         } if reference == "log:0" && summary == "covered by summary log:2"
     ));
 }
+
+/// A3: crossing the high-water mark starts a small-tier compaction model call;
+/// its recorded result becomes a summary, then the real turn is re-projected.
+#[test]
+fn automatic_compaction_summarizes_then_reprojects_and_replays() {
+    let prior_log = vec![
+        LogEntry {
+            seq: Seq(0),
+            at: Timestamp(0),
+            record: Record::UserMessage {
+                text: "old user turn with many details".to_string(),
+                est_tokens: 10,
+            },
+        },
+        LogEntry {
+            seq: Seq(1),
+            at: Timestamp(0),
+            record: Record::ModelOutput {
+                op: OpId(0),
+                output: text_output("old assistant answer with many details"),
+                est_tokens: 10,
+            },
+        },
+    ];
+    let script = vec![
+        Event::UserInput {
+            content: json!("new request"),
+            mode: hugr_core::SteerMode::Queue,
+            est_tokens: 1,
+        },
+        Event::ModelDone {
+            op: OpId(1),
+            output: text_output("Old turn summary."),
+            usage: usage(),
+            est_tokens: 3,
+        },
+        Event::ModelDone {
+            op: OpId(2),
+            output: text_output("Final answer."),
+            usage: usage(),
+            est_tokens: 1,
+        },
+    ];
+
+    let policy = || {
+        StaticPolicy::default()
+            .with_context_budget(TokenBudget::new(20))
+            .with_compaction_high_water_percent(90)
+    };
+    let mut first = Brain::from_log(Box::new(policy()), prior_log.clone());
+    let commands_first = run_script(&mut first, script.clone());
+    let effectful_first = effectful(&commands_first);
+
+    assert!(
+        matches!(
+            effectful_first.as_slice(),
+            [
+                Command::StartModelCall {
+                    op: OpId(1),
+                    model,
+                    request
+                },
+                Command::Checkpoint,
+                Command::StartModelCall {
+                    op: OpId(2),
+                    model: turn_model,
+                    request: turn_request
+                },
+                Command::Checkpoint,
+                Command::Done {
+                    reason: DoneReason::EndTurn
+                },
+            ] if *model == ModelSelector::named("small")
+                && request.tools.is_empty()
+                && request.extra["kind"] == "compaction"
+                && *turn_model == ModelSelector::named("medium")
+                && turn_request.blocks.iter().any(|block| block.content.iter().any(|part| matches!(part, ContentPart::Ref { reference, .. } if reference == "log:0")))
+                && turn_request.blocks.iter().any(|block| block.content.iter().any(|part| matches!(part, ContentPart::Text(text) if text.contains("Old turn summary."))))
+        ),
+        "unexpected command sequence: {effectful_first:#?}"
+    );
+
+    let summary = first
+        .state()
+        .log()
+        .iter()
+        .find_map(|entry| match &entry.record {
+            Record::Summary {
+                summary_of,
+                tier,
+                est_tokens_in,
+                est_tokens_out,
+                text,
+                ..
+            } => Some((summary_of, tier, est_tokens_in, est_tokens_out, text)),
+            _ => None,
+        })
+        .expect("summary record is appended");
+    assert_eq!(*summary.0, SeqRange::new(Seq(0), Seq(1)));
+    assert_eq!(*summary.1, ModelSelector::named("small"));
+    assert_eq!(*summary.2, 20);
+    assert_eq!(*summary.3, 3);
+    assert_eq!(summary.4, "Old turn summary.");
+
+    let mut second = Brain::from_log(Box::new(policy()), prior_log);
+    let commands_second = run_script(&mut second, script);
+    assert_eq!(commands_first, commands_second);
+    assert_eq!(first.state().log(), second.state().log());
+}

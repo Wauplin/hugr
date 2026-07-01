@@ -12,7 +12,7 @@ use crate::model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
     ContextPlanEntry, ContextSource, ModelSelector, Role, SamplingParams, TokenBudget, ToolSchema,
 };
-use crate::record::{LogEntry, Record, SummaryCoverage};
+use crate::record::{LogEntry, Record, SeqRange, SummaryCoverage};
 use crate::state::BrainState;
 
 /// How to seed a **sub-agent's** log when it is spawned (ARCHITECTURE §14). A
@@ -28,6 +28,23 @@ pub enum AgentSeed {
     ForkAt { seq: u64 },
     /// Copy the entire current parent log — shared full context.
     ForkFull,
+}
+
+/// The exact source span selected for one compaction pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CompactionTarget {
+    pub summary_of: SeqRange,
+    pub est_tokens_in: u32,
+}
+
+impl CompactionTarget {
+    pub fn new(summary_of: SeqRange, est_tokens_in: u32) -> Self {
+        Self {
+            summary_of,
+            est_tokens_in,
+        }
+    }
 }
 
 /// Strategy for driving the turn loop. Implementations must be **pure**:
@@ -49,6 +66,21 @@ pub trait TurnPolicy: Send + Sync {
     /// Plan the model context from the log. Pure and synchronous: include /
     /// summarize / evict-to-reference / drop. Must never call a model.
     fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan;
+
+    /// Token high-water mark that triggers one compaction pass before the real
+    /// turn model call. `None` disables automatic compaction.
+    fn compaction_high_water(&self, _state: &BrainState, _budget: TokenBudget) -> Option<u64> {
+        None
+    }
+
+    /// Pick the exact log span to summarize once the high-water mark is crossed.
+    fn select_compaction_span(
+        &self,
+        log: &[LogEntry],
+        plan: &ContextPlan,
+    ) -> Option<CompactionTarget> {
+        default_compaction_target(log, plan)
+    }
 
     /// Whether invoking `capability` requires a permission round-trip.
     fn needs_permission(&self, capability: &str) -> bool;
@@ -101,6 +133,10 @@ pub struct StaticPolicy {
     system: Option<String>,
     #[serde(default)]
     context_budget: TokenBudget,
+    /// Percentage of the budget that triggers automatic compaction. `0`
+    /// disables it. Defaults to 90%.
+    #[serde(default = "default_compaction_high_water_percent")]
+    compaction_high_water_percent: u8,
 }
 
 impl Default for StaticPolicy {
@@ -114,6 +150,7 @@ impl Default for StaticPolicy {
             params: SamplingParams::default(),
             system: None,
             context_budget: TokenBudget::default(),
+            compaction_high_water_percent: default_compaction_high_water_percent(),
         }
     }
 }
@@ -179,6 +216,13 @@ impl StaticPolicy {
     /// Set the approximate input token budget used by context planning.
     pub fn with_context_budget(mut self, budget: TokenBudget) -> Self {
         self.context_budget = budget;
+        self
+    }
+
+    /// Set the percentage of the context budget that triggers automatic
+    /// compaction. Use `0` to disable automatic compaction.
+    pub fn with_compaction_high_water_percent(mut self, percent: u8) -> Self {
+        self.compaction_high_water_percent = percent;
         self
     }
 }
@@ -354,6 +398,14 @@ impl TurnPolicy for StaticPolicy {
         self.permissioned.iter().any(|c| c == capability)
     }
 
+    fn compaction_high_water(&self, _state: &BrainState, budget: TokenBudget) -> Option<u64> {
+        let percent = u64::from(self.compaction_high_water_percent.min(100));
+        if percent == 0 || budget.max_tokens == 0 {
+            return None;
+        }
+        Some((budget.max_tokens.saturating_mul(percent) / 100).max(1))
+    }
+
     fn is_background(&self, capability: &str) -> bool {
         self.background.iter().any(|c| c == capability)
     }
@@ -364,6 +416,67 @@ impl TurnPolicy for StaticPolicy {
             .find(|(name, _)| name == capability)
             .map(|(_, seed)| *seed)
     }
+}
+
+fn default_compaction_high_water_percent() -> u8 {
+    90
+}
+
+fn default_compaction_target(log: &[LogEntry], plan: &ContextPlan) -> Option<CompactionTarget> {
+    let compactable: Vec<_> = plan
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let ContextSource::LogEntry { seq } = entry.source else {
+                return None;
+            };
+            if !matches!(entry.disposition, ContextDisposition::Included { .. }) {
+                return None;
+            }
+            let record = log.iter().find(|candidate| candidate.seq == seq)?;
+            if !is_compactable_record(&record.record) {
+                return None;
+            }
+            Some((seq, record.record.content_est_tokens().unwrap_or(0)))
+        })
+        .collect();
+
+    if compactable.len() < 2 {
+        return None;
+    }
+
+    let keep_tail = 1;
+    let candidates = &compactable[..compactable.len().saturating_sub(keep_tail)];
+    let (start, _) = *candidates.first()?;
+    let mut end = start;
+    let mut est_tokens_in = 0_u32;
+    let mut records = 0_usize;
+    let target = (plan.budget.max_tokens / 2).max(1);
+
+    for (seq, tokens) in candidates {
+        end = *seq;
+        est_tokens_in = est_tokens_in.saturating_add(*tokens);
+        records += 1;
+        if records >= 2 && u64::from(est_tokens_in) >= target {
+            break;
+        }
+    }
+
+    if est_tokens_in == 0 {
+        return None;
+    }
+
+    Some(CompactionTarget::new(
+        SeqRange::new(start, end),
+        est_tokens_in,
+    ))
+}
+
+fn is_compactable_record(record: &Record) -> bool {
+    matches!(
+        record,
+        Record::UserMessage { .. } | Record::ModelOutput { .. } | Record::ToolResult { .. }
+    )
 }
 
 fn complete_summaries(log: &[LogEntry]) -> Vec<(crate::primitives::Seq, crate::record::SeqRange)> {

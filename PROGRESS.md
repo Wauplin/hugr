@@ -53,6 +53,19 @@ Tests:
 - `crates/hugr-core/tests/scripted_session.rs::summary_records_round_trip_and_evict_covered_span_to_refs` pins JSON log round-trip for summary records and verifies a later projection evicts the covered span to references.
 - Verification run: `cargo test -p hugr-core`.
 
+### A3 — Automatic compaction sub-loop ✅
+
+Done:
+
+- `TurnPolicy` now exposes a pure high-water/selection surface for automatic compaction: `compaction_high_water(state, budget)` and `select_compaction_span(log, plan)`. `StaticPolicy` defaults to a 90% high-water mark, can disable or tune it with `with_compaction_high_water_percent`, and selects the oldest still-included durable content while keeping the newest compactable entry live for the active turn.
+- The reducer runs the compaction sub-loop from ARCHITECTURE §3.4: when a planned projection exceeds the high-water mark, it emits a `small`-tier `StartModelCall` with a structured request over the exact selected span, records the returned `ModelDone` as `Record::Summary`, checkpoints, and then re-projects before starting the normal turn model call.
+- Compaction model deltas remain transport-only and are not rendered as assistant output. Replay stays deterministic because the summarizer result is just another recorded `ModelDone` event carrying host-recorded token estimates; re-feeding the event stream reproduces the same summary record and command sequence without asking the host to invent new data.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::automatic_compaction_summarizes_then_reprojects_and_replays` pins the command sequence (`small` compaction call, checkpoint, normal `medium` turn call), summary metadata (`summary_of`, tier, token-in/out), compacted projection refs, and replay equality.
+- Verification run: `cargo test -p hugr-core`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

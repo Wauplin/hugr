@@ -130,6 +130,18 @@ impl Record {
             Record::UserMessage { .. } => None,
         }
     }
+
+    /// Host-recorded token estimate for durable content projected to a model.
+    /// `None` means bookkeeping only.
+    pub fn content_est_tokens(&self) -> Option<u32> {
+        match self {
+            Record::UserMessage { est_tokens, .. }
+            | Record::ModelOutput { est_tokens, .. }
+            | Record::ToolResult { est_tokens, .. } => Some(*est_tokens),
+            Record::Summary { est_tokens_out, .. } => Some(*est_tokens_out),
+            Record::OpEnded { .. } => None,
+        }
+    }
 }
 
 /// How an op ended.
