@@ -348,6 +348,21 @@ Tests:
 - `hugr-cli` unit tests pin commit-message scope selection and trace-prefix branching while preserving policy metadata.
 - Verification run: `cargo test -p hugr-cli _ -q`; `cargo check -p hugr-cli -q`.
 
+### D8 — Coding subagents ✅
+
+Done:
+
+- The reducer stamps agent metadata (`agent`, `max_depth`) into `StartAgent` configs so subagent usage is trace-visible and host defaults are deterministic.
+- `hugr-host` applies per-agent default tier/tool constraints when a subagent config omits explicit overrides: `explorer` defaults to `small` and read-only repo tools; `implementer`, `reviewer`, and `test_fixer` default to `big` with constrained tool sets appropriate to their roles. Child capability results now use the same version/conflict hooks as top-level capabilities.
+- `hugr-cli` registers named coding subagent tools (`explorer`, `implementer`, `reviewer`, `test_fixer`) over the existing `StartAgent` primitive with schema-declared tool defaults, tier defaults, and depth limits.
+
+Tests:
+
+- Core subagent tests pin the trace-visible agent metadata in `StartAgent` config.
+- `hugr-host::agent::tests::coding_agent_defaults_constrain_tools_and_tiers` pins per-agent default tiers and tool allowlists.
+- `hugr-cli::tests::coding_agent_schema_declares_defaults` pins named subagent schema defaults.
+- Verification run: `cargo test -p hugr-core sub_agent -q`; `cargo test -p hugr-host coding_agent_defaults_constrain_tools_and_tiers -q`; `cargo test -p hugr-cli coding_agent_schema_declares_defaults -q`; `cargo check -p hugr-cli -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

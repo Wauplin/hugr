@@ -82,7 +82,8 @@ fn model_delegates_to_sub_agent_and_folds_result() {
         "unexpected command sequence: {effectful:#?}"
     );
 
-    // The child's opaque config is the model's tool-call args, forwarded verbatim.
+    // The child's opaque config keeps the model's args and records agent
+    // metadata for host-side defaults / trace-visible usage.
     let config = commands
         .iter()
         .find_map(|c| match c {
@@ -90,7 +91,10 @@ fn model_delegates_to_sub_agent_and_folds_result() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(config, json!({ "prompt": "do the thing" }));
+    assert_eq!(
+        config,
+        json!({ "prompt": "do the thing", "agent": "task", "max_depth": 1 })
+    );
 
     // The child's digest was folded into the parent log as a tool result,
     // correlated to the originating `tool_call` id (`call-1`, not the op id).

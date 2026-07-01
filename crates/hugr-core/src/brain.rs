@@ -733,6 +733,15 @@ impl Brain {
         // The brain owns the log, so resolving the fork is a pure operation here.
         if let Some(seed) = self.policy.agent_seed(&call.name) {
             let seed_log = self.resolve_seed(seed);
+            let mut config = call.args;
+            if let Some(object) = config.as_object_mut() {
+                object
+                    .entry("agent")
+                    .or_insert_with(|| Value::String(call.name.clone()));
+                object
+                    .entry("max_depth")
+                    .or_insert_with(|| Value::Number(1_u64.into()));
+            }
             self.state.mark(
                 op,
                 OpKind::Agent {
@@ -742,7 +751,7 @@ impl Brain {
             );
             self.state.push_command(Command::StartAgent {
                 op,
-                config: call.args,
+                config,
                 seed: seed_log,
             });
             return;

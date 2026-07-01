@@ -615,6 +615,10 @@ fn base_builder(models: TierModelConfigSet, policy: Arc<dyn Policy>) -> Result<E
         // contained unit of work to a child agent seeded with the full context.
         // The child reuses this host's tools (optionally narrowed via `tools`).
         .agent(task_agent_schema(), AgentSeed::ForkFull)
+        .agent(coding_agent_schema("explorer"), AgentSeed::ForkFull)
+        .agent(coding_agent_schema("implementer"), AgentSeed::ForkFull)
+        .agent(coding_agent_schema("reviewer"), AgentSeed::ForkFull)
+        .agent(coding_agent_schema("test_fixer"), AgentSeed::ForkFull)
         .system_prompt(SYSTEM_PROMPT)
         .policy(policy))
 }
@@ -635,6 +639,93 @@ fn task_agent_schema() -> ToolSchema {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Optional allowlist of tool names the sub-agent may use."
+                }
+            },
+            "required": ["prompt"]
+        }),
+    )
+}
+
+fn coding_agent_schema(kind: &'static str) -> ToolSchema {
+    let (description, tools, tier, depth) = match kind {
+        "explorer" => (
+            "Inspect repo structure and return findings with file references. Default tools: repo_files, repo_search, repo_read, git_status, git_log, package_metadata.",
+            vec![
+                "repo_files",
+                "repo_search",
+                "repo_read",
+                "git_status",
+                "git_log",
+                "package_metadata",
+            ],
+            "small",
+            1,
+        ),
+        "implementer" => (
+            "Make a focused implementation attempt and return a concise diff summary. Default tools include repo_read, repo_search, fs_read, fs_write, patch_apply, cargo_verify, git_diff, git_status.",
+            vec![
+                "repo_read",
+                "repo_search",
+                "fs_read",
+                "fs_write",
+                "patch_apply",
+                "cargo_verify",
+                "git_diff",
+                "git_status",
+            ],
+            "big",
+            1,
+        ),
+        "reviewer" => (
+            "Review the final diff and return findings with file references. Default tools: repo_read, repo_search, git_diff, git_status, cargo_verify.",
+            vec![
+                "repo_read",
+                "repo_search",
+                "git_diff",
+                "git_status",
+                "cargo_verify",
+            ],
+            "big",
+            1,
+        ),
+        "test_fixer" => (
+            "Investigate failing verification output, patch the likely cause, and return what changed. Default tools include repo_read, repo_search, fs_read, fs_write, patch_apply, cargo_verify, git_diff.",
+            vec![
+                "repo_read",
+                "repo_search",
+                "fs_read",
+                "fs_write",
+                "patch_apply",
+                "cargo_verify",
+                "git_diff",
+            ],
+            "big",
+            1,
+        ),
+        _ => ("Run a named coding subagent.", vec![], "medium", 1),
+    };
+    ToolSchema::new(
+        kind,
+        description,
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string", "description": "The sub-task instruction." },
+                "tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": tools,
+                    "description": "Optional override allowlist. Omit to use this subagent's constrained default tools."
+                },
+                "model": {
+                    "type": "string",
+                    "default": tier,
+                    "description": "Optional tier override. Omit to use this subagent's default tier."
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "default": depth,
+                    "description": "Maximum nested subagent depth for this sub-task."
                 }
             },
             "required": ["prompt"]
@@ -1442,5 +1533,22 @@ mod tests {
         assert_eq!(branch.events.len(), 3);
         assert_eq!(branch.log.len(), 2);
         assert_eq!(branch.policy, Some(json!({ "kind": "test" })));
+    }
+
+    #[test]
+    fn coding_agent_schema_declares_defaults() {
+        let reviewer = coding_agent_schema("reviewer");
+        assert_eq!(reviewer.name, "reviewer");
+        assert_eq!(
+            reviewer.parameters["properties"]["model"]["default"],
+            json!("big")
+        );
+        assert!(
+            reviewer.parameters["properties"]["tools"]["default"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool == "git_diff")
+        );
     }
 }

@@ -122,17 +122,26 @@ async fn drive_agent(
             json!({ "error": "agent_config", "message": "sub-agent config needs a string `prompt`" })
         })?
         .to_string();
+    let agent_kind = config
+        .get("agent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("task");
     let selector = config
         .get("model")
         .and_then(|v| v.as_str())
         .map(ModelSelector::named)
+        .or_else(|| default_model_for_agent(agent_kind).map(ModelSelector::named))
         .unwrap_or(default_model.clone());
     // Optional tool allowlist: the subset of the parent's tools the child may use.
-    let allow: Option<HashSet<String>> = config.get("tools").and_then(|v| v.as_array()).map(|a| {
-        a.iter()
-            .filter_map(|x| x.as_str().map(String::from))
-            .collect()
-    });
+    let allow: Option<HashSet<String>> = config
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .or_else(|| default_tools_for_agent(agent_kind));
     let caps = caps.subset(allow.as_ref());
 
     // --- assemble the child's policy from its (subset) tools ------------------
@@ -225,6 +234,55 @@ fn child_submit(brain: &mut Brain, clock: &Clock, event: Event) {
     brain.submit(event);
 }
 
+fn default_model_for_agent(agent: &str) -> Option<&'static str> {
+    match agent {
+        "explorer" => Some("small"),
+        "implementer" | "reviewer" | "test_fixer" => Some("big"),
+        _ => None,
+    }
+}
+
+fn default_tools_for_agent(agent: &str) -> Option<HashSet<String>> {
+    let tools = match agent {
+        "explorer" => &[
+            "repo_files",
+            "repo_search",
+            "repo_read",
+            "git_status",
+            "git_log",
+            "package_metadata",
+        ][..],
+        "implementer" => &[
+            "repo_read",
+            "repo_search",
+            "fs_read",
+            "fs_write",
+            "patch_apply",
+            "cargo_verify",
+            "git_diff",
+            "git_status",
+        ][..],
+        "reviewer" => &[
+            "repo_read",
+            "repo_search",
+            "git_diff",
+            "git_status",
+            "cargo_verify",
+        ][..],
+        "test_fixer" => &[
+            "repo_read",
+            "repo_search",
+            "fs_read",
+            "fs_write",
+            "patch_apply",
+            "cargo_verify",
+            "git_diff",
+        ][..],
+        _ => return None,
+    };
+    Some(tools.iter().map(|tool| (*tool).to_string()).collect())
+}
+
 /// Perform one child command by spawning the appropriate op task (or forwarding
 /// cosmetic output). Synchronous: every effect is a spawned task feeding the
 /// child inbox, so the drain loop never blocks.
@@ -276,18 +334,24 @@ fn perform_child(
                     let handle = join.spawn(async move {
                         let sink = ChunkSink::new(op, tx.clone());
                         let event = match capability.invoke(args, &sink).await {
-                            Ok(result) => Event::CapabilityDone {
-                                op,
-                                est_tokens: estimate_value_tokens(&result),
-                                result,
-                                version: None,
-                            },
-                            Err(error) => Event::CapabilityError {
-                                op,
-                                est_tokens: estimate_value_tokens(&error),
-                                error,
-                                conflict: None,
-                            },
+                            Ok(result) => {
+                                let version = capability.result_version(&result);
+                                Event::CapabilityDone {
+                                    op,
+                                    est_tokens: estimate_value_tokens(&result),
+                                    result,
+                                    version,
+                                }
+                            }
+                            Err(error) => {
+                                let conflict = capability.conflict_version(&error);
+                                Event::CapabilityError {
+                                    op,
+                                    est_tokens: estimate_value_tokens(&error),
+                                    error,
+                                    conflict,
+                                }
+                            }
                         };
                         let _ = tx.send(event);
                     });
@@ -379,4 +443,22 @@ fn aggregate_usage(log: &[LogEntry]) -> (u64, u64) {
         }
         (input, output)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coding_agent_defaults_constrain_tools_and_tiers() {
+        assert_eq!(default_model_for_agent("explorer"), Some("small"));
+        assert_eq!(default_model_for_agent("reviewer"), Some("big"));
+        let reviewer = default_tools_for_agent("reviewer").expect("reviewer tools");
+        assert!(reviewer.contains("git_diff"));
+        assert!(reviewer.contains("cargo_verify"));
+        assert!(!reviewer.contains("fs_write"));
+        let implementer = default_tools_for_agent("implementer").expect("implementer tools");
+        assert!(implementer.contains("patch_apply"));
+        assert!(implementer.contains("fs_write"));
+    }
 }
