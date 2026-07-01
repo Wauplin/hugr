@@ -97,6 +97,10 @@ impl Brain {
                 self.append(Record::Plan { text, est_tokens });
                 self.checkpoint();
             }
+            Event::TodoUpdated { items, est_tokens } => {
+                self.append(Record::TodoList { items, est_tokens });
+                self.checkpoint();
+            }
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {
@@ -944,6 +948,15 @@ fn render_summary_record(seq: Seq, record: &Record) -> Option<String> {
             Some(format!("log:{} skill {} ({}) activated", seq.0, id, title))
         }
         Record::Plan { text, .. } => Some(format!("log:{} accepted plan: {}", seq.0, text)),
+        Record::TodoList { items, .. } => Some(format!(
+            "log:{} todo state: {}",
+            seq.0,
+            items
+                .iter()
+                .map(|item| format!("[{}] {}", if item.done { "x" } else { " " }, item.text))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
         Record::OpEnded { .. } => None,
     }
 }

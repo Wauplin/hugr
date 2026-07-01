@@ -309,6 +309,19 @@ Tests:
 - `crates/hugr-core/tests/scripted_session.rs::accepted_plan_persists_and_projects_into_future_context` proves an accepted plan is recorded durably and projected into the next model request.
 - Verification run: `cargo test -p hugr-core accepted_plan_persists_and_projects_into_future_context -q`; `cargo check -p hugr-cli -q`.
 
+### D5 — Durable todo state ✅
+
+Done:
+
+- `hugr-core` now has durable `Record::TodoList` snapshots and `Event::TodoUpdated`. The default projection includes the latest todo snapshot as system context and omits superseded snapshots with an explicit `ContextPlan` reason.
+- `hugr-host::Engine::update_todos` injects todo snapshots through the recorded event path with host-side token estimates.
+- `hugr-cli` exposes `/todo list`, `/todo add <text>`, `/todo done <n>`, `/todo open <n>`, and `/todo clear`; `/status` shows todo progress from durable state.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::todo_state_persists_and_projects_latest_progress` proves todo snapshots are durable and the latest progress is projected into the next model request.
+- Verification run: `cargo test -p hugr-core todo_state_persists_and_projects_latest_progress -q`; `cargo check -p hugr-cli -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

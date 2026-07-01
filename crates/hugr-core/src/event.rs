@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelDelta, ModelOutput, ModelSelector, Usage};
 use crate::primitives::{ObjectKey, OpId, Timestamp, Value};
+use crate::record::TodoItem;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -39,6 +40,13 @@ pub enum Event {
     /// durable context for future turns (ROADMAP_2 D4).
     PlanAccepted {
         text: String,
+        #[serde(default)]
+        est_tokens: u32,
+    },
+    /// Host/user updated durable todo state. The latest snapshot is projected
+    /// into future context (ROADMAP_2 D5).
+    TodoUpdated {
+        items: Vec<TodoItem>,
         #[serde(default)]
         est_tokens: u32,
     },

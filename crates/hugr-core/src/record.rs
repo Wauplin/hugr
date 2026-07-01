@@ -12,6 +12,30 @@ use crate::event::VersionRef;
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
+/// One durable task/todo item (ROADMAP_2 D5).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TodoItem {
+    pub text: String,
+    pub done: bool,
+}
+
+impl TodoItem {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            done: false,
+        }
+    }
+
+    pub fn done(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            done: true,
+        }
+    }
+}
+
 /// Inclusive range of log entries covered by a durable summary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -134,6 +158,14 @@ pub enum Record {
         est_tokens: u32,
     },
 
+    /// Durable todo/task state snapshot. Hosts append a new snapshot when
+    /// progress changes; projection uses the latest snapshot.
+    TodoList {
+        items: Vec<TodoItem>,
+        #[serde(default)]
+        est_tokens: u32,
+    },
+
     /// An operation ended; carries per-op metadata (timing, cost, selector) so
     /// latency and spend are queryable from the trace itself (ARCHITECTURE §4.1).
     OpEnded {
@@ -153,9 +185,10 @@ impl Record {
             | Record::ToolResult { op, .. }
             | Record::Summary { op, .. }
             | Record::OpEnded { op, .. } => Some(*op),
-            Record::UserMessage { .. } | Record::SkillActivated { .. } | Record::Plan { .. } => {
-                None
-            }
+            Record::UserMessage { .. }
+            | Record::SkillActivated { .. }
+            | Record::Plan { .. }
+            | Record::TodoList { .. } => None,
         }
     }
 
@@ -167,9 +200,9 @@ impl Record {
             | Record::ModelOutput { est_tokens, .. }
             | Record::ToolResult { est_tokens, .. } => Some(*est_tokens),
             Record::Summary { est_tokens_out, .. } => Some(*est_tokens_out),
-            Record::SkillActivated { est_tokens, .. } | Record::Plan { est_tokens, .. } => {
-                Some(*est_tokens)
-            }
+            Record::SkillActivated { est_tokens, .. }
+            | Record::Plan { est_tokens, .. }
+            | Record::TodoList { est_tokens, .. } => Some(*est_tokens),
             Record::OpEnded { .. } => None,
         }
     }

@@ -12,7 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
     AgentSeed, Brain, Command, ContextPlan, Event, ModelSelector, OpId, RoutingPolicy,
-    SamplingParams, SkillDescriptor, StaticPolicy, SteerMode, Timestamp, ToolSchema, Value,
+    SamplingParams, SkillDescriptor, StaticPolicy, SteerMode, Timestamp, TodoItem, ToolSchema,
+    Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -221,6 +222,15 @@ impl Engine {
         self.submit(Event::PlanAccepted {
             est_tokens: estimate_text_tokens(&text),
             text,
+        });
+    }
+
+    /// Persist the current todo/task progress snapshot (ROADMAP_2 D5).
+    pub fn update_todos(&mut self, items: Vec<TodoItem>) {
+        let rendered = render_todos_for_estimate(&items);
+        self.submit(Event::TodoUpdated {
+            items,
+            est_tokens: estimate_text_tokens(&rendered),
         });
     }
 
@@ -622,6 +632,22 @@ pub(crate) fn permission_decision_est_tokens(decision: &hugr_core::Decision) -> 
         hugr_core::Decision::Deny { reason } => estimate_text_tokens(reason),
         _ => 0,
     }
+}
+
+fn render_todos_for_estimate(items: &[TodoItem]) -> String {
+    items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            format!(
+                "{}. [{}] {}",
+                idx + 1,
+                if item.done { "x" } else { " " },
+                item.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Builds an [`Engine`]: register models + capabilities, then `build()`. The

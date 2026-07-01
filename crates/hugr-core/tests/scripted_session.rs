@@ -242,6 +242,60 @@ fn accepted_plan_persists_and_projects_into_future_context() {
 }
 
 #[test]
+fn todo_state_persists_and_projects_latest_progress() {
+    let mut brain = Brain::with_default_policy();
+    let commands = run_script(
+        &mut brain,
+        vec![
+            Event::TodoUpdated {
+                items: vec![
+                    hugr_core::TodoItem::new("inspect"),
+                    hugr_core::TodoItem::new("test"),
+                ],
+                est_tokens: 4,
+            },
+            Event::TodoUpdated {
+                items: vec![
+                    hugr_core::TodoItem::done("inspect"),
+                    hugr_core::TodoItem::new("test"),
+                ],
+                est_tokens: 4,
+            },
+            user("status"),
+        ],
+    );
+
+    let todo_records = brain
+        .state()
+        .log()
+        .iter()
+        .filter(|entry| matches!(entry.record, Record::TodoList { .. }))
+        .count();
+    assert_eq!(todo_records, 2);
+
+    let request = commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Command::StartModelCall { request, .. } => Some(request),
+            _ => None,
+        })
+        .expect("model request");
+    let rendered = request
+        .blocks
+        .iter()
+        .flat_map(|block| &block.content)
+        .filter_map(|part| match part {
+            ContentPart::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Durable todo progress"));
+    assert!(rendered.contains("1/2 done"));
+    assert!(rendered.contains("[x] inspect"));
+}
+
+#[test]
 fn skill_invocation_records_activation_and_projects_instructions() {
     let skill = SkillDescriptor::new(
         "rust-reviewer",

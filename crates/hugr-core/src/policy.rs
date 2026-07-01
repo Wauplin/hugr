@@ -631,6 +631,10 @@ impl TurnPolicy for StaticPolicy {
         let mut entries = Vec::new();
         let mut totals = ContextBudgetTotals::new();
         let summaries = complete_summaries(log);
+        let latest_todo_seq = log.iter().rev().find_map(|entry| match entry.record {
+            Record::TodoList { .. } => Some(entry.seq),
+            _ => None,
+        });
         if let Some(system) = &self.system {
             let disposition = ContextDisposition::included(ContextBlock::new(
                 Role::System,
@@ -798,6 +802,48 @@ impl TurnPolicy for StaticPolicy {
                         *est_tokens,
                         disposition,
                         "accepted task plan from durable record",
+                    ));
+                }
+                Record::TodoList { items, est_tokens } => {
+                    if Some(entry.seq) != latest_todo_seq {
+                        let disposition = ContextDisposition::omitted();
+                        entries.push(ContextPlanEntry::new(
+                            ContextSource::log_entry(entry.seq),
+                            *est_tokens,
+                            disposition,
+                            "superseded by a later durable todo snapshot",
+                        ));
+                        continue;
+                    }
+                    let done = items.iter().filter(|item| item.done).count();
+                    let rendered = items
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, item)| {
+                            format!(
+                                "{}. [{}] {}",
+                                idx + 1,
+                                if item.done { "x" } else { " " },
+                                item.text
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let disposition = ContextDisposition::included(ContextBlock::new(
+                        Role::System,
+                        vec![ContentPart::Text(format!(
+                            "Durable todo progress from log:{} ({done}/{} done):\n{}",
+                            entry.seq.0,
+                            items.len(),
+                            rendered
+                        ))],
+                    ));
+                    totals.add(&disposition, *est_tokens);
+                    entries.push(ContextPlanEntry::new(
+                        ContextSource::log_entry(entry.seq),
+                        *est_tokens,
+                        disposition,
+                        "latest durable todo snapshot",
                     ));
                 }
                 // OpEnded entries are bookkeeping (timing/cost); they do not
@@ -1056,7 +1102,11 @@ fn default_compaction_target(log: &[LogEntry], plan: &ContextPlan) -> Option<Com
 fn is_compactable_record(record: &Record) -> bool {
     matches!(
         record,
-        Record::UserMessage { .. } | Record::ModelOutput { .. } | Record::ToolResult { .. }
+        Record::UserMessage { .. }
+            | Record::ModelOutput { .. }
+            | Record::ToolResult { .. }
+            | Record::Plan { .. }
+            | Record::TodoList { .. }
     )
 }
 

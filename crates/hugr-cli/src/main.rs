@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hugr_core::{
     AgentSeed, Command, ContextDisposition, ContextPlan, ContextSource, Event, ModelSelector,
-    Record, SkillDescriptor, ToolSchema,
+    Record, SkillDescriptor, TodoItem, ToolSchema,
 };
 use hugr_host::capabilities::{
     FsRead, FsWrite, GitDiff, GitLog, GitStatus, Http, PackageMetadata, PatchApply, RepoFiles,
@@ -723,6 +723,10 @@ async fn handle_repl_command(
             handle_plan_command(engine, parts.collect::<Vec<_>>().join(" "));
             Ok(true)
         }
+        "/todo" => {
+            handle_todo_command(engine, parts.collect::<Vec<_>>().join(" "));
+            Ok(true)
+        }
         _ if command.starts_with('/') => {
             eprintln!("unknown command: {line}");
             Ok(true)
@@ -786,6 +790,43 @@ fn handle_plan_command(engine: &mut Engine, rest: String) {
     }
 }
 
+fn handle_todo_command(engine: &mut Engine, rest: String) {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        print_todos(engine);
+        return;
+    }
+    let mut todos = active_todos(engine);
+    let Some((action, tail)) = rest.split_once(char::is_whitespace) else {
+        match rest {
+            "clear" => {
+                engine.update_todos(Vec::new());
+                println!("todos cleared");
+            }
+            "list" => print_todos(engine),
+            _ => eprintln!("usage: /todo [list|add <text>|done <n>|open <n>|clear]"),
+        }
+        return;
+    };
+    let tail = tail.trim();
+    match action {
+        "add" if !tail.is_empty() => {
+            todos.push(TodoItem::new(tail));
+            engine.update_todos(todos);
+            println!("todo added");
+        }
+        "done" | "open" => match tail.parse::<usize>() {
+            Ok(n) if (1..=todos.len()).contains(&n) => {
+                todos[n - 1].done = action == "done";
+                engine.update_todos(todos);
+                println!("todo updated");
+            }
+            _ => eprintln!("todo index out of range"),
+        },
+        _ => eprintln!("usage: /todo [list|add <text>|done <n>|open <n>|clear]"),
+    }
+}
+
 fn print_status(engine: &Engine, tier_mapping: &str, host_status: &HostStatus) {
     let plan = engine.context_plan();
     let report = spend_report(engine.brain().state().log());
@@ -800,6 +841,7 @@ fn print_status(engine: &Engine, tier_mapping: &str, host_status: &HostStatus) {
     print_mcp_status(host_status);
     print_active_skill(engine);
     print_active_plan(engine);
+    print_todo_progress(engine);
     print_spend_report(&report);
 }
 
@@ -878,6 +920,46 @@ fn active_plan(engine: &Engine) -> Option<String> {
             Record::Plan { text, .. } => Some(text.clone()),
             _ => None,
         })
+}
+
+fn print_todo_progress(engine: &Engine) {
+    let todos = active_todos(engine);
+    if todos.is_empty() {
+        println!("todos: none");
+        return;
+    }
+    let done = todos.iter().filter(|item| item.done).count();
+    println!("todos: {done}/{} done", todos.len());
+}
+
+fn print_todos(engine: &Engine) {
+    let todos = active_todos(engine);
+    if todos.is_empty() {
+        println!("todos: none");
+        return;
+    }
+    for (idx, item) in todos.iter().enumerate() {
+        println!(
+            "{}. [{}] {}",
+            idx + 1,
+            if item.done { "x" } else { " " },
+            item.text
+        );
+    }
+}
+
+fn active_todos(engine: &Engine) -> Vec<TodoItem> {
+    engine
+        .brain()
+        .state()
+        .log()
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.record {
+            Record::TodoList { items, .. } => Some(items.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn print_spend_report(report: &SpendReport) {
@@ -1054,6 +1136,7 @@ fn summarize_event(event: &Event) -> String {
         CompactContext => "CompactContext".to_string(),
         ModelOverride { selector } => format!("ModelOverride({selector:?})"),
         PlanAccepted { text, .. } => format!("PlanAccepted({text})"),
+        TodoUpdated { items, .. } => format!("TodoUpdated({} items)", items.len()),
         ModelDelta { op, .. } => format!("ModelDelta(op={})", op.0),
         ModelDone { op, .. } => format!("ModelDone(op={})", op.0),
         ModelError { op, .. } => format!("ModelError(op={})", op.0),
