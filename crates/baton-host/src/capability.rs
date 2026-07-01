@@ -45,6 +45,11 @@ pub trait Capability: Send + Sync {
 
 /// Lets a capability stream intermediate chunks (transport only) back to the
 /// brain as `CapabilityChunk` events while it runs.
+///
+/// `Clone` is cheap (it clones the op id + an `Arc`-backed sender) so a wrapper
+/// (e.g. a plugin capability bridging to a [`baton_plugin_abi::PluginSink`]) can
+/// move an emitter into a closure.
+#[derive(Clone)]
 pub struct ChunkSink {
     op: OpId,
     tx: UnboundedSender<Event>,
@@ -62,7 +67,10 @@ impl ChunkSink {
 }
 
 /// Maps capability names to their implementations.
-#[derive(Default)]
+///
+/// `Clone` is cheap (it clones `Arc`s) so a sub-agent runner (ARCHITECTURE §13)
+/// can reuse — or [`subset`](CapabilityRegistry::subset) — the parent's tools.
+#[derive(Clone, Default)]
 pub struct CapabilityRegistry {
     map: HashMap<String, Arc<dyn Capability>>,
 }
@@ -80,6 +88,23 @@ impl CapabilityRegistry {
     /// Look a capability up by name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn Capability>> {
         self.map.get(name).cloned()
+    }
+
+    /// A registry restricted to an allowlist of capability names — the tools a
+    /// sub-agent may use (ARCHITECTURE §13.1, "tools subset"). `None` returns a
+    /// clone of the whole registry (the child inherits every tool).
+    pub fn subset(&self, allow: Option<&std::collections::HashSet<String>>) -> CapabilityRegistry {
+        match allow {
+            None => self.clone(),
+            Some(allow) => CapabilityRegistry {
+                map: self
+                    .map
+                    .iter()
+                    .filter(|(name, _)| allow.contains(*name))
+                    .map(|(name, cap)| (name.clone(), cap.clone()))
+                    .collect(),
+            },
+        }
     }
 
     /// The schemas of all registered capabilities (advertised to the model).

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelRequest, ModelSelector};
 use crate::primitives::{OpId, Value};
+use crate::record::LogEntry;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -24,6 +25,21 @@ pub enum Command {
     /// Invoke a host capability (a tool). Covers shell, fs, http, plugins —
     /// there are no privileged built-ins. `args` is opaque to the brain.
     StartCapability { op: OpId, name: String, args: Value },
+
+    /// Spawn a **sub-agent**: a child `baton-core` instance the host runs as an
+    /// op (ARCHITECTURE §13). `config` is opaque to the brain (the model's
+    /// tool-call args — the host interprets the child's prompt/model/tools).
+    /// `seed` is the child's initial log — a **fork** of the parent's log
+    /// prefix (ARCHITECTURE §14), resolved here from the parent's log by the
+    /// [`TurnPolicy`](crate::TurnPolicy)'s
+    /// [`agent_seed`](crate::TurnPolicy::agent_seed); it is empty for an
+    /// isolated (`Fresh`) child. The child's result returns via
+    /// [`Event::AgentDone`](crate::Event::AgentDone).
+    StartAgent {
+        op: OpId,
+        config: Value,
+        seed: Vec<LogEntry>,
+    },
 
     /// Ask the user a free-form question. Answered by
     /// [`Event::UserAnswer`](crate::Event::UserAnswer).

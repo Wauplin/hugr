@@ -27,11 +27,13 @@
 //!
 //! ## Phase 0 scope
 //!
-//! This is the Phase 0 deliverable (see `docs/ROADMAP.md`): the turn loop
+//! This started as the Phase 0 deliverable (see `docs/ROADMAP.md`): the turn loop
 //! (`user → model → tool → model → done`), the op table, a trivial pass-through
-//! [`projection`](TurnPolicy::project_context), and deterministic replay.
-//! Compaction, blob stores, sub-agents, forks and resume are wired conceptually
-//! but implemented in later phases.
+//! [`projection`](TurnPolicy::project_context), and deterministic replay. Later
+//! phases added, still sans-IO: cancellation & background ops (Phase 2), and
+//! **sub-agents & forks** (Phase 6 — [`Command::StartAgent`], [`AgentSeed`],
+//! [`Brain::from_log`]). Compaction and blob stores remain wired conceptually
+//! for later phases; resume lives in the host (`baton-replay`).
 
 #![forbid(unsafe_code)]
 // `baton-core` aspires to be `#![no_std]`-friendly (ARCHITECTURE §10/§11). It is
@@ -54,7 +56,7 @@ pub use model::{
     ContentPart, ContextBlock, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,
     SamplingParams, StopReason, ToolCall, ToolSchema, Usage,
 };
-pub use policy::{StaticPolicy, TurnPolicy};
+pub use policy::{AgentSeed, StaticPolicy, TurnPolicy};
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};
 pub use record::{LogEntry, OpMeta, OpOutcome, Record};
 pub use state::{BrainState, InflightOp, OpKind};

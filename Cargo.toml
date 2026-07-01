@@ -6,14 +6,18 @@ members = [
     "crates/baton-providers",
     "crates/baton-cli",
     "crates/baton-replay",
+    "crates/baton-plugin-abi",
+    "crates/baton-example-plugin",
 ]
 
-# The full crate layout (see docs/ARCHITECTURE.md §10) adds baton-model,
-# baton-wasm, baton-py, baton-js and baton-plugin-abi over later phases. Phase 0
-# shipped the pure, sans-IO brain (`baton-core`); Phase 1 adds the native host,
-# an OpenAI provider adapter, and the showcase CLI; Phase 3 adds `baton-replay`
-# (the versioned, portable trace format) — a host-side persistence crate that
-# may touch the filesystem, never `baton-core`.
+# The full crate layout (see docs/ARCHITECTURE.md §10) still adds baton-model,
+# baton-wasm, baton-py and baton-js over later phases. Phase 0 shipped the pure,
+# sans-IO brain (`baton-core`); Phase 1 adds the native host, an OpenAI provider
+# adapter, and the showcase CLI; Phase 3 adds `baton-replay` (the versioned,
+# portable trace format); Phase 5 adds `baton-plugin-abi` (the versioned plugin
+# contract + subprocess transport) and `baton-example-plugin` (a standalone
+# example plugin). Phase 6 (sub-agents & forks) is entirely inside baton-core +
+# baton-host. All of these are host-side (may touch IO), never `baton-core`.
 
 [workspace.package]
 version = "0.0.0"
@@ -32,6 +36,7 @@ baton-core = { path = "crates/baton-core" }
 baton-host = { path = "crates/baton-host" }
 baton-providers = { path = "crates/baton-providers" }
 baton-replay = { path = "crates/baton-replay" }
+baton-plugin-abi = { path = "crates/baton-plugin-abi" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"

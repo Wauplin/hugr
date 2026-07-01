@@ -186,6 +186,47 @@ Resume is replay turned into a starting point: because the brain is a pure fold 
 
 Tests (82 total across the workspace, +1 end-to-end resume test over P3-3, plus a new public `policy_from_trace` export): `baton-host/tests/end_to_end.rs::resume_from_trace_continues_the_session` — record a shell-tool session through the **real engine** → save → resume into a fresh engine and assert the brain reconstructs the original log *before* any new turn (with nothing in flight, and the new mock model un-invoked, proving the seed performed no IO) → add a NEW user turn → assert the grown log contains the original logical records as a prefix **and** the new turn's records → re-save and assert the grown trace appends new events after the recorded ones, its log equals the live grown log, its policy survived the round-trip, and the whole grown session still `verify()`s bit-for-bit through a fresh brain.
 
+## Phase 6 — Sub-agents & forks ✅ (built before Phase 4, by request)
+
+**Goal:** cheap, portable sub-agents built on log forking — a sub-agent is *not* a special subsystem, it is **another `baton-core` instance** (ARCHITECTURE §13).
+
+**Exit criterion — met:** a parent agent fans out to N child agents (fork-shared context), collects their results, and the whole tree replays deterministically from one recorded trace (`baton-host/tests/end_to_end.rs::parent_fans_out_to_sub_agents_and_replays`).
+
+Done:
+
+- `baton-core` — sub-agents as an op, forks as a log-prefix copy, all as *strategy*, not reducer hardcoding:
+  - `Command::StartAgent { op, config, seed }` — the brain emits this (instead of `StartCapability`) when the policy designates a tool as a sub-agent spawner. `config` is the opaque tool-call args (the host interprets the child's prompt/model/tools); `seed` is the **forked log prefix** the child starts from.
+  - `AgentSeed` (`Fresh` / `ForkAt { seq }` / `ForkFull`) + `TurnPolicy::agent_seed(capability) -> Option<AgentSeed>` (default `None`; mirrors `is_background`). `StaticPolicy` gained `with_agent`/`with_agents` (and a `#[serde(default)]` field so pre-Phase-6 traces still decode). The reducer's `begin_tool_call` checks `agent_seed` first; `resolve_seed` turns the strategy into the actual prefix (pure — the brain owns the log).
+  - `OpKind::Agent { name, call_id }` now carries the correlation ids (so the child's result is a provider-correct tool result); it already `blocks_turn()`, so a fan-out of children joins before the model resumes (§6.3). `on_agent_done`/`on_agent_error` (previously stubs) now fold the child's digest back like any tool result.
+  - `Brain::from_log` / `BrainState::from_log` — the **fork/seed primitive** (§14): re-derive a brain's state (log, `next_seq`, `next_op`, clock) by folding an inherited log prefix, with zero IO. `Record::op_id()` supports reconstructing the next op id so a child's new ops don't collide with the inherited prefix.
+- `baton-host` — running children in-process (§13.2):
+  - `agent.rs` (`run_agent`) — drives a child brain to completion on a spawned task, reusing (a subset of) the parent's model + capability registries. It returns a **boxed** future so a child can itself spawn children (nested agents). The child's ops live in a `JoinSet` that aborts them all on drop, so a parent `Cancel` tears down the whole subtree cleanly. The child's config (`prompt`, optional `model`/`system`/`tools` allowlist) is the opaque args; its digest (last answer text + aggregated token usage) flows back as `AgentDone`, and streamed child text is forwarded to the parent as cosmetic `CapabilityChunk`s.
+  - `Engine` gained the `StartAgent` arm (spawns `run_agent`, tracked in `tasks` for cancellation) and observes `AgentDone`/`AgentError` for the front-end (rendered like a tool completing). Registries are now `Clone` (cheap `Arc` clones); `CapabilityRegistry::subset` narrows a child's tools to an allowlist. `TurnPolicy` gained a `Send + Sync` bound so the host can own a child brain on a worker task (still single-threaded per brain).
+  - `EngineBuilder::agent(schema, seed)` advertises a sub-agent tool to the model and registers its seed strategy. The **CLI** ships a built-in `task` sub-agent tool (`ForkFull`) so the model can delegate self-contained work live, plus inspector rendering for `StartAgent`/`AgentDone`/`AgentError`.
+
+Tests (+6): `baton-core/tests/sub_agents.rs` — model delegates to a sub-agent and the result folds back; `ForkFull`/`ForkAt`/`Fresh` seed the child correctly; a two-child fan-out joins once and replays deterministically (identical commands **and** log). `baton-host/tests/end_to_end.rs::parent_fans_out_to_sub_agents_and_replays` — through the **real engine**: a parent spawns two children (each its own brain, reusing the model registry), both digests fold back as `task` tool results, the turn ends once, and the recorded parent trace `verify()`s bit-for-bit (the recorded `AgentDone`s drive the fold — children are not re-run, §13.3).
+
+## Phase 5 — Extensibility (plugins) ✅ (built before Phase 4, by request)
+
+**Goal:** third parties add tools without recompiling the core (ARCHITECTURE §8).
+
+**Exit criteria — met:** a third-party plugin (a separate crate/binary, no core recompile) adds a working tool the agent can call, and it cannot touch core internals; the contract is versioned and documented (`baton-example-plugin` + its `tests/e2e.rs`).
+
+Done:
+
+- `baton-plugin-abi` — the versioned, narrow, transport-agnostic plugin contract:
+  - `protocol.rs` — three verbs as tagged JSON: `Request::{Describe, Invoke, OnEvent}` and `Response::{Description, Chunk, Result, Error}`, an integer `PROTOCOL_VERSION` (a plugin reporting a newer one is rejected on load), all payloads opaque `Value` (adding a tool/arg touches zero core types, §2.4). `on_event` is defined but reserved (the host doesn't yet deliver it — narrow now, widen later). Wire shape pinned by unit tests.
+  - `transport.rs` — `PluginTransport` (the single trait the host depends on): `describe() -> [ToolSchema]` and `invoke(name, args, sink) -> Result<Value, Value>` (semantic ok/err both route back to the model, §5.4). `PluginSink` bridges streamed chunks without coupling to the host's own sink; `PluginError` is the typed load/transport error.
+  - `subprocess.rs` — `SubprocessPlugin`: a plugin is an external program; each request spawns a fresh process, writes one JSON request, reads chunk lines then a terminal result/error. Stateless and naturally concurrent (no shared pipe to multiplex). Language-agnostic, process-sandboxed, needs no Baton dependency.
+  - `wasm.rs` (behind the `wasm` feature) — `WasmPlugin`, a scaffold implementing the *same* `PluginTransport` trait so the roadmap's **primary** WASM component-model transport drops in with no host changes; its wasmtime backend lands with Phase 4. Every call currently reports "not yet implemented". This is the **both** choice: subprocess is the working default, WASM is scaffolded behind the trait+feature.
+  - Host-side IO crate: uses `baton-core` only as pure data, so `cargo tree -p baton-core` stays free of any environmental deps.
+- `baton-host` — plugins as ordinary capabilities:
+  - `plugins.rs` (`PluginCapability`) wraps one plugin tool as a `Capability` (no privileged built-ins, no privileged plugins); `invoke` bridges the host `ChunkSink` to the plugin `PluginSink` so streamed chunks reach the brain. `load(transport)` / `load_subprocess(program, args)` describe a plugin and return its tools as capabilities to register. The plugin ABI is re-exported from `baton-host` so an embedder needs one crate. `ChunkSink` is now `Clone` (op id + `Arc` sender).
+  - The **CLI** gained `--plugin <CMD>` (repeatable): load a subprocess plugin's tools live.
+- `baton-example-plugin` — an example **third-party** plugin: a standalone binary depending on **nothing** from Baton (only `serde_json`), providing `uppercase`/`reverse` tools over the stdio protocol. Proof that a plugin needs no core recompile and cannot reach core internals.
+
+Tests (+7): `baton-plugin-abi` protocol round-trip + wire-shape + hand-written-JSON decode unit tests; `baton-example-plugin/tests/e2e.rs` — the subprocess transport `describe`s + `invoke`s the real plugin process (streamed chunk forwarded, unknown tool is a semantic `Err`), and the agent calls the `uppercase` plugin tool **end-to-end through the real engine** with the result folded into the durable log; a standalone-binary sanity check.
+
 [`replay`]: crates/baton-replay/src/replay.rs
 [`verify`]: crates/baton-replay/src/replay.rs
 [`Inspector`]: crates/baton-replay/src/replay.rs

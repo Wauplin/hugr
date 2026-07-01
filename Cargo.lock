@@ -90,6 +90,7 @@ dependencies = [
  "baton-host",
  "baton-providers",
  "clap",
+ "serde_json",
  "tokio",
 ]
 
@@ -102,16 +103,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "baton-example-plugin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "baton-core",
+ "baton-host",
+ "baton-plugin-abi",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "baton-host"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "baton-core",
+ "baton-plugin-abi",
  "baton-replay",
  "futures-util",
  "reqwest",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "baton-plugin-abi"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "baton-core",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
 ]
 

@@ -27,19 +27,26 @@
 //! [`ModelAdapter`] traits and their registries, the permission [`Policy`], the
 //! [`Frontend`], and the tokio [`Engine`] driver loop.
 
+mod agent;
 pub mod capabilities;
 mod capability;
 mod coalesce;
 mod engine;
 mod frontend;
 mod model;
+pub mod plugins;
 pub mod policy;
 
 pub use capability::{Capability, CapabilityRegistry, ChunkSink};
 pub use engine::{Clock, Engine, EngineBuilder, EventSender};
 pub use frontend::{Frontend, Metrics, StdoutFrontend};
 pub use model::{ModelAdapter, ModelRegistry, ModelSink};
+pub use plugins::PluginCapability;
 pub use policy::Policy;
+
+// Re-export the plugin ABI so a host embedder needs only `baton-host` to load
+// plugins (the ABI crate lives behind us, like `baton-replay`).
+pub use baton_plugin_abi::{self, PluginError, PluginSink, PluginTransport, SubprocessPlugin};
 
 // Re-export the trace + replay surface so a host embedder needs only one crate
 // to record a session and replay it (the persistence crate lives behind us).

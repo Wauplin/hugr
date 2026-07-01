@@ -82,7 +82,10 @@ impl ModelSink {
 }
 
 /// Maps logical [`ModelSelector`]s to concrete adapters.
-#[derive(Default)]
+///
+/// `Clone` is cheap (it clones `Arc`s) and lets a sub-agent runner
+/// (ARCHITECTURE §13) reuse the parent's model registry on its own task.
+#[derive(Clone, Default)]
 pub struct ModelRegistry {
     map: HashMap<ModelSelector, Arc<dyn ModelAdapter>>,
 }

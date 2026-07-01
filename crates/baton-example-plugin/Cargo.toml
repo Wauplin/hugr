@@ -1,0 +1,28 @@
+[package]
+name = "baton-example-plugin"
+description = "An example third-party Baton plugin (a separate binary that speaks the plugin protocol over stdio). Depends on nothing from Baton — proof that plugins need no core recompile."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "baton_example_plugin"
+path = "src/main.rs"
+
+# NOTE: the only runtime dependency is serde_json — deliberately NOT baton-core.
+# A plugin talks to the host purely through the documented JSON protocol, so it
+# never links against, or can touch, any Baton internals.
+[dependencies]
+serde_json = { workspace = true }
+
+# Dev-only: the end-to-end test drives this plugin through the real host engine
+# to prove a third-party tool is callable by the agent (Phase 5 exit criterion).
+[dev-dependencies]
+baton-core = { workspace = true }
+baton-host = { workspace = true }
+baton-plugin-abi = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+async-trait = { workspace = true }
+anyhow = { workspace = true }

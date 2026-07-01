@@ -54,6 +54,20 @@ pub enum Record {
     },
 }
 
+impl Record {
+    /// The op this record refers to, if any. Used to reconstruct the next op id
+    /// when **seeding a forked child log** (ARCHITECTURE §14), so the child's new
+    /// ops don't collide with ids already present in the inherited prefix.
+    pub fn op_id(&self) -> Option<OpId> {
+        match self {
+            Record::ModelOutput { op, .. }
+            | Record::ToolResult { op, .. }
+            | Record::OpEnded { op, .. } => Some(*op),
+            Record::UserMessage { .. } => None,
+        }
+    }
+}
+
 /// How an op ended.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]

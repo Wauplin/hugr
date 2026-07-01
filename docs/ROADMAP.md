@@ -77,7 +77,9 @@
 
 ---
 
-## Phase 4 — Portability (the attention moment)
+## Phase 4 — Portability (the attention moment) ⏸️ deferred
+
+> **Deferred** for now (by request): Phases 5 and 6 were built first. This means the WASM/Python hosts don't exist yet, so the Phase 5 plugin ABI landed as the **subprocess/stdio** transport (the roadmap's listed secondary path) with the WASM component transport *scaffolded behind a feature* for when this phase lands. Nothing in Phases 5/6 blocks Phase 4 — both stayed host-side and left `baton-core` sans-IO.
 
 **Goal.** Same brain, many environments.
 
@@ -91,31 +93,35 @@
 
 ---
 
-## Phase 5 — Extensibility (Pi-like, runtime-free)
+## Phase 5 — Extensibility (Pi-like, runtime-free) ✅
 
 **Goal.** Third parties add tools/behavior without recompiling the core.
 
-- `baton-plugin-abi`: WASM component world (`describe` / `invoke` / `on_event`), narrow hook contract, sandboxed.
-- Plugins surface as `Capability`s through the registry; host loads them.
-- Secondary subprocess/MCP adapter path (server hosts only).
+- ✅ `baton-plugin-abi`: the versioned, narrow plugin contract (`describe` / `invoke` / `on_event`, an integer `PROTOCOL_VERSION`, opaque `Value` payloads). Transport-agnostic behind a single `PluginTransport` trait. Implemented transport: **subprocess/stdio** (`SubprocessPlugin`) — a plugin is an external program exchanging JSON lines; language-agnostic, process-sandboxed, no core recompile. The **WASM component world** is scaffolded behind the `wasm` feature (`WasmPlugin` stub implementing the same trait) — its wasmtime backend lands with Phase 4. (`on_event` is defined in the protocol but reserved; the host does not yet deliver it — "narrow now, widen later", §8.1.)
+- ✅ Plugins surface as ordinary `Capability`s through the registry (`baton_host::plugins::{PluginCapability, load, load_subprocess}`); no privileged built-ins, no privileged plugins. Streamed chunks bridge to the brain as `CapabilityChunk`s. The CLI gains `--plugin <CMD>` to load one live.
+- ✅ Secondary subprocess/MCP adapter path — this *is* the implemented path for now (the WASM path is the deferred primary; §8.2).
 
 **Exit criteria.**
-- A third-party plugin (separate repo, no core recompile) adds a working tool the agent can call.
-- Plugin cannot touch core internals; contract is versioned and documented.
+- ✅ A third-party plugin (separate repo, no core recompile) adds a working tool the agent can call. Covered by `baton-example-plugin` — a standalone binary depending on **nothing** from Baton (only `serde_json`) — and `baton-example-plugin/tests/e2e.rs`: the real plugin process is loaded over the subprocess transport, its `uppercase` tool is called end-to-end through the real engine, and its result folds back into the turn loop.
+- ✅ Plugin cannot touch core internals; contract is versioned and documented. The plugin only ever answers protocol messages (it links no Baton crate); `PROTOCOL_VERSION` is checked on load (a newer version is rejected); the wire shape is pinned by `protocol` unit tests and documented in `baton-plugin-abi`.
+
+**Phase 5 is complete** (subprocess transport; WASM transport scaffolded for Phase 4).
 
 ---
 
-## Phase 6 — Sub-agents & forks
+## Phase 6 — Sub-agents & forks ✅
 
 **Goal.** Cheap, portable sub-agents built on log forking.
 
-- `StartAgent` op kind: a child is just another `baton-core` instance.
-- **Forking:** copy a log prefix to seed a child (shared context) or start fresh (isolated). Branch/rewind on the parent uses the same mechanism.
-- Aggregation: child results return to the parent as op results; usage/cost attributed per agent.
-- Isolation options (in-process task vs subprocess vs worktree) chosen by host.
+- ✅ `Command::StartAgent { op, config, seed }`: a child is just another `baton-core` instance. A policy-designated tool (`TurnPolicy::agent_seed`, like `is_background`) makes the brain emit `StartAgent` instead of `StartCapability`; the child's `AgentDone`/`AgentError` result folds back into the turn loop exactly like a tool result (§13.1). No hardcoding in the reducer — spawning is a *strategy* decision in the policy.
+- ✅ **Forking:** `AgentSeed` (`Fresh` / `ForkAt { seq }` / `ForkFull`) copies a log prefix to seed the child (shared context) or starts fresh (isolated). Resolving the seed is a pure operation on the brain's log; `Brain::from_log` re-derives a child's state by folding the inherited prefix (§14). The same primitive underlies branch/rewind.
+- ✅ Aggregation: child results return to the parent as the op's result value (a text digest + aggregated token usage for per-agent attribution, §14.3); forks diverge, results flow back one-directionally.
+- ✅ Isolation: the host runs the child **in-process** (a spawned task reusing a subset of the parent's model + capability registries; `baton_host::agent`). Its ops live in a `JoinSet` so a parent `Cancel` tears down the whole subtree. Subprocess/worktree isolation are future host choices behind the same contract (§13.2). Nested sub-agents (a child spawning grandchildren) work with no special case.
 
 **Exit criteria.**
-- A parent agent fans out to N child agents (fork-shared context), collects results, and the whole tree replays deterministically from one trace.
+- ✅ A parent agent fans out to N child agents (fork-shared context), collects results, and the whole tree replays deterministically from one trace. Covered by `baton-core/tests/sub_agents.rs` (scripted delegate/fan-out + the fan-out join + deterministic replay) and `baton-host/tests/end_to_end.rs::parent_fans_out_to_sub_agents_and_replays` (through the **real engine**: a parent spawns two child agents that run as their own brains, their digests fold back as `task` tool results, and the recorded parent trace `verify()`s bit-for-bit — the recorded `AgentDone` results drive the fold, §13.3).
+
+**Phase 6 is complete.**
 
 ---
 

@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use baton_core::{
-    Brain, Command, Event, ModelSelector, OpId, SamplingParams, StaticPolicy, SteerMode, Timestamp,
-    Value,
+    AgentSeed, Brain, Command, Event, ModelSelector, OpId, SamplingParams, StaticPolicy, SteerMode,
+    Timestamp, ToolSchema, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -115,6 +115,9 @@ pub struct Engine {
     /// trace can carry it (the brain branches on the policy's pure decisions —
     /// permission/background — so replay needs the same policy, §6.3).
     policy_config: Option<serde_json::Value>,
+    /// The logical model a sub-agent uses when its config doesn't name one
+    /// (ARCHITECTURE §13.1); the child reuses the host's model registry.
+    default_model: ModelSelector,
 }
 
 impl Engine {
@@ -256,7 +259,11 @@ impl Engine {
         // flush any buffered streamed text before rendering the lifecycle hook.
         if matches!(
             event,
-            Event::ModelDone { .. } | Event::CapabilityDone { .. } | Event::CapabilityError { .. }
+            Event::ModelDone { .. }
+                | Event::CapabilityDone { .. }
+                | Event::CapabilityError { .. }
+                | Event::AgentDone { .. }
+                | Event::AgentError { .. }
         ) {
             self.flush_render();
         }
@@ -267,6 +274,15 @@ impl Engine {
                 self.frontend.on_tool_end(*op, &name, result, false);
             }
             Event::CapabilityError { op, error, .. } => {
+                let name = self.op_labels.remove(op).unwrap_or_default();
+                self.frontend.on_tool_end(*op, &name, error, true);
+            }
+            // A sub-agent completing reads like a tool completing to the front-end.
+            Event::AgentDone { op, result } => {
+                let name = self.op_labels.remove(op).unwrap_or_default();
+                self.frontend.on_tool_end(*op, &name, result, false);
+            }
+            Event::AgentError { op, error } => {
                 let name = self.op_labels.remove(op).unwrap_or_default();
                 self.frontend.on_tool_end(*op, &name, error, true);
             }
@@ -340,6 +356,29 @@ impl Engine {
                     });
                 }
             },
+
+            // A sub-agent is another brain the host drives on its own task
+            // (ARCHITECTURE §13). It reuses (a subset of) our model + capability
+            // registries; its progress streams back as events keyed by `op` and
+            // its digest returns as `AgentDone`. Tracked in `tasks` so a `Cancel`
+            // aborts the whole subtree.
+            Command::StartAgent { op, config, seed } => {
+                let label = agent_label(&config);
+                self.frontend.on_tool_start(op, &label, &config);
+                self.op_labels.insert(op, label);
+                let handle = tokio::spawn(crate::agent::run_agent(
+                    op,
+                    config,
+                    seed,
+                    self.models.clone(),
+                    self.caps.clone(),
+                    self.policy.clone(),
+                    self.default_model.clone(),
+                    self.clock.clone(),
+                    self.tx.clone(),
+                ));
+                self.tasks.insert(op, handle);
+            }
 
             Command::RequestPermission { op, request } => {
                 let decision = self.policy.decide(&request).await;
@@ -425,6 +464,9 @@ pub struct EngineBuilder {
     selector: ModelSelector,
     system_prompt: Option<String>,
     sampling: SamplingParams,
+    /// Capabilities that spawn sub-agents (ARCHITECTURE §13): each advertises a
+    /// tool schema to the model and carries a fork seed strategy (§14).
+    agents: Vec<(ToolSchema, AgentSeed)>,
     record: bool,
     /// When set, the brain is pre-seeded by replaying this trace's recorded
     /// events into it (with zero IO), and the recorder is pre-loaded with those
@@ -443,6 +485,7 @@ impl Default for EngineBuilder {
             selector: ModelSelector::named("big"),
             system_prompt: None,
             sampling: SamplingParams::default(),
+            agents: Vec::new(),
             record: false,
             resume: None,
         }
@@ -478,6 +521,16 @@ impl EngineBuilder {
     /// Register a capability (tool).
     pub fn capability(mut self, capability: Arc<dyn crate::Capability>) -> Self {
         self.caps.register(capability);
+        self
+    }
+
+    /// Register a **sub-agent** tool (ARCHITECTURE §13): the model sees `schema`
+    /// as an ordinary tool, but invoking it spawns a child brain (seeded per
+    /// `seed`, §14) which the host runs on its own task and whose digest returns
+    /// as the tool's result. The child reuses this host's model + capability
+    /// registries (optionally narrowed by a `tools` allowlist in its args).
+    pub fn agent(mut self, schema: ToolSchema, seed: AgentSeed) -> Self {
+        self.agents.push((schema, seed));
         self
     }
 
@@ -563,12 +616,19 @@ impl EngineBuilder {
                 (brain, Some(recorder), trace.policy)
             }
             None => {
+                // Advertise both capability tools and sub-agent tools to the
+                // model; the brain routes agent-named calls to `StartAgent`.
+                let mut tools = self.caps.schemas();
+                tools.extend(self.agents.iter().map(|(schema, _)| schema.clone()));
                 let mut policy = StaticPolicy::default()
                     .with_model(self.selector.clone())
-                    .with_tools(self.caps.schemas())
+                    .with_tools(tools)
                     .with_permissioned(self.caps.permissioned_names())
                     .with_background(self.caps.background_names())
                     .with_params(self.sampling);
+                for (schema, seed) in &self.agents {
+                    policy = policy.with_agent(schema.name.clone(), *seed);
+                }
                 if let Some(system) = self.system_prompt {
                     policy = policy.with_system_prompt(system);
                 }
@@ -600,6 +660,26 @@ impl EngineBuilder {
             coalescer: Coalescer::new(),
             recorder,
             policy_config,
+            default_model: self.selector,
         }
+    }
+}
+
+/// A display label for a sub-agent op — its config's `name` if given, else the
+/// prompt's opening words, else just `"agent"`. Cosmetic (front-end only).
+fn agent_label(config: &Value) -> String {
+    if let Some(name) = config.get("name").and_then(|v| v.as_str()) {
+        return format!("agent:{name}");
+    }
+    match config.get("prompt").and_then(|v| v.as_str()) {
+        Some(prompt) => {
+            let head: String = prompt
+                .split_whitespace()
+                .take(4)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("agent:{head}")
+        }
+        None => "agent".to_string(),
     }
 }

@@ -18,7 +18,7 @@ use serde_json::json;
 use crate::command::{Command, DoneReason, OutputEvent, PermissionRequest};
 use crate::event::{Decision, Event, SteerMode, VersionRef};
 use crate::model::{ModelDelta, ModelOutput, ToolCall, Usage};
-use crate::policy::{StaticPolicy, TurnPolicy};
+use crate::policy::{AgentSeed, StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Value};
 use crate::record::{LogEntry, OpMeta, OpOutcome, Record};
 use crate::state::{BrainState, OpKind};
@@ -44,6 +44,18 @@ impl Brain {
     /// projection, no permissions, no tools).
     pub fn with_default_policy() -> Self {
         Self::new(Box::new(StaticPolicy::default()))
+    }
+
+    /// Create a brain **seeded from an inherited log** — the fork primitive
+    /// (ARCHITECTURE §14). A sub-agent (`Command::StartAgent`'s `seed`) or a
+    /// resumed session starts from a copy of a log prefix; the brain re-derives
+    /// its state by folding it (§3.1). No IO: the recorded ops are not re-run,
+    /// only re-folded to reconstruct `BrainState`.
+    pub fn from_log(policy: Box<dyn TurnPolicy>, log: Vec<LogEntry>) -> Self {
+        Self {
+            state: BrainState::from_log(log),
+            policy,
+        }
     }
 
     /// Read-only access to the brain's derived state (log, op table, …).
@@ -231,7 +243,8 @@ impl Brain {
 
     fn on_agent_done(&mut self, op: OpId, result: Value) {
         // A sub-agent result returns to the parent as a tool-result-shaped value
-        // (ARCHITECTURE §13.1). Full sub-agent support lands in Phase 6.
+        // the next model turn consumes (ARCHITECTURE §13.1/§14.3): the child's
+        // digest flows back as *one* value; forks diverge, results flow back.
         let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
@@ -381,10 +394,30 @@ impl Brain {
         }
     }
 
-    /// Turn one model-requested tool call into an op: either gate it on
-    /// permission, or start it immediately.
+    /// Turn one model-requested tool call into an op: spawn a sub-agent (if the
+    /// policy designates this capability as an agent), gate it on permission, or
+    /// start it immediately.
     fn begin_tool_call(&mut self, call: ToolCall) {
         let op = self.state.alloc_op();
+        // A policy-designated sub-agent (ARCHITECTURE §13/§14): fork the log
+        // prefix per the seed strategy and hand it to the host as a child brain.
+        // The brain owns the log, so resolving the fork is a pure operation here.
+        if let Some(seed) = self.policy.agent_seed(&call.name) {
+            let seed_log = self.resolve_seed(seed);
+            self.state.mark(
+                op,
+                OpKind::Agent {
+                    name: call.name,
+                    call_id: call.id,
+                },
+            );
+            self.state.push_command(Command::StartAgent {
+                op,
+                config: call.args,
+                seed: seed_log,
+            });
+            return;
+        }
         if self.policy.needs_permission(&call.name) {
             self.state.mark(
                 op,
@@ -430,6 +463,23 @@ impl Brain {
         );
         self.state
             .push_command(Command::StartCapability { op, name, args });
+    }
+
+    /// Resolve a sub-agent [`AgentSeed`] into the actual log prefix to fork
+    /// (ARCHITECTURE §14). Pure: the brain owns the log. Copy-on-write is a host
+    /// optimization; the contract is just "the child starts from these entries."
+    fn resolve_seed(&self, seed: AgentSeed) -> Vec<LogEntry> {
+        match seed {
+            AgentSeed::Fresh => Vec::new(),
+            AgentSeed::ForkFull => self.state.log().to_vec(),
+            AgentSeed::ForkAt { seq } => self
+                .state
+                .log()
+                .iter()
+                .filter(|e| e.seq.0 <= seq)
+                .cloned()
+                .collect(),
+        }
     }
 
     fn cancel_all_inflight(&mut self) {

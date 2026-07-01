@@ -43,6 +43,31 @@ impl BrainState {
         Self::default()
     }
 
+    /// Rebuild state from an inherited log — the **fork/seed** primitive
+    /// (ARCHITECTURE §14): a child sub-agent (or a resumed session) starts from a
+    /// copy of a log prefix. `BrainState` is a fold over the log (§3.1), so we
+    /// take the log verbatim and derive the counters/clock from it. Nothing is
+    /// in flight (a consolidated prefix has no open ops) and the version
+    /// read-set is empty (versions are not persisted in consolidated records).
+    pub(crate) fn from_log(log: Vec<LogEntry>) -> Self {
+        let next_seq = log.last().map(|e| e.seq.0 + 1).unwrap_or(0);
+        let now = log.last().map(|e| e.at).unwrap_or_default();
+        let next_op = log
+            .iter()
+            .filter_map(|e| e.record.op_id())
+            .map(|op| op.0)
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(0);
+        Self {
+            log,
+            next_seq,
+            next_op,
+            now,
+            ..Self::default()
+        }
+    }
+
     // --- read-only accessors (for hosts, tooling and tests) ------------------
 
     /// The append-only log — the durable source of truth.
@@ -185,8 +210,10 @@ pub enum OpKind {
     },
     /// A pending `AskUser` awaiting the user's answer.
     AwaitingUser,
-    /// A sub-agent (full handling in Phase 6).
-    Agent,
+    /// A sub-agent op in progress (ARCHITECTURE §13). Like a capability it
+    /// blocks the turn and returns a tool-result-shaped value; it carries the
+    /// originating model `tool_call` id so its result correlates (§13.1).
+    Agent { name: String, call_id: String },
 }
 
 impl OpKind {
@@ -198,10 +225,12 @@ impl OpKind {
         }
     }
 
-    /// The capability name, if this op has one.
+    /// The capability (or sub-agent) name, if this op has one.
     pub(crate) fn capability_name(&self) -> Option<&str> {
         match self {
-            OpKind::Capability { name, .. } | OpKind::AwaitingPermission { name, .. } => Some(name),
+            OpKind::Capability { name, .. }
+            | OpKind::AwaitingPermission { name, .. }
+            | OpKind::Agent { name, .. } => Some(name),
             _ => None,
         }
     }
@@ -209,9 +238,9 @@ impl OpKind {
     /// The originating model `tool_call` id, if this op has one.
     pub(crate) fn call_id(&self) -> Option<&str> {
         match self {
-            OpKind::Capability { call_id, .. } | OpKind::AwaitingPermission { call_id, .. } => {
-                Some(call_id)
-            }
+            OpKind::Capability { call_id, .. }
+            | OpKind::AwaitingPermission { call_id, .. }
+            | OpKind::Agent { call_id, .. } => Some(call_id),
             _ => None,
         }
     }
@@ -224,7 +253,7 @@ impl OpKind {
     pub(crate) fn blocks_turn(&self) -> bool {
         match self {
             OpKind::Capability { background, .. } => !background,
-            OpKind::AwaitingPermission { .. } | OpKind::Agent | OpKind::AwaitingUser => true,
+            OpKind::AwaitingPermission { .. } | OpKind::Agent { .. } | OpKind::AwaitingUser => true,
             OpKind::Model { .. } => false,
         }
     }

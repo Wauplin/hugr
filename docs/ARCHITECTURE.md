@@ -532,6 +532,8 @@ host provides to plugin (imports):
 - **Subprocess/MCP** for heavy or language-agnostic tools where weight is acceptable (server hosts only). Adapted into the same `Capability` interface.
 - **Compile-time** capabilities for the batteries-included defaults (native shell/fs/http), shipped with the default host.
 
+Implemented (Phase 5): `baton-plugin-abi` owns the versioned, narrow contract (`describe`/`invoke`/`on_event` as tagged JSON, an integer `PROTOCOL_VERSION`, opaque `Value` payloads) behind a single transport-agnostic `PluginTransport` trait. The **subprocess** transport (`SubprocessPlugin`, stdio JSON) is the working default — a plugin is any external program, in any language, in its own repo, needing no core recompile and unable to touch core internals. The **WASM component** transport (the primary ABI above) is scaffolded behind the `wasm` feature (`WasmPlugin`) against the same trait; its wasmtime backend lands with Phase 4. The host wraps a loaded plugin's tools as ordinary `Capability`s (`baton_host::plugins`) — no privileged plugins, mirroring "no privileged built-ins". `on_event` is defined but not yet delivered by the host (narrow now, widen later).
+
 ## 9. Front-ends
 
 The core emits `OutputEvent`s via `Command::Emit`. Any number of front-ends subscribe:
@@ -607,6 +609,8 @@ The brain emits `Command::Checkpoint`; the host serializes the current trace (ap
 
 A sub-agent is **not a special subsystem** — it is *another `baton-core` instance*. Because the core is tiny, pure, and runtime-free, spawning one is cheap, and an arbitrarily deep tree of agents is just a tree of brains.
 
+Implemented (Phase 6): `Command::StartAgent { op, config, seed }` is emitted (instead of `StartCapability`) when the pluggable `TurnPolicy::agent_seed(capability)` designates a tool as a sub-agent spawner — *strategy* in the policy, not hardcoded in the reducer. `config` is the opaque tool-call args (host-interpreted: prompt/model/tools); `seed` is the forked log prefix (§14). The child runs **in-process** as a spawned host task (`baton_host::agent::run_agent`) reusing a subset of the parent's model + capability registries; its ops live in a `JoinSet` so a parent `Cancel` tears down the subtree. Its digest returns as `Event::AgentDone { op, result }` (a text answer + aggregated usage), folded back like any tool result. Nested agents work with no special case. Replay is flattened (§13.3): the parent trace records each child's `AgentDone`, so re-feeding it reconstructs the parent bit-for-bit without re-running children.
+
 ### 13.1 A sub-agent is an op
 
 ```rust
@@ -647,6 +651,8 @@ Recommendation: flattened parent trace as the canonical record, with optional pe
 ## 14. Forks
 
 A **fork** is the primitive underneath sub-agents, branching, rewind, and speculative execution. Because durable state is an append-only log, forking is *copying a prefix*.
+
+Implemented (Phase 6): `AgentSeed` (`Fresh` / `ForkAt { seq }` / `ForkFull`) is resolved to the actual log prefix by the brain (a pure operation on its own log), and `Brain::from_log` re-derives a child's `BrainState` by folding that inherited prefix with zero IO. Results flow back one-directionally as the `StartAgent` op's value — no log merge (§14.3).
 
 ```rust
 pub enum AgentSeed {

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use baton_core::{Command, Event, ModelSelector};
+use baton_core::{AgentSeed, Command, Event, ModelSelector, ToolSchema};
 use baton_host::capabilities::{FsRead, FsWrite, Http, Shell};
 use baton_host::policy::{AllowAll, Interactive};
 use baton_host::{Engine, EngineBuilder, Inspector, Policy, StdoutFrontend, Trace};
@@ -56,6 +56,12 @@ struct Cli {
     /// durable log), replayable later with `baton replay <path>`.
     #[arg(long = "record", value_name = "PATH")]
     record: Option<PathBuf>,
+
+    /// Load a plugin: a program (optionally with args) that speaks the Baton
+    /// plugin protocol over stdio. Repeatable. Each plugin's tools are
+    /// registered as ordinary capabilities. E.g. `--plugin ./my-plugin`.
+    #[arg(long = "plugin", value_name = "CMD")]
+    plugins: Vec<String>,
 
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -149,10 +155,22 @@ async fn run_session(cli: Cli) -> Result<()> {
     };
 
     // --- the "CLI on a laptop" host: ~10 lines on top of baton-host ----------
-    let mut engine = base_builder(adapter, policy)
+    let mut builder = base_builder(adapter, policy)
         .record(recording)
-        .frontend(Box::new(frontend))
-        .build();
+        .frontend(Box::new(frontend));
+    // Load any --plugin programs and register their tools as capabilities.
+    for spec in &cli.plugins {
+        let mut parts = spec.split_whitespace();
+        let program = parts.next().unwrap_or_default();
+        let args: Vec<&str> = parts.collect();
+        let caps = baton_host::plugins::load_subprocess(program, args)
+            .await
+            .with_context(|| format!("loading plugin `{spec}`"))?;
+        for cap in caps {
+            builder = builder.capability(cap);
+        }
+    }
+    let mut engine = builder.build();
     // -------------------------------------------------------------------------
 
     drive_session(
@@ -244,8 +262,35 @@ fn base_builder(adapter: OpenAiAdapter, policy: Arc<dyn Policy>) -> EngineBuilde
         .capability(Arc::new(FsRead))
         .capability(Arc::new(FsWrite))
         .capability(Arc::new(Http::new()))
+        // A `task` sub-agent tool (Phase 6): the model can delegate a self-
+        // contained unit of work to a child agent seeded with the full context.
+        // The child reuses this host's tools (optionally narrowed via `tools`).
+        .agent(task_agent_schema(), AgentSeed::ForkFull)
         .system_prompt(SYSTEM_PROMPT)
         .policy(policy)
+}
+
+/// The schema advertised for the built-in `task` sub-agent tool.
+fn task_agent_schema() -> ToolSchema {
+    ToolSchema::new(
+        "task",
+        "Delegate a self-contained sub-task to a child agent. It runs with its \
+         own turn loop and the same tools, and returns a text digest. Use for \
+         focused work you want handled end-to-end (e.g. 'find and summarize all \
+         TODOs').",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string", "description": "The sub-task instruction." },
+                "tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional allowlist of tool names the sub-agent may use."
+                }
+            },
+            "required": ["prompt"]
+        }),
+    )
 }
 
 /// Run the session: a one-shot turn if `prompt` is non-empty, otherwise an
@@ -355,6 +400,8 @@ fn summarize_event(event: &Event) -> String {
         CapabilityChunk { op, .. } => format!("CapabilityChunk(op={})", op.0),
         CapabilityDone { op, .. } => format!("CapabilityDone(op={})", op.0),
         CapabilityError { op, .. } => format!("CapabilityError(op={})", op.0),
+        AgentDone { op, .. } => format!("AgentDone(op={})", op.0),
+        AgentError { op, .. } => format!("AgentError(op={})", op.0),
         PermissionDecision { op, decision } => {
             format!("PermissionDecision(op={} · {decision:?})", op.0)
         }
@@ -370,6 +417,9 @@ fn summarize_command(cmd: &Command) -> String {
         }
         Command::StartCapability { op, name, .. } => {
             format!("StartCapability(op={} · {name})", op.0)
+        }
+        Command::StartAgent { op, seed, .. } => {
+            format!("StartAgent(op={} · seed {} entries)", op.0, seed.len())
         }
         Command::RequestPermission { op, request } => {
             format!("RequestPermission(op={} · {})", op.0, request.capability)

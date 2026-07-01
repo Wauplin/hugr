@@ -1048,6 +1048,128 @@ async fn resume_from_trace_continues_the_session() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A model that routes deterministically off the projected context (not off a
+/// call counter), so it behaves identically no matter how the *concurrent*
+/// sub-agent calls interleave. Three behaviours:
+///
+/// - context already has a tool result  → a final answer (the parent's join turn);
+/// - last user text starts with "worker" → that child's answer (a sub-agent turn);
+/// - otherwise                           → fan out to two `task` sub-agents.
+struct RoutingModel;
+
+#[async_trait]
+impl ModelAdapter for RoutingModel {
+    async fn call(
+        &self,
+        request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        use baton_core::{ContentPart, Role};
+
+        let has_tool_result = request.blocks.iter().any(|b| {
+            b.content
+                .iter()
+                .any(|p| matches!(p, ContentPart::ToolResult { .. }))
+        });
+        let last_user_text = request
+            .blocks
+            .iter()
+            .rev()
+            .filter(|b| b.role == Role::User)
+            .find_map(|b| {
+                b.content.iter().find_map(|p| match p {
+                    ContentPart::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+
+        let output = if has_tool_result {
+            ModelOutput::text("Both workers finished.")
+        } else if last_user_text.starts_with("worker") {
+            ModelOutput::text(format!("{last_user_text} done"))
+        } else {
+            ModelOutput::tool_calls(vec![
+                ToolCall::new("a", "task", json!({ "prompt": "worker-A" })),
+                ToolCall::new("b", "task", json!({ "prompt": "worker-B" })),
+            ])
+        };
+        if !output.text.is_empty() {
+            sink.text(output.text.clone());
+        }
+        Ok((output, Usage::new(1, 1)))
+    }
+}
+
+/// Phase 6 exit criterion: a parent agent fans out to N child agents (fork-shared
+/// context), collects their results, and the whole tree replays deterministically
+/// from one recorded trace. Driven through the **real** tokio engine — each child
+/// is its own brain on its own task, reusing the parent's model registry.
+#[tokio::test]
+async fn parent_fans_out_to_sub_agents_and_replays() {
+    use baton_core::AgentSeed;
+
+    let capture = Capture::default();
+    let task_schema = ToolSchema::new(
+        "task",
+        "Delegate a unit of work to a sub-agent.",
+        json!({ "type": "object", "properties": { "prompt": { "type": "string" } } }),
+    );
+
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(RoutingModel))
+        // `task` is a sub-agent tool: invoking it spawns a child seeded with the
+        // parent's full context (ForkFull).
+        .agent(task_schema, AgentSeed::ForkFull)
+        .frontend(Box::new(capture.clone()))
+        .clock(deterministic_clock())
+        .record(true)
+        .build();
+
+    engine.user_turn("fan out to two workers".into()).await;
+    engine.session_end();
+
+    // Both sub-agents returned, folded back as `task` tool results in the log.
+    let tool_results = count_tool_results(engine.brain().state().log());
+    assert_eq!(tool_results.len(), 2, "two sub-agents returned results");
+    assert!(tool_results.iter().all(|(name, _)| name == "task"));
+    let child_texts: Vec<String> = tool_results
+        .iter()
+        .filter_map(|(_, r)| r["text"].as_str().map(String::from))
+        .collect();
+    assert!(child_texts.contains(&"worker-A done".to_string()));
+    assert!(child_texts.contains(&"worker-B done".to_string()));
+
+    // The parent turn ended once, after both children joined.
+    let dones = capture.done.lock().unwrap();
+    assert_eq!(dones.len(), 1);
+    assert!(matches!(dones[0], DoneReason::EndTurn));
+    drop(dones);
+    assert!(
+        capture
+            .text
+            .lock()
+            .unwrap()
+            .contains("Both workers finished.")
+    );
+
+    // The whole tree replays bit-for-bit from the one parent trace: the recorded
+    // `AgentDone` results drive the fold, so a fresh brain reconstructs the same
+    // parent commands + log without re-running any child (ARCHITECTURE §13.3).
+    let trace = engine.trace().expect("recording was enabled");
+    let replay =
+        baton_host::baton_replay::verify(&trace).expect("the agent tree must replay bit-for-bit");
+    assert_eq!(replay.log, engine.brain().state().log());
+    // The reconstruction shows the parent spawning two agents then finishing.
+    use baton_core::Command;
+    let start_agents = replay
+        .commands
+        .iter()
+        .filter(|c| matches!(c, Command::StartAgent { .. }))
+        .count();
+    assert_eq!(start_agents, 2, "the parent spawned two sub-agents");
+}
+
 /// A non-recording engine has no trace, and `save_trace` errors cleanly.
 #[tokio::test]
 async fn engine_without_recording_has_no_trace() {

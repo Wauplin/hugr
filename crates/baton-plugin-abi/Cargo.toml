@@ -1,0 +1,29 @@
+[package]
+name = "baton-plugin-abi"
+description = "Versioned, sandboxed plugin ABI for Baton: transport-agnostic tool plugins (subprocess/stdio now; WASM component world behind a feature)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# baton-core is used as pure data (ToolSchema/Value). This is a host-side crate:
+# it MAY do IO (spawn subprocesses). baton-core stays sans-IO — the IO lives here.
+baton-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+# For the subprocess transport (spawn a plugin process, exchange JSON over stdio).
+tokio = { workspace = true }
+
+[features]
+default = []
+# Scaffolds the WASM component-model transport (ARCHITECTURE §8.1). The seam is
+# the `PluginTransport` trait; the full wasmtime wiring lands with Phase 4's
+# portability work. Enabling this today exposes a `WasmPlugin` type stub.
+wasm = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "process", "io-util"] }
