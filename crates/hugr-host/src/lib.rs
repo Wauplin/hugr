@@ -9,15 +9,15 @@
 //! The integration surface is small (DESIGN §8):
 //!
 //! ```no_run
-//! use hugr_host::{Engine, capabilities, policy::Interactive};
+//! use hugr_host::{Engine, capabilities, policy::AllowAll};
 //! use hugr_core::ModelSelector;
 //! # async fn run(adapter: std::sync::Arc<dyn hugr_host::ModelAdapter>) -> anyhow::Result<()> {
 //! let mut engine = Engine::builder()
-//!     .model(ModelSelector::named("big"), adapter)
+//!     .model(ModelSelector::named("medium"), adapter)
 //!     .capability(std::sync::Arc::new(capabilities::Shell))
 //!     .capability(std::sync::Arc::new(capabilities::FsRead))
 //!     .capability(std::sync::Arc::new(capabilities::FsWrite))
-//!     .policy(std::sync::Arc::new(Interactive))
+//!     .policy(std::sync::Arc::new(AllowAll))
 //!     .build();
 //! engine.user_turn("list the rust files".into()).await;
 //! # Ok(()) }

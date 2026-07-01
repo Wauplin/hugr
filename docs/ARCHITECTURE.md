@@ -35,8 +35,8 @@ The entire surface between brain and host is two enums plus two methods. This is
 /// Stable, serializable. Every effectful command carries an OpId so its
 /// results can be correlated and it can be cancelled.
 pub enum Command {
-    /// Start a model completion. `model` is a logical *selector* (e.g. "router",
-    /// "fast", "vision"), NOT a concrete endpoint — the host resolves it (§5.3).
+    /// Start a model completion. `model` is a logical *selector* (currently
+    /// "small", "medium", or "big"), NOT a concrete endpoint — the host resolves it (§5.3).
     /// Host streams deltas back as Events.
     StartModelCall { op: OpId, model: ModelSelector, request: ModelRequest },
 
@@ -215,7 +215,7 @@ Implemented (P3-2): `hugr-replay::BlobStore` is the disk-backed, content-address
 
 But real compaction (summarizing old turns to reclaim budget) requires a model call. So compaction is **not** part of projection — it is a **separate model op the brain triggers**, exactly like any other:
 
-1. When projection would exceed the budget (or a watermark is crossed), the brain emits a `StartModelCall` with the `"summarizer"` selector (§5.3) over the span to compact.
+1. When projection would exceed the budget (or a watermark is crossed), the brain emits a `StartModelCall` with the `small` selector (§5.3) over the span to compact.
 2. Its `ModelDone` result is appended to the log as a **summary `Record`** that references the span it replaces.
 3. The *next* projection sees that summary and evicts the underlying entries to references (§3.2) — nothing is lost; the originals remain in the log/blobs.
 
@@ -365,21 +365,21 @@ Different role, different typing → they're different commands. (At the *host* 
 
 ```rust
 pub enum ModelSelector {
-    Named(String),   // "router" | "big" | "fast" | "summarizer" | "vision" | ...
+    Named(String),   // product tiers: "small" | "medium" | "big"; type stays open
 }
 ```
 
 Two layers, cleanly split:
 
-- **Which logical model to use** for a given step is an *agent-strategy* decision → it lives in the pluggable `TurnPolicy::choose_model` in the brain. It can be static ("always big"), heuristic (pick "fast" for short follow-ups, "vision" when the input has images, "summarizer" when compacting context), or itself **call the `"router"` model first** and dispatch based on its answer. Because choosing a model is just emitting another `StartModelCall` with a different selector, the *router pattern is not a special case* — it's one model call feeding the next.
+- **Which logical model to use** for a given step is an *agent-strategy* decision → it lives in the pluggable `TurnPolicy::choose_model` in the brain. The current product ships exactly three configured tiers (`small`, `medium`, `big`), with `StaticPolicy` defaulting normal turns to `medium`; Phase B adds real routing over those tiers. The type remains open so future hosts can experiment without changing the core.
 - **What each selector resolves to** (concrete provider, model id, endpoint, key, adapter) is *host configuration* → a host-side **model registry** maps `selector → adapter`.
 
 ```rust
 // Host-side. The brain never sees any of this.
-struct ModelRegistry { /* "fast" -> OpenAIAdapter{gpt-…}, "big" -> AnthropicAdapter{opus}, … */ }
+struct ModelRegistry { /* "small" -> OpenAIAdapter{…}, "medium" -> OpenAIAdapter{…}, "big" -> OpenAIAdapter{…} */ }
 ```
 
-So binding "1 router, 1 big-and-slow, 1 small-and-fast, 1 cheap summarizer, 1 vision" is: register five entries in the host, and let the policy pick among the five role names. The brain stays a handful of selector strings; all the wiring, cost, and provider specifics live in the host. Each model op records its selector in `OpMeta` (§4.1), so per-role spend *and* per-role latency fall out of the trace for free.
+So binding the three shipped tiers is: register three entries in the host, and let the policy pick among those role names. The brain stays a handful of selector strings; all the wiring, cost, and provider specifics live in the host. Each model op records its selector in `OpMeta` (§4.1), so per-role spend *and* per-role latency fall out of the trace for free.
 
 ### 5.4 Error handling & retries: transport (host) vs semantic (brain)
 
@@ -440,18 +440,18 @@ pub trait Capability {
 ### 7.2 Externalized policy
 
 ```rust
-pub enum Decision { Allow, Deny { reason: String }, Ask }
+pub enum Decision { Allow, Deny { reason: String } }
 
 pub trait Policy {
     fn decide(&self, req: &PermissionRequest, ctx: &PolicyCtx) -> Decision;
 }
 ```
 
-- Interactive host: `Ask` → prompts the user.
-- CI host: allowlist data → `Allow`/`Deny`, never asks.
-- Autonomous host: capability-set data.
+- Default native/browser product mode: `AutoApprove` asks the configured `small` tier for a yes/no safety verdict and returns `Allow` or `Deny { reason }`; the reason is routed back to the model as a tool-result-shaped denial.
+- `yolo` host mode: `AllowAll` returns `Allow` for every gated action.
+- CI/locked-down hosts can still use allowlist or deny-all data policies, returning `Allow`/`Deny` without prompting.
 
-The brain's loop is identical in all three. Permission is an op like any other (`RequestPermission` → `PermissionDecision`).
+The brain's loop is identical in all modes. Permission is an op like any other (`RequestPermission` → `PermissionDecision`), and the decision event is recorded so replay never re-runs a judge.
 
 ### 7.3 Stateful capabilities & the stale-edit problem (optimistic concurrency)
 

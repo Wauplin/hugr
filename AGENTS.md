@@ -55,7 +55,7 @@ crates/hugr-host/       # default native host (tokio, IO) — Phase 1
   src/engine.rs      # the tokio driver loop + EngineBuilder
   src/capability.rs  # Capability trait + ChunkSink + registry
   src/model.rs       # ModelAdapter trait + ModelSink + registry
-  src/policy.rs      # host permission Policy: AllowAll/DenyAll/Interactive
+  src/policy.rs      # host permission Policy: AutoApprove, AllowAll/yolo, DenyAll, Interactive test/legacy policy
   src/frontend.rs    # Frontend trait + StdoutFrontend (ANSI colors)
   src/capabilities/  # shell, fs_read, fs_write, http, blob (content-addressed store)
 

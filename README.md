@@ -15,7 +15,7 @@ The differentiator is not a feature list; it is an **architecture**. Hugr keeps 
 
 From those separations, resume, replay, multi-front-end, multi-provider, sub-agents, forks, and parallel streaming all *fall out* rather than being engineered as separate subsystems.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the rationale, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the concrete contract, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased plan.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the rationale, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the concrete contract, [`docs/ROADMAP.md`](docs/ROADMAP.md) for the original phased plan, and [`docs/ROADMAP_2.md`](docs/ROADMAP_2.md) for the current Rust CLI + Chrome extension product roadmap.
 
 ## The core ↔ host contract
 
@@ -39,12 +39,13 @@ loop {
 [`Command`]: crates/hugr-core/src/command.rs
 [`Event`]: crates/hugr-core/src/event.rs
 
-## Status — Phases 0 & 1 ✅
+## Status ✅
 
-Per the [roadmap](docs/ROADMAP.md):
+Per the roadmaps:
 
 - **Phase 0** — the **pure core skeleton (no IO)**: the `Command`/`Event` vocabulary, the append-only log and in-flight op table, the turn loop (`user → model → tool → model → done`), a trivial pass-through projection policy, and **deterministic replay**.
-- **Phase 1** — the **batteries-included CLI host**: a tokio driver loop, the uniform capability + model-adapter interfaces, `shell`/`fs`/`http` capabilities, an interactive permission policy, a streaming OpenAI-compatible adapter, and the `hugr` CLI.
+- **Phase 1** — the **batteries-included CLI host**: a tokio driver loop, the uniform capability + model-adapter interfaces, `shell`/`fs`/`http` capabilities, a streaming OpenAI-compatible adapter, and the `hugr` CLI.
+- **Roadmap 2 Phase 0** — product foundations: shipped `small`/`medium`/`big` tiers, `medium` default turns, host-supplied durable `est_tokens`, default auto-approve judge permissions, and explicit `--yolo` allow-all.
 
 See [`PROGRESS.md`](PROGRESS.md) for the detailed status.
 
@@ -78,17 +79,33 @@ hf auth login                         # once; hugr reads the stored token
 
 cargo run -p hugr-cli -- "list the rust files and summarise the workspace"
 cargo run -p hugr-cli                # interactive REPL
-cargo run -p hugr-cli -- -y "..."    # approve all tool calls (no prompts)
+cargo run -p hugr-cli -- --yolo "..." # allow all gated tool calls, skipping the judge
 ```
 
-Configuration (all optional) via environment:
+By default gated tools are judged by the configured `small` tier and denied reasons are routed back to the model. `--yolo` / `-y` switches to allow-all.
+
+Configuration (all optional) via environment and `HUGR_CONFIG`:
 
 | Variable          | Default                                                 | Notes                                         |
 | ----------------- | ------------------------------------------------------- | --------------------------------------------- |
 | API key           | `OPENAI_API_KEY`, else `HF_TOKEN`, else the HF token file (`HF_TOKEN_PATH` / `$HF_HOME/token` / `~/.cache/huggingface/token`), else `hf auth token` | token file is read directly — no `hf` binary required |
-| `OPENAI_MODEL`    | `google/gemma-4-31B-it:together`                        | must support tool calling                     |
+| `OPENAI_MODEL`    | `google/gemma-4-31B-it:together`                        | overrides all three tiers; each tier must support tool calling |
 | `OPENAI_BASE_URL` | `https://router.huggingface.co/v1`                      | set to `https://api.openai.com/v1` for OpenAI |
+| `HUGR_CONFIG`     | unset                                                   | JSON config with a `models` section for `small`/`medium`/`big`, each with `model`, optional `temperature`, and optional `max_tokens` |
 | `HUGR_FULL_OUTPUT` | unset (collapse)                                      | truthy ⇒ show full tool output; same as the `--full-output` flag |
+
+Example tier config:
+
+```json
+{
+  "models": {
+    "base_url": "https://router.huggingface.co/v1",
+    "small": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.0, "max_tokens": 512 },
+    "medium": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.2 },
+    "big": { "model": "google/gemma-4-31B-it:cerebras", "temperature": 0.2, "max_tokens": 4096 }
+  }
+}
+```
 
 > The model must support **function calling**, since hugr always advertises its tools. Small models that don't (e.g. some 8B instruct variants) return `model features function calling not support`.
 

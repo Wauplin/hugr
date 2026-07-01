@@ -47,6 +47,8 @@ These narrow the design deliberately. The architecture doc keeps the general mec
 
 **Goal.** The three primitives the rest of the roadmap leans on: tiers, host-side token accounting, and the two-mode permission model. Small, mechanical, high-leverage.
 
+**Status.** Implemented in the native CLI/host and Chrome extension; see `PROGRESS.md` → "Roadmap 2 Phase 0 — Foundations" for the exact shipped behavior and verification.
+
 - **0.1** `[Engine][Providers]` — Model registry maps `small`/`medium`/`big` → HF router model ids + per-tier knobs (temperature, max tokens), from one config file/section. All three may point at the same model initially. **Exit:** one config file wires all three tiers; no core change needed to remap a tier.
 - **0.2** `[Brain]` — `StaticPolicy` default tier becomes `medium` (was `big`); `choose_model` still returns a single configured tier for now (routing is Phase B). **Exit:** a fresh session defaults to `medium`; `choose_model` is the only place a tier is decided.
 - **0.3** `[Engine][Brain]` — Host-side **token accounting at ingestion** (ARCHITECTURE §3.5): when a `ModelOutput`/`ToolResult` enters the log, the host annotates its record with an approximate token count; the brain stores it on the record and never tokenises. **Exit:** every durable content record carries an `est_tokens`; replaying a trace reuses the recorded counts (the host never re-tokenises on replay).

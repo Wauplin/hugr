@@ -14,11 +14,11 @@ Open any article, then ask. Watch the agent call `get_current_page` → `get_pag
 
 The agent calls `list_tabs` and reasons over the titles/URLs. Shows: the **tab tools** and that the brain routes opaque tool results back into the turn loop.
 
-## 3. Navigate with a permission prompt
+## 3. Navigate with auto-approve
 
 > **"Open Hacker News and read me the top 5 headlines."**
 
-The agent calls `open_tab` (or `navigate_tab`) — a **permission card** appears in the panel (Allow / Deny). Allow it, then it calls `get_page_links` / `get_page_text` and reports back. Shows: the **permission round-trip** (`RequestPermission` → `PermissionDecision`) that is core to Hugr's policy model. Toggle **auto-approve navigation** to skip the prompt (the browser equivalent of the CLI's `-y`).
+The agent calls `open_tab` (or `navigate_tab`) — the browser host runs the configured `small` tier permission judge and feeds back `Allow` or `Deny { reason }` as a recorded `PermissionDecision`. If denied, the model sees the reason and can adapt; if allowed, it reads the page and reports back. Toggle **yolo navigation** to skip the judge (the browser equivalent of the CLI's `--yolo` / `-y`).
 
 ## 4. Multi-step research across tabs
 

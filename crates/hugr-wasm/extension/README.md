@@ -14,8 +14,8 @@ It can **read pages** (text, links, headings, interactive elements) and **naviga
    ```
 2. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select `crates/hugr-wasm/extension/`.
 3. Click the Hugr toolbar icon to open the side panel. Open **Settings (⚙)** and paste an API key:
-   - **Hugging Face router** (default): a `hf_…` token, base URL `https://router.huggingface.co/v1`, model e.g. `google/gemma-4-31B-it:cerebras`.
-   - **OpenAI**: an `sk-…` key, base URL `https://api.openai.com/v1`, model e.g. `gpt-4o-mini`.
+   - **Hugging Face router** (default): a `hf_…` token, base URL `https://router.huggingface.co/v1`, and `small`/`medium`/`big` tier model ids such as `google/gemma-4-31B-it:cerebras`.
+   - **OpenAI**: an `sk-…` key, base URL `https://api.openai.com/v1`, and tool-calling tier model ids.
 4. Chat. See [`DEMOS.md`](./DEMOS.md) for things to try.
 
 Requires Chrome 116+ (side panel API). Your key lives in `chrome.storage.local` and is only sent to the endpoint you configure.
@@ -29,9 +29,9 @@ Requires Chrome 116+ (side panel API). Your key lives in `chrome.storage.local` 
 | Model adapter (fetch/SSE) | `host/model.js`                          | `hugr-providers/src/openai.rs`       |
 | Capabilities (tabs/pages) | `host/tools.js` + `host/schemas.js`      | `hugr-host/src/capabilities/`        |
 | Front-end (DOM)           | `sidepanel.js`                           | `StdoutFrontend`                     |
-| Permission policy         | `host/engine.js` (`requestPermission`)   | `hugr-host` `Interactive`/`AllowAll` |
+| Permission policy         | `host/engine.js` (`requestPermission`)   | `hugr-host` `AutoApprove`/`AllowAll` |
 
-The brain is `submit(eventJson)` / `poll() -> commandsJson`, synchronous and pure, exactly as in the terminal. Everything asynchronous (streaming fetches, tab tools, permission prompts) lives in the JS host and is merged into the one ordered event stream the brain consumes an event at a time.
+The brain is `submit(eventJson)` / `poll() -> commandsJson`, synchronous and pure, exactly as in the terminal. Everything asynchronous (streaming fetches, tab tools, and the small-tier permission judge) lives in the JS host and is merged into the one ordered event stream the brain consumes an event at a time.
 
 Assistant output and confirmation prompts render Markdown directly in the side panel, including headings, lists, quotes, code blocks, links, tables, emphasis, and task checkboxes. The renderer is dependency-free and builds DOM nodes rather than injecting model text as HTML.
 
@@ -43,7 +43,7 @@ Read-only (no permission): `list_tabs`, `get_current_page`, `get_page_text`, `ge
 
 The read tools auto-wait briefly for the page to finish loading; `wait_for_page` (optionally with a CSS `selector` and a `settle_ms` quiet period) is the explicit, more reliable wait for heavy/JS-rendered pages.
 
-Navigation (permission-gated — a prompt appears unless *auto-approve* is on): `open_tab`, `navigate_tab`, `activate_tab`, `close_tab`.
+Navigation (permission-gated): `open_tab`, `navigate_tab`, `activate_tab`, `close_tab`. By default these go through the configured `small` tier judge and a denial reason is routed back to the model; the **yolo navigation** checkbox skips the judge and allows them.
 
 Agent-UX: `ask_user_confirmation` (yes/no card), `show_plan` (numbered plan card).
 
