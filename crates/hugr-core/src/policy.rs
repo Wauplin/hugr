@@ -421,7 +421,7 @@ impl TurnPolicy for RoutingPolicy {
         }
 
         if inputs.recent_failures >= self.recent_failure_threshold
-            || matches!(inputs.tool_risk, ToolRisk::Denied | ToolRisk::Failed)
+            || matches!(inputs.tool_risk, ToolRisk::Failed)
             || inputs.context_pressure >= self.context_pressure_threshold
             || recent_user.as_deref().is_some_and(is_big_text_task)
         {
@@ -469,7 +469,7 @@ impl TurnPolicy for RoutingPolicy {
                     inputs.recent_failures, self.recent_failure_threshold
                 ));
             }
-            if matches!(inputs.tool_risk, ToolRisk::Denied | ToolRisk::Failed) {
+            if matches!(inputs.tool_risk, ToolRisk::Failed) {
                 reasons.push(format!("recent tool risk is {:?}", inputs.tool_risk));
             }
             if inputs.context_pressure >= self.context_pressure_threshold {
@@ -719,9 +719,14 @@ fn recent_failure_count(log: &[LogEntry]) -> u32 {
         .rev()
         .take(24)
         .filter(|entry| match &entry.record {
-            Record::OpEnded { outcome, .. } => !matches!(outcome, crate::record::OpOutcome::Ok),
+            Record::OpEnded { outcome, .. } => match outcome {
+                crate::record::OpOutcome::Ok => false,
+                crate::record::OpOutcome::Error(error) => !is_permission_denied(error),
+                crate::record::OpOutcome::Cancelled { .. } => true,
+            },
             Record::ToolResult { result, .. } => result.as_object().is_some_and(|object| {
-                object.contains_key("error") || object.contains_key("reason")
+                (object.contains_key("error") || object.contains_key("reason"))
+                    && !is_permission_denied(result)
             }),
             _ => false,
         })
@@ -748,12 +753,24 @@ fn recent_tool_risk(log: &[LogEntry]) -> ToolRisk {
                     Some(ToolRisk::ReadOnly)
                 }
             }
+            Record::OpEnded {
+                outcome: crate::record::OpOutcome::Error(error),
+                ..
+            } if is_permission_denied(error) => Some(ToolRisk::Denied),
             Record::OpEnded { outcome, .. } if !matches!(outcome, crate::record::OpOutcome::Ok) => {
                 Some(ToolRisk::Failed)
             }
             _ => None,
         })
         .unwrap_or(ToolRisk::None)
+}
+
+fn is_permission_denied(value: &crate::primitives::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("error"))
+        .and_then(|error| error.as_str())
+        .is_some_and(|error| error == "permission_denied")
 }
 
 fn recent_user_text(log: &[LogEntry]) -> Option<String> {

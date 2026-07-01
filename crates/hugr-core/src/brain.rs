@@ -474,7 +474,7 @@ impl Brain {
             self.policy
                 .explain_model_choice(&self.state, &inputs, &selector),
         )
-        .with_inputs(serde_json::to_value(&inputs).unwrap_or(Value::Null));
+        .with_inputs(routing_inputs_snapshot(&inputs));
         let request = plan.to_model_request();
         self.state.mark(
             op,
@@ -885,4 +885,14 @@ fn next_routing_phase(log: &[LogEntry]) -> RoutingPhase {
         Some(Record::ToolResult { .. }) => RoutingPhase::ToolFollowup,
         _ => RoutingPhase::Normal,
     }
+}
+
+fn routing_inputs_snapshot(inputs: &RoutingInputs) -> Value {
+    json!({
+        "phase": format!("{:?}", inputs.phase),
+        "tool_risk": format!("{:?}", inputs.tool_risk),
+        "context_pressure": format!("{:.6}", inputs.context_pressure),
+        "recent_failures": inputs.recent_failures,
+        "override_selector": inputs.override_selector,
+    })
 }
