@@ -10,6 +10,7 @@ mod http;
 mod patch;
 mod repo;
 mod shell;
+mod verify;
 
 pub use blob::Blob;
 pub use fs::{FsRead, FsWrite};
@@ -17,3 +18,4 @@ pub use http::Http;
 pub use patch::PatchApply;
 pub use repo::{GitDiff, GitLog, GitStatus, PackageMetadata, RepoFiles, RepoRead, RepoSearch};
 pub use shell::Shell;
+pub use verify::CargoVerify;

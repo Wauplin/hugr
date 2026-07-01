@@ -322,6 +322,19 @@ Tests:
 - `crates/hugr-core/tests/scripted_session.rs::todo_state_persists_and_projects_latest_progress` proves todo snapshots are durable and the latest progress is projected into the next model request.
 - Verification run: `cargo test -p hugr-core todo_state_persists_and_projects_latest_progress -q`; `cargo check -p hugr-cli -q`.
 
+### D6 — Verification loops ✅
+
+Done:
+
+- `hugr-host` now ships `cargo_verify`, a background capability for `cargo fmt --all`, `cargo test`, and `cargo clippy --all-targets`. It streams stdout/stderr chunks while running and returns exit status, captured output, truncation state, targeted test hints, retry budget, and concise failure summaries.
+- Targeted test hints are derived from changed Rust paths, and failure summaries keep high-signal compiler/test/panic lines for model repair loops.
+- `hugr-cli` registers `cargo_verify` in the default coding-agent toolset; because the capability declares `runs_in_background`, long builds/tests do not block model reasoning.
+
+Tests:
+
+- `hugr-host::capabilities::verify::tests::summarizes_failures_and_detects_targeted_tests` pins failure summarisation, targeted test detection, and background-op declaration.
+- Verification run: `cargo test -p hugr-host summarizes_failures_and_detects_targeted_tests -q`; `cargo check -p hugr-cli -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.
