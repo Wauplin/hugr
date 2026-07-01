@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 // `/v1` suffix is part of the base URL; the adapter appends `/chat/completions`.
 // Point `OPENAI_BASE_URL` at `https://api.openai.com/v1` to use OpenAI directly.
 const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
-const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:together";
+const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:cerebras";
 
 // Transport-level retry defaults (ARCHITECTURE: retries are the adapter's job).
 // 4 attempts = 1 initial try + up to 3 retries, with exponential backoff capped
@@ -62,7 +62,7 @@ impl OpenAiAdapter {
     ///   token file (`HF_TOKEN_PATH`, else `$HF_HOME/token`, else
     ///   `~/.cache/huggingface/token`), else the output of `hf auth token` if
     ///   the `hf` CLI is installed and logged in.
-    /// - **Model:** `OPENAI_MODEL` (default `google/gemma-4-31B-it:together`).
+    /// - **Model:** `OPENAI_MODEL` (default `google/gemma-4-31B-it:cerebras`).
     /// - **Base URL:** `OPENAI_BASE_URL` (default the Hugging Face router).
     pub fn from_env() -> anyhow::Result<Self> {
         let api_key = resolve_api_key().context(

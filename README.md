@@ -6,7 +6,7 @@
 
 The differentiator is not a feature list; it is an **architecture**. Hugr keeps four things separate that most harnesses conflate:
 
-| Concern           | What Hugr does                                               |
+| Concern           | What Hugr does                                                |
 | ----------------- | ------------------------------------------------------------- |
 | **Durable state** | An append-only **event log** is the source of truth           |
 | **Model context** | A **projection** rendered from the log per turn               |
@@ -86,13 +86,13 @@ By default gated tools are judged by the configured `small` tier and denied reas
 
 Configuration (all optional) via environment and `HUGR_CONFIG`:
 
-| Variable          | Default                                                 | Notes                                         |
-| ----------------- | ------------------------------------------------------- | --------------------------------------------- |
-| API key           | `OPENAI_API_KEY`, else `HF_TOKEN`, else the HF token file (`HF_TOKEN_PATH` / `$HF_HOME/token` / `~/.cache/huggingface/token`), else `hf auth token` | token file is read directly — no `hf` binary required |
-| `OPENAI_MODEL`    | `google/gemma-4-31B-it:together`                        | overrides all three tiers; each tier must support tool calling |
-| `OPENAI_BASE_URL` | `https://router.huggingface.co/v1`                      | set to `https://api.openai.com/v1` for OpenAI |
-| `HUGR_CONFIG`     | unset                                                   | JSON config with a `models` section for `small`/`medium`/`big`, each with `model`, optional `temperature`, and optional `max_tokens` |
-| `HUGR_FULL_OUTPUT` | unset (collapse)                                      | truthy ⇒ show full tool output; same as the `--full-output` flag |
+| Variable           | Default                                                                                                                                             | Notes                                                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| API key            | `OPENAI_API_KEY`, else `HF_TOKEN`, else the HF token file (`HF_TOKEN_PATH` / `$HF_HOME/token` / `~/.cache/huggingface/token`), else `hf auth token` | token file is read directly — no `hf` binary required                                                                                |
+| `OPENAI_MODEL`     | `google/gemma-4-31B-it:cerebras`                                                                                                                    | overrides all three tiers; each tier must support tool calling                                                                       |
+| `OPENAI_BASE_URL`  | `https://router.huggingface.co/v1`                                                                                                                  | set to `https://api.openai.com/v1` for OpenAI                                                                                        |
+| `HUGR_CONFIG`      | unset                                                                                                                                               | JSON config with a `models` section for `small`/`medium`/`big`, each with `model`, optional `temperature`, and optional `max_tokens` |
+| `HUGR_FULL_OUTPUT` | unset (collapse)                                                                                                                                    | truthy ⇒ show full tool output; same as the `--full-output` flag                                                                     |
 
 Example tier config:
 
