@@ -586,7 +586,7 @@ function startSession(config, resetLog = false) {
 async function boot() {
   await init(); // instantiate the WASM module (needs 'wasm-unsafe-eval' CSP)
   currentConfig = await loadConfig();
-  $("subtitle").textContent = `core v${version()} · ${currentConfig.model}`;
+  $("subtitle").textContent = `core v${version()} · medium ${currentConfig.models.medium}`;
   $("auto-approve").checked = currentConfig.autoApprove;
 
   if (!currentConfig.apiKey) {

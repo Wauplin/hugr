@@ -41,9 +41,9 @@ struct Cli {
     /// session.
     prompt: Vec<String>,
 
-    /// Approve every tool call without prompting (the allow-all mode).
-    #[arg(short = 'y', long = "yes")]
-    yes: bool,
+    /// Allow every gated tool call without running the auto-approve judge.
+    #[arg(short = 'y', long = "yolo", visible_alias = "yes")]
+    yolo: bool,
 
     /// Override the model id for all tiers (defaults to the `OPENAI_MODEL` env
     /// var, then the built-in HF router model).
@@ -97,9 +97,9 @@ enum Cmd {
         /// continuing from the trace.
         prompt: Vec<String>,
 
-        /// Approve every tool call without prompting (the allow-all mode).
-        #[arg(short = 'y', long = "yes")]
-        yes: bool,
+        /// Allow every gated tool call without running the auto-approve judge.
+        #[arg(short = 'y', long = "yolo", visible_alias = "yes")]
+        yolo: bool,
 
         /// Override the default model id used for the new turn(s).
         #[arg(short = 'm', long = "model")]
@@ -143,9 +143,9 @@ enum Cmd {
         #[arg(long = "fresh", value_name = "PATH")]
         fresh: Option<PathBuf>,
 
-        /// Approve every tool call without prompting (the allow-all mode).
-        #[arg(short = 'y', long = "yes")]
-        yes: bool,
+        /// Allow every gated tool call without running the auto-approve judge.
+        #[arg(short = 'y', long = "yolo", visible_alias = "yes")]
+        yolo: bool,
 
         /// Override the default model id used for scheduled fires.
         #[arg(short = 'm', long = "model")]
@@ -165,10 +165,10 @@ async fn main() -> Result<()> {
         Some(Cmd::Resume {
             trace,
             prompt,
-            yes,
+            yolo,
             model,
             record,
-        }) => return run_resume(trace, prompt, yes, model, record).await,
+        }) => return run_resume(trace, prompt, yolo, model, record).await,
         Some(Cmd::Schedule {
             cron,
             once,
@@ -176,7 +176,7 @@ async fn main() -> Result<()> {
             session,
             sessions_dir,
             fresh,
-            yes,
+            yolo,
             model,
             prompt,
         }) => {
@@ -187,7 +187,7 @@ async fn main() -> Result<()> {
                 session,
                 sessions_dir,
                 fresh,
-                yes,
+                yolo,
                 model,
                 prompt,
             })
@@ -202,11 +202,11 @@ async fn main() -> Result<()> {
 /// Drive a live agent session (one-shot or interactive), optionally recording it.
 async fn run_session(cli: Cli) -> Result<()> {
     let models = build_model_config(cli.model)?;
-    let policy = select_policy(cli.yes, &models)?;
+    let policy = select_policy(cli.yolo, &models)?;
     let mapping = models.mapping_summary();
     let base_url = models.base_url.clone();
     let recording = cli.record.is_some();
-    let mode = if cli.yes { "yolo" } else { "auto-approve" };
+    let mode = if cli.yolo { "yolo" } else { "auto-approve" };
     print_banner(&format!(
         "hugr · model {} · {} · {mode}{}",
         mapping,
@@ -262,7 +262,7 @@ async fn run_session(cli: Cli) -> Result<()> {
 async fn run_resume(
     trace_path: PathBuf,
     prompt: Vec<String>,
-    yes: bool,
+    yolo: bool,
     model: Option<String>,
     record: Option<PathBuf>,
 ) -> Result<()> {
@@ -272,10 +272,10 @@ async fn run_resume(
     let out_path = record.unwrap_or_else(|| trace_path.clone());
 
     let models = build_model_config(model)?;
-    let policy = select_policy(yes, &models)?;
+    let policy = select_policy(yolo, &models)?;
     let mapping = models.mapping_summary();
     let base_url = models.base_url.clone();
-    let mode = if yes { "yolo" } else { "auto-approve" };
+    let mode = if yolo { "yolo" } else { "auto-approve" };
     print_banner(&format!(
         "hugr · resuming {} ({} events) · model {} · {} · {mode} · recording → {}",
         trace_path.display(),
@@ -308,7 +308,7 @@ struct ScheduleArgs {
     session: Option<String>,
     sessions_dir: PathBuf,
     fresh: Option<PathBuf>,
-    yes: bool,
+    yolo: bool,
     model: Option<String>,
     prompt: Vec<String>,
 }
@@ -322,11 +322,11 @@ async fn run_schedule(args: ScheduleArgs) -> Result<()> {
     let cron = CronExpr::parse(&args.cron)?;
     let target = schedule_target(args.trace, args.session, args.sessions_dir, args.fresh)?;
     let schedule = Schedule::new(cron, target, prompt);
-    let mode = if args.yes { "yolo" } else { "auto-approve" };
+    let mode = if args.yolo { "yolo" } else { "auto-approve" };
 
     loop {
         let models = build_model_config(args.model.clone())?;
-        let policy = select_policy(args.yes, &models)?;
+        let policy = select_policy(args.yolo, &models)?;
         let mapping = models.mapping_summary();
         let base_url = models.base_url.clone();
         print_banner(&format!(

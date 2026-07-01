@@ -18,7 +18,7 @@ Before doing several navigation steps, consider calling show_plan first, and ask
 /** Build the brain's StaticPolicy config from the current settings. */
 export function buildPolicy(config) {
   return {
-    model: { Named: "big" },
+    model: { Named: "medium" },
     tools: TOOL_SCHEMAS,
     permissioned: PERMISSIONED,
     background: [],
@@ -84,7 +84,7 @@ export class Engine {
 
   /** Submit a user message and drive the resulting turn to completion. */
   async userTurn(text) {
-    this.feed({ UserInput: { content: text, mode: "Queue" } });
+    this.feed({ UserInput: { content: text, mode: "Queue", est_tokens: estimateTextTokens(text) } });
     await this.driveToIdle();
   }
 
@@ -140,7 +140,11 @@ export class Engine {
         // This host doesn't run sub-agents; surface it as a semantic error so
         // the turn resolves instead of hanging.
         return this.pushEvent({
-          AgentError: { op: body.op, error: { error: "sub-agents are not supported in the browser host" } },
+          AgentError: {
+            op: body.op,
+            error: { error: "sub-agents are not supported in the browser host" },
+            est_tokens: estimateValueTokens({ error: "sub-agents are not supported in the browser host" }),
+          },
         });
       default:
         console.warn("hugr: unhandled command", type, body);
@@ -169,13 +173,14 @@ export class Engine {
     this.aborters.set(op, controller);
     this.frontend.onModelStart(op, model);
     callModel(request, this.config, {
+      model,
       onText: (t) => this.pushEvent({ ModelDelta: { op, delta: { Text: t } } }),
       onReasoning: (t) => this.pushEvent({ ModelDelta: { op, delta: { Reasoning: t } } }),
       signal: controller.signal,
     })
       .then(({ output, usage }) => {
         this.aborters.delete(op);
-        this.pushEvent({ ModelDone: { op, output, usage } });
+        this.pushEvent({ ModelDone: { op, output, usage, est_tokens: modelOutputEstTokens(output, usage) } });
       })
       .catch((e) => {
         this.aborters.delete(op);
@@ -190,16 +195,19 @@ export class Engine {
     this.opLabels.set(op, name);
     const tool = this.tools[name];
     if (!tool) {
-      this.pushEvent({ CapabilityError: { op, error: { error: `unknown capability: ${name}` }, conflict: null } });
+      const error = { error: `unknown capability: ${name}` };
+      this.pushEvent({ CapabilityError: { op, error, conflict: null, est_tokens: estimateValueTokens(error) } });
       return;
     }
     Promise.resolve()
       .then(() => tool(args))
       .then((result) => {
-        this.pushEvent({ CapabilityDone: { op, result: result ?? null, version: null } });
+        const value = result ?? null;
+        this.pushEvent({ CapabilityDone: { op, result: value, version: null, est_tokens: estimateValueTokens(value) } });
       })
       .catch((e) => {
-        this.pushEvent({ CapabilityError: { op, error: { error: String(e?.message || e) }, conflict: null } });
+        const error = { error: String(e?.message || e) };
+        this.pushEvent({ CapabilityError: { op, error, conflict: null, est_tokens: estimateValueTokens(error) } });
       });
   }
 
@@ -209,18 +217,49 @@ export class Engine {
       if (this.config.autoApprove) {
         decision = "Allow";
       } else {
-        const ok = await this.frontend.confirmPermission(request.capability, request.args);
-        decision = ok ? "Allow" : { Deny: { reason: "user declined" } };
+        decision = await this.judgePermission(request);
       }
       this.frontend.onPermission?.(request.capability, decision);
-      this.pushEvent({ PermissionDecision: { op, decision } });
+      this.pushEvent({ PermissionDecision: { op, decision, est_tokens: permissionDecisionEstTokens(decision) } });
     })();
+  }
+
+  async judgePermission(request) {
+    const judgeRequest = {
+      blocks: [
+        {
+          role: "System",
+          content: [
+            {
+              Text:
+                "You are Hugr's browser permission judge. Return only JSON with shape " +
+                "{\"safe\":true|false,\"reason\":\"short reason\"}. Allow benign bounded navigation. " +
+                "Deny destructive, credential, privacy-invasive, or unclear high-risk actions.",
+            },
+          ],
+        },
+        {
+          role: "User",
+          content: [{ Text: JSON.stringify({ capability: request.capability, args: request.args }) }],
+        },
+      ],
+      tools: [],
+      params: { temperature: 0, max_tokens: 128 },
+      extra: null,
+    };
+    try {
+      const { output } = await callModel(judgeRequest, this.config, { model: { Named: "small" } });
+      const verdict = parseJudgeVerdict(output.text);
+      return verdict.safe ? "Allow" : { Deny: { reason: verdict.reason } };
+    } catch (e) {
+      return { Deny: { reason: `auto-approve judge failed: ${e?.message || e}` } };
+    }
   }
 
   askUser({ op, prompt }) {
     (async () => {
       const answer = await this.frontend.ask(prompt.message);
-      this.pushEvent({ UserAnswer: { op, answer } });
+      this.pushEvent({ UserAnswer: { op, answer, est_tokens: estimateValueTokens(answer) } });
     })();
   }
 
@@ -232,4 +271,36 @@ export class Engine {
     }
     this.pushEvent({ OpCancelled: { op } });
   }
+}
+
+function estimateTextTokens(text) {
+  return Math.max(1, Math.ceil(String(text || "").length / 4));
+}
+
+function estimateValueTokens(value) {
+  return estimateTextTokens(typeof value === "string" ? value : JSON.stringify(value ?? null));
+}
+
+function modelOutputEstTokens(output, usage) {
+  return usage?.output_tokens || estimateTextTokens(output?.text || "");
+}
+
+function permissionDecisionEstTokens(decision) {
+  return decision?.Deny ? estimateTextTokens(decision.Deny.reason || "") : 0;
+}
+
+function parseJudgeVerdict(text) {
+  let raw = String(text || "");
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end >= start) parsed = JSON.parse(raw.slice(start, end + 1));
+  }
+  return {
+    safe: parsed?.safe === true,
+    reason: parsed?.reason || "auto-approve judge denied the action",
+  };
 }

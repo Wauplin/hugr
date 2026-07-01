@@ -73,17 +73,25 @@
   <input type="text" id="baseUrl" placeholder="https://router.huggingface.co/v1" />
   <div class="hint">OpenAI-compatible base URL. The adapter appends <code>/chat/completions</code>.</div>
 
-  <label for="model">Model</label>
-  <input type="text" id="model" placeholder="google/gemma-4-31B-it:cerebras" />
-  <div class="hint">A tool-calling capable model id available on the endpoint above.</div>
+  <label for="smallModel">Small tier model</label>
+  <input type="text" id="smallModel" placeholder="google/gemma-4-31B-it:cerebras" />
+  <div class="hint">Used for permission judging and other cheap classification work.</div>
+
+  <label for="mediumModel">Medium tier model</label>
+  <input type="text" id="mediumModel" placeholder="google/gemma-4-31B-it:cerebras" />
+  <div class="hint">Default tier for normal browser-agent turns.</div>
+
+  <label for="bigModel">Big tier model</label>
+  <input type="text" id="bigModel" placeholder="google/gemma-4-31B-it:cerebras" />
+  <div class="hint">Reserved for harder reasoning and future routing.</div>
 
   <label for="temperature">Temperature</label>
   <input type="text" id="temperature" placeholder="0.2" />
 
   <div class="row">
     <input type="checkbox" id="autoApprove" />
-    <label for="autoApprove" style="margin: 0; font-weight: 400;">Auto-approve navigation tools (skip permission
-      prompts)</label>
+    <label for="autoApprove" style="margin: 0; font-weight: 400;">Yolo navigation tools (skip the auto-approve
+      judge)</label>
   </div>
 
   <div class="footer">

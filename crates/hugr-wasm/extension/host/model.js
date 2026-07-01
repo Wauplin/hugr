@@ -20,8 +20,17 @@ function stringify(value) {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+function selectorName(selector) {
+  return selector?.Named || selector || "medium";
+}
+
+export function resolveModel(config, selector) {
+  const name = selectorName(selector);
+  return config.models?.[name] || config.model || config.models?.medium;
+}
+
 /** Build the chat-completions request body from a canonical ModelRequest. */
-export function buildBody(request, config) {
+export function buildBody(request, config, selector = { Named: "medium" }) {
   const messages = [];
   for (const block of request.blocks || []) {
     switch (block.role) {
@@ -73,7 +82,7 @@ export function buildBody(request, config) {
   }));
 
   const body = {
-    model: config.model,
+    model: resolveModel(config, selector),
     messages,
     stream: true,
     stream_options: { include_usage: true },
@@ -106,11 +115,11 @@ function mapStop(finish) {
  * @returns {Promise<{ output: object, usage: object }>} ModelOutput + Usage in
  *   serde shape, ready to drop into an Event::ModelDone.
  */
-export async function callModel(request, config, { onText, onReasoning, signal } = {}) {
+export async function callModel(request, config, { model, onText, onReasoning, signal } = {}) {
   if (!config.apiKey) {
     throw new Error("No API key set. Open the extension's Options page and add one.");
   }
-  const body = buildBody(request, config);
+  const body = buildBody(request, config, model);
   const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
   const resp = await fetch(url, {

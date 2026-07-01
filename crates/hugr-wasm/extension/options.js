@@ -6,7 +6,9 @@ async function load() {
   const c = await loadConfig();
   $("apiKey").value = c.apiKey;
   $("baseUrl").value = c.baseUrl;
-  $("model").value = c.model;
+  $("smallModel").value = c.models.small;
+  $("mediumModel").value = c.models.medium;
+  $("bigModel").value = c.models.big;
   $("temperature").value = String(c.temperature);
   $("autoApprove").checked = c.autoApprove;
 }
@@ -16,7 +18,11 @@ $("save").addEventListener("click", async () => {
   await saveConfig({
     apiKey: $("apiKey").value.trim(),
     baseUrl: $("baseUrl").value.trim() || DEFAULTS.baseUrl,
-    model: $("model").value.trim() || DEFAULTS.model,
+    models: {
+      small: $("smallModel").value.trim() || DEFAULTS.models.small,
+      medium: $("mediumModel").value.trim() || DEFAULTS.models.medium,
+      big: $("bigModel").value.trim() || DEFAULTS.models.big,
+    },
     temperature: Number.isFinite(temp) ? temp : DEFAULTS.temperature,
     autoApprove: $("autoApprove").checked,
   });
