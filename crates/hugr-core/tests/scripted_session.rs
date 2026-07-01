@@ -516,3 +516,92 @@ fn automatic_compaction_summarizes_then_reprojects_and_replays() {
     assert_eq!(commands_first, commands_second);
     assert_eq!(first.state().log(), second.state().log());
 }
+
+/// A4: a host-injected manual compaction event starts exactly one small-tier
+/// compaction pass and returns to idle after checkpointing.
+#[test]
+fn manual_compaction_event_runs_one_pass_without_starting_turn() {
+    let prior_log = vec![
+        LogEntry {
+            seq: Seq(0),
+            at: Timestamp(0),
+            record: Record::UserMessage {
+                text: "old user turn with many details".to_string(),
+                est_tokens: 10,
+            },
+        },
+        LogEntry {
+            seq: Seq(1),
+            at: Timestamp(0),
+            record: Record::ModelOutput {
+                op: OpId(0),
+                output: text_output("old assistant answer with many details"),
+                est_tokens: 10,
+            },
+        },
+    ];
+    let script = vec![
+        Event::CompactContext,
+        Event::ModelDone {
+            op: OpId(1),
+            output: text_output("Manual summary."),
+            usage: usage(),
+            est_tokens: 3,
+        },
+    ];
+
+    let policy = || {
+        StaticPolicy::default()
+            .with_context_budget(TokenBudget::new(20))
+            .with_compaction_high_water_percent(0)
+    };
+    let mut first = Brain::from_log(Box::new(policy()), prior_log.clone());
+    let commands_first = run_script(&mut first, script.clone());
+    let effectful_first = effectful(&commands_first);
+
+    assert!(
+        matches!(
+            effectful_first.as_slice(),
+            [
+                Command::StartModelCall {
+                    op: OpId(1),
+                    model,
+                    request
+                },
+                Command::Checkpoint,
+            ] if *model == ModelSelector::named("small")
+                && request.extra["kind"] == "compaction"
+                && request.extra["summary_of"]["start"] == 0
+                && request.extra["summary_of"]["end"] == 0
+        ),
+        "unexpected command sequence: {effectful_first:#?}"
+    );
+    assert_eq!(first.state().inflight_len(), 0);
+
+    let summary = first
+        .state()
+        .log()
+        .iter()
+        .find_map(|entry| match &entry.record {
+            Record::Summary {
+                summary_of,
+                tier,
+                est_tokens_in,
+                est_tokens_out,
+                text,
+                ..
+            } => Some((summary_of, tier, est_tokens_in, est_tokens_out, text)),
+            _ => None,
+        })
+        .expect("summary record is appended");
+    assert_eq!(*summary.0, SeqRange::new(Seq(0), Seq(0)));
+    assert_eq!(*summary.1, ModelSelector::named("small"));
+    assert_eq!(*summary.2, 10);
+    assert_eq!(*summary.3, 3);
+    assert_eq!(summary.4, "Manual summary.");
+
+    let mut second = Brain::from_log(Box::new(policy()), prior_log);
+    let commands_second = run_script(&mut second, script);
+    assert_eq!(commands_first, commands_second);
+    assert_eq!(first.state().log(), second.state().log());
+}

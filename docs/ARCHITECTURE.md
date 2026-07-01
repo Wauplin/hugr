@@ -71,6 +71,9 @@ pub enum Event {
     /// New user input arrived.
     UserInput { text: String /* or richer */ },
 
+    /// Host-injected request for one lossless compaction pass.
+    CompactContext,
+
     /// Streaming model output. Many of these per StartModelCall.
     ModelDelta { op: OpId, delta: ModelDelta },
     ModelDone  { op: OpId, usage: Usage, stop: StopReason },
@@ -220,6 +223,8 @@ But real compaction (summarizing old turns to reclaim budget) requires a model c
 3. The *next* projection sees that summary and evicts the underlying entries to references (§3.2) — nothing is lost; the originals remain in the log/blobs.
 
 This keeps projection pure while compaction stays an ordinary, replayable, cost-attributed op (it shows up in the trace with its own `OpMeta`). The cost: a small **compaction sub-loop** in the brain (decide-when, span-selection, "don't compact while a turn depends on those entries") — straightforward, but it is real logic to design, not free.
+
+Manual compaction is the same mechanism with a different trigger: a host injects `Event::CompactContext`, the reducer selects one span through the same pure `TurnPolicy::select_compaction_span` hook, emits one `small` model call, and appends the returned summary. Because the trigger and summarizer result are events, replay never re-runs the summarizer or re-decides the span.
 
 ### 3.5 Token counts come from the host, at ingestion
 

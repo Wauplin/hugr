@@ -147,9 +147,9 @@ impl BrainState {
     pub(crate) fn buffer_model_text(&mut self, op: OpId, text: &str) {
         if let Some(entry) = self.inflight.get_mut(&op) {
             match &mut entry.kind {
-                OpKind::Model { text_so_far, .. } | OpKind::Compaction { text_so_far, .. } => {
-                    text_so_far.push_str(text);
-                }
+                OpKind::Model { text_so_far, .. }
+                | OpKind::Compaction { text_so_far, .. }
+                | OpKind::ManualCompaction { text_so_far, .. } => text_so_far.push_str(text),
                 _ => {}
             }
         }
@@ -203,6 +203,14 @@ pub enum OpKind {
         est_tokens_in: u32,
         text_so_far: String,
     },
+    /// A host-triggered compaction pass. Unlike automatic compaction, this
+    /// returns to idle after checkpointing instead of resuming a model turn.
+    ManualCompaction {
+        selector: ModelSelector,
+        summary_of: SeqRange,
+        est_tokens_in: u32,
+        text_so_far: String,
+    },
     /// A capability (tool) invocation in progress. `background` ops do **not**
     /// block the model turn (ARCHITECTURE §4.2/§6.3): the turn resumes while they
     /// keep running, so a model stream and a long shell op run simultaneously.
@@ -229,9 +237,9 @@ impl OpKind {
     /// The model selector, if this is a model op (for [`OpMeta`](crate::OpMeta)).
     pub(crate) fn selector(&self) -> Option<ModelSelector> {
         match self {
-            OpKind::Model { selector, .. } | OpKind::Compaction { selector, .. } => {
-                Some(selector.clone())
-            }
+            OpKind::Model { selector, .. }
+            | OpKind::Compaction { selector, .. }
+            | OpKind::ManualCompaction { selector, .. } => Some(selector.clone()),
             _ => None,
         }
     }
@@ -265,11 +273,16 @@ impl OpKind {
         match self {
             OpKind::Capability { background, .. } => !background,
             OpKind::AwaitingPermission { .. } | OpKind::Agent { .. } | OpKind::AwaitingUser => true,
-            OpKind::Model { .. } | OpKind::Compaction { .. } => false,
+            OpKind::Model { .. } | OpKind::Compaction { .. } | OpKind::ManualCompaction { .. } => {
+                false
+            }
         }
     }
 
     pub(crate) fn is_model_call(&self) -> bool {
-        matches!(self, OpKind::Model { .. } | OpKind::Compaction { .. })
+        matches!(
+            self,
+            OpKind::Model { .. } | OpKind::Compaction { .. } | OpKind::ManualCompaction { .. }
+        )
     }
 }

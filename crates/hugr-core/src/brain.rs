@@ -81,6 +81,7 @@ impl Brain {
                 est_tokens,
             } => self.on_user_input(content, mode, est_tokens),
             Event::UserAbort => self.cancel_all_inflight(),
+            Event::CompactContext => self.on_compact_context(),
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {
@@ -169,7 +170,7 @@ impl Brain {
         // a cosmetic event. Never written to the log (ARCHITECTURE §4.5).
         let is_compaction = matches!(
             self.state.get_op(op).map(|entry| &entry.kind),
-            Some(OpKind::Compaction { .. })
+            Some(OpKind::Compaction { .. } | OpKind::ManualCompaction { .. })
         );
         match &delta {
             ModelDelta::Text(t) => {
@@ -203,7 +204,7 @@ impl Brain {
     }
 
     fn on_model_done(&mut self, op: OpId, output: ModelOutput, usage: Usage, est_tokens: u32) {
-        if let Some((summary_of, est_tokens_in, tier)) = self.compaction_op(op) {
+        if let Some((summary_of, est_tokens_in, tier, resume_turn)) = self.compaction_op(op) {
             self.on_compaction_done(
                 op,
                 output,
@@ -212,6 +213,7 @@ impl Brain {
                 summary_of,
                 est_tokens_in,
                 tier,
+                resume_turn,
             );
             return;
         }
@@ -422,6 +424,20 @@ impl Brain {
         }
     }
 
+    fn on_compact_context(&mut self) {
+        if self.state.is_busy() {
+            self.emit(OutputEvent::Notice(
+                "compaction skipped: operations are still in flight".to_string(),
+            ));
+            return;
+        }
+        if !self.start_selected_compaction(false) {
+            self.emit(OutputEvent::Notice(
+                "compaction skipped: no compactable context span".to_string(),
+            ));
+        }
+    }
+
     // ========================================================================
     // Turn-loop helpers
     // ========================================================================
@@ -432,8 +448,7 @@ impl Brain {
         let budget = self.policy.context_budget(&self.state);
         let plan = self.policy.project_context(self.state.log(), budget);
         if self.should_compact(&plan, budget) {
-            if let Some(target) = self.policy.select_compaction_span(self.state.log(), &plan) {
-                self.start_compaction_turn(target.summary_of, target.est_tokens_in);
+            if self.start_selected_compaction(true) {
                 return;
             }
         }
@@ -455,6 +470,16 @@ impl Brain {
         });
     }
 
+    fn start_selected_compaction(&mut self, resume_turn: bool) -> bool {
+        let budget = self.policy.context_budget(&self.state);
+        let plan = self.policy.project_context(self.state.log(), budget);
+        let Some(target) = self.policy.select_compaction_span(self.state.log(), &plan) else {
+            return false;
+        };
+        self.start_compaction_turn(target.summary_of, target.est_tokens_in, resume_turn);
+        true
+    }
+
     fn should_compact(
         &self,
         plan: &crate::model::ContextPlan,
@@ -465,19 +490,31 @@ impl Brain {
             .is_some_and(|high_water| plan.totals.used_tokens > high_water)
     }
 
-    fn start_compaction_turn(&mut self, summary_of: SeqRange, est_tokens_in: u32) {
+    fn start_compaction_turn(
+        &mut self,
+        summary_of: SeqRange,
+        est_tokens_in: u32,
+        resume_turn: bool,
+    ) {
         let op = self.state.alloc_op();
         let selector = ModelSelector::named("small");
         let request = self.compaction_request(summary_of);
-        self.state.mark(
-            op,
+        let kind = if resume_turn {
             OpKind::Compaction {
                 selector: selector.clone(),
                 summary_of,
                 est_tokens_in,
                 text_so_far: String::new(),
-            },
-        );
+            }
+        } else {
+            OpKind::ManualCompaction {
+                selector: selector.clone(),
+                summary_of,
+                est_tokens_in,
+                text_so_far: String::new(),
+            }
+        };
+        self.state.mark(op, kind);
         self.state.push_command(Command::StartModelCall {
             op,
             model: selector,
@@ -494,6 +531,7 @@ impl Brain {
         summary_of: SeqRange,
         est_tokens_in: u32,
         tier: ModelSelector,
+        resume_turn: bool,
     ) {
         self.append(Record::Summary {
             op,
@@ -506,17 +544,25 @@ impl Brain {
         });
         self.end_op(op, OpOutcome::Ok, Some(usage));
         self.checkpoint();
-        self.start_model_turn();
+        if resume_turn {
+            self.start_model_turn();
+        }
     }
 
-    fn compaction_op(&self, op: OpId) -> Option<(SeqRange, u32, ModelSelector)> {
+    fn compaction_op(&self, op: OpId) -> Option<(SeqRange, u32, ModelSelector, bool)> {
         match self.state.get_op(op).map(|entry| &entry.kind) {
             Some(OpKind::Compaction {
                 selector,
                 summary_of,
                 est_tokens_in,
                 ..
-            }) => Some((*summary_of, *est_tokens_in, selector.clone())),
+            }) => Some((*summary_of, *est_tokens_in, selector.clone(), true)),
+            Some(OpKind::ManualCompaction {
+                selector,
+                summary_of,
+                est_tokens_in,
+                ..
+            }) => Some((*summary_of, *est_tokens_in, selector.clone(), false)),
             _ => None,
         }
     }
@@ -729,6 +775,9 @@ impl Brain {
                 Value::String(text_so_far.clone())
             }
             Some(OpKind::Compaction { text_so_far, .. }) if !text_so_far.is_empty() => {
+                Value::String(text_so_far.clone())
+            }
+            Some(OpKind::ManualCompaction { text_so_far, .. }) if !text_so_far.is_empty() => {
                 Value::String(text_so_far.clone())
             }
             _ => Value::Null,

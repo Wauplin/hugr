@@ -66,6 +66,19 @@ Tests:
 - `crates/hugr-core/tests/scripted_session.rs::automatic_compaction_summarizes_then_reprojects_and_replays` pins the command sequence (`small` compaction call, checkpoint, normal `medium` turn call), summary metadata (`summary_of`, tier, token-in/out), compacted projection refs, and replay equality.
 - Verification run: `cargo test -p hugr-core`.
 
+### A4 — Manual compaction trigger ✅
+
+Done:
+
+- `hugr-core` now accepts `Event::CompactContext`, a pure host-injected control event that runs one deterministic compaction selection over the current `ContextPlan`.
+- Manual compaction reuses the same `small`-tier summary request and durable `Record::Summary` path as automatic compaction, but returns to idle after checkpointing instead of starting a normal model turn.
+- Busy brains and sessions with no compactable span produce cosmetic notices only; no durable records are mutated unless a summary model result is folded back through `ModelDone`.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::manual_compaction_event_runs_one_pass_without_starting_turn` pins the single-event command sequence, summary metadata, idle postcondition, and replay equality.
+- Verification run: `cargo test -p hugr-core`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.
