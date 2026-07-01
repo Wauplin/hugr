@@ -4,7 +4,10 @@
 mod common;
 
 use common::*;
-use hugr_core::{Brain, Command, DoneReason, Event, ModelSelector, OpId, StaticPolicy, ToolSchema};
+use hugr_core::{
+    Brain, Command, ContextDisposition, ContextSource, DoneReason, Event, ModelSelector, OpId,
+    StaticPolicy, TokenBudget, ToolSchema, TurnPolicy,
+};
 use serde_json::json;
 
 /// The canonical turn loop: one user message, one tool round-trip, one final
@@ -275,4 +278,58 @@ fn projection_includes_tools_and_history() {
     assert_eq!(request.tools[0].name, "shell");
     // The one user message is projected into exactly one context block.
     assert_eq!(request.blocks.len(), 1);
+}
+
+/// A1: projection returns an inspectable plan first; the request is derived from
+/// included/reference/summary entries rather than being built directly.
+#[test]
+fn context_plan_explains_dispositions_and_renders_request() {
+    let mut brain = Brain::with_default_policy();
+
+    run_script(
+        &mut brain,
+        vec![
+            user("hello"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: text_output("hi"),
+                usage: usage(),
+                est_tokens: 3,
+            },
+        ],
+    );
+
+    let policy = StaticPolicy::default();
+    let budget = TokenBudget::new(42);
+    let plan = policy.project_context(brain.state().log(), budget);
+    let request = plan.to_model_request();
+
+    assert_eq!(plan.budget, budget);
+    assert_eq!(plan.entries.len(), 3);
+    assert_eq!(request.blocks.len(), 2);
+    assert_eq!(plan.totals.used_tokens, 4);
+    assert_eq!(plan.totals.included_tokens, 4);
+    assert_eq!(plan.totals.omitted_tokens, 0);
+    assert!(plan.cache_hints.is_empty());
+
+    assert!(
+        matches!(plan.entries[0].source, ContextSource::LogEntry { .. })
+            && matches!(
+                plan.entries[0].disposition,
+                ContextDisposition::Included { .. }
+            )
+            && plan.entries[0].reason == "static pass-through projection"
+    );
+    assert!(
+        matches!(plan.entries[1].source, ContextSource::LogEntry { .. })
+            && matches!(
+                plan.entries[1].disposition,
+                ContextDisposition::Included { .. }
+            )
+    );
+    assert!(
+        matches!(plan.entries[2].source, ContextSource::LogEntry { .. })
+            && matches!(plan.entries[2].disposition, ContextDisposition::Omitted)
+            && plan.entries[2].reason == "operation metadata is not model context"
+    );
 }

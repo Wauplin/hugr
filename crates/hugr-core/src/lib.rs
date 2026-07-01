@@ -53,8 +53,9 @@ pub use brain::Brain;
 pub use command::{Command, DoneReason, OutputEvent, PermissionRequest, UserPrompt};
 pub use event::{Decision, Event, SteerMode, Version, VersionRef};
 pub use model::{
-    ContentPart, ContextBlock, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,
-    SamplingParams, StopReason, ToolCall, ToolSchema, Usage,
+    ContentPart, ContextBlock, ContextBudgetTotals, ContextCacheHint, ContextDisposition,
+    ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
+    ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
 };
 pub use policy::{AgentSeed, StaticPolicy, TurnPolicy};
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};

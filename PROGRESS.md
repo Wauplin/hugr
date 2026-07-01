@@ -25,6 +25,22 @@ Tests:
 - `hugr-host/tests/end_to_end.rs::auto_approve_denies_risky_shell_and_replay_uses_recorded_verdict` proves a risky shell command is denied with a model-visible reason and the recorded trace `verify()`s without re-running the judge; `::auto_approve_allows_benign_shell` proves a benign gated command proceeds.
 - Focused verification run: `cargo test -p hugr-core -q`, `cargo test -p hugr-replay -q`, `cargo test -p hugr-host -q`, `cargo test -p hugr-wasm -q`, `cargo check -p hugr-cli`, and escalated `cargo test -p hugr-providers --test retry -q` for local loopback retry tests.
 
+## Roadmap 2 Phase A — Context kernel & lossless compaction
+
+### A1 — ContextPlan projection ✅
+
+Done:
+
+- `hugr-core` now plans projection through `TurnPolicy::project_context(log, budget) -> ContextPlan` instead of returning a `ModelRequest` directly. `TurnPolicy::context_budget` supplies the budget, and the reducer renders `ModelRequest` from the returned plan before emitting `StartModelCall`.
+- `ContextPlan` records the token budget, per-source `ContextPlanEntry`s, dispositions (`Included`, `Referenced`, `Summarized`, `Omitted`), per-entry reasons, budget totals, cache hints, tools, params, and opaque provider extras. Public plan/budget structs and enums are serializable, `#[non_exhaustive]`, and constructor-backed.
+- `StaticPolicy` remains behavior-compatible: it produces an all-included pass-through plan for user/model/tool content, explicitly omits `OpEnded` metadata with a reason, and sums the host-recorded `est_tokens` values without tokenizing.
+- `docs/ARCHITECTURE.md` now describes the plan-first projection contract.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::context_plan_explains_dispositions_and_renders_request` pins the A1 shape: budget is threaded through, every log entry gets a disposition/reason, totals use recorded token estimates, and rendering the plan produces the model request.
+- Verification run: `cargo test`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

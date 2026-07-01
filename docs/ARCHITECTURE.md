@@ -186,15 +186,15 @@ pub struct LogEntry {
 
 ### 3.2 Model context is a projection, not the log
 
-Per turn, the brain renders the request to the model from the log through a projection policy:
+Per turn, the brain asks the turn policy for a pure, inspectable context plan from the log, then renders the actual model request from that plan:
 
 ```rust
-pub trait ContextPolicy {
-    fn project(&self, log: &[LogEntry], budget: TokenBudget) -> ModelRequest;
+pub trait TurnPolicy {
+    fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan;
 }
 ```
 
-The projection decides, per block, whether to include verbatim, summarize, evict-to-reference, or drop. Crucially:
+`ContextPlan` carries one entry per source block with its disposition (`Included`, `Referenced`, `Summarized`, or `Omitted`), a reason, the recorded token estimate, budget totals, and cache hints. The reducer derives `ModelRequest` from the plan by rendering only included/referenced/summarized entries. Projection decides, per block, whether to include verbatim, summarize, evict-to-reference, or drop. Crucially:
 
 - **Evicted content is referenced, not deleted.** A large tool output becomes `{ ref: "op:8", summary: "...", tokens: 12000 }` in context, with the full bytes still in the log (or a content-addressed blob store, §3.3). It can be rehydrated on demand.
 - Compaction is a *projection choice*, never mutation of the log. Nothing is ever lost.

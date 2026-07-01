@@ -405,7 +405,9 @@ impl Brain {
     fn start_model_turn(&mut self) {
         let op = self.state.alloc_op();
         let selector = self.policy.choose_model(&self.state);
-        let request = self.policy.project_context(self.state.log());
+        let budget = self.policy.context_budget(&self.state);
+        let plan = self.policy.project_context(self.state.log(), budget);
+        let request = plan.to_model_request();
         self.state.mark(
             op,
             OpKind::Model {

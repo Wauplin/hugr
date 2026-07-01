@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::model::{
-    ContentPart, ContextBlock, ModelRequest, ModelSelector, Role, SamplingParams, ToolSchema,
+    ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
+    ContextPlanEntry, ContextSource, ModelSelector, Role, SamplingParams, TokenBudget, ToolSchema,
 };
 use crate::record::{LogEntry, Record};
 use crate::state::BrainState;
@@ -40,9 +41,14 @@ pub trait TurnPolicy: Send + Sync {
     /// Pick which logical model to call for the next step (multi-model routing).
     fn choose_model(&self, state: &BrainState) -> ModelSelector;
 
-    /// Render the model context from the log. Pure and synchronous: include /
+    /// Pick the token budget the next context projection plans against.
+    fn context_budget(&self, _state: &BrainState) -> TokenBudget {
+        TokenBudget::default()
+    }
+
+    /// Plan the model context from the log. Pure and synchronous: include /
     /// summarize / evict-to-reference / drop. Must never call a model.
-    fn project_context(&self, log: &[LogEntry]) -> ModelRequest;
+    fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan;
 
     /// Whether invoking `capability` requires a permission round-trip.
     fn needs_permission(&self, capability: &str) -> bool;
@@ -93,6 +99,8 @@ pub struct StaticPolicy {
     agents: Vec<(String, AgentSeed)>,
     params: SamplingParams,
     system: Option<String>,
+    #[serde(default)]
+    context_budget: TokenBudget,
 }
 
 impl Default for StaticPolicy {
@@ -105,6 +113,7 @@ impl Default for StaticPolicy {
             agents: Vec::new(),
             params: SamplingParams::default(),
             system: None,
+            context_budget: TokenBudget::default(),
         }
     }
 }
@@ -166,6 +175,12 @@ impl StaticPolicy {
         self.system = Some(system.into());
         self
     }
+
+    /// Set the approximate input token budget used by context planning.
+    pub fn with_context_budget(mut self, budget: TokenBudget) -> Self {
+        self.context_budget = budget;
+        self
+    }
 }
 
 impl TurnPolicy for StaticPolicy {
@@ -173,25 +188,46 @@ impl TurnPolicy for StaticPolicy {
         self.model.clone()
     }
 
-    fn project_context(&self, log: &[LogEntry]) -> ModelRequest {
+    fn context_budget(&self, _state: &BrainState) -> TokenBudget {
+        self.context_budget
+    }
+
+    fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan {
         // Trivial pass-through: one context block per logged message / result,
         // in log order. No compaction, no eviction (those arrive later).
-        let mut blocks = Vec::new();
+        let mut entries = Vec::new();
+        let mut totals = ContextBudgetTotals::new();
         if let Some(system) = &self.system {
-            blocks.push(ContextBlock::new(
+            let disposition = ContextDisposition::included(ContextBlock::new(
                 Role::System,
                 vec![ContentPart::Text(system.clone())],
+            ));
+            totals.add(&disposition, 0);
+            entries.push(ContextPlanEntry::new(
+                ContextSource::system(),
+                0,
+                disposition,
+                "static system prompt",
             ));
         }
         for entry in log {
             match &entry.record {
-                Record::UserMessage { text, .. } => {
-                    blocks.push(ContextBlock::new(
+                Record::UserMessage { text, est_tokens } => {
+                    let disposition = ContextDisposition::included(ContextBlock::new(
                         Role::User,
                         vec![ContentPart::Text(text.clone())],
                     ));
+                    totals.add(&disposition, *est_tokens);
+                    entries.push(ContextPlanEntry::new(
+                        ContextSource::log_entry(entry.seq),
+                        *est_tokens,
+                        disposition,
+                        "static pass-through projection",
+                    ));
                 }
-                Record::ModelOutput { output, .. } => {
+                Record::ModelOutput {
+                    output, est_tokens, ..
+                } => {
                     let mut parts = Vec::new();
                     if !output.text.is_empty() {
                         parts.push(ContentPart::Text(output.text.clone()));
@@ -204,32 +240,61 @@ impl TurnPolicy for StaticPolicy {
                         });
                     }
                     if !parts.is_empty() {
-                        blocks.push(ContextBlock::new(Role::Assistant, parts));
+                        let disposition =
+                            ContextDisposition::included(ContextBlock::new(Role::Assistant, parts));
+                        totals.add(&disposition, *est_tokens);
+                        entries.push(ContextPlanEntry::new(
+                            ContextSource::log_entry(entry.seq),
+                            *est_tokens,
+                            disposition,
+                            "static pass-through projection",
+                        ));
                     }
                 }
                 Record::ToolResult {
-                    call_id, result, ..
+                    call_id,
+                    result,
+                    est_tokens,
+                    ..
                 } => {
-                    blocks.push(ContextBlock::new(
+                    let disposition = ContextDisposition::included(ContextBlock::new(
                         Role::Tool,
                         vec![ContentPart::ToolResult {
                             id: call_id.clone(),
                             result: result.clone(),
                         }],
                     ));
+                    totals.add(&disposition, *est_tokens);
+                    entries.push(ContextPlanEntry::new(
+                        ContextSource::log_entry(entry.seq),
+                        *est_tokens,
+                        disposition,
+                        "static pass-through projection",
+                    ));
                 }
                 // OpEnded entries are bookkeeping (timing/cost); they do not
-                // contribute to model context.
-                Record::OpEnded { .. } => {}
+                // contribute to model context, but the plan still explains why
+                // the block is omitted.
+                Record::OpEnded { .. } => {
+                    let disposition = ContextDisposition::omitted();
+                    entries.push(ContextPlanEntry::new(
+                        ContextSource::log_entry(entry.seq),
+                        0,
+                        disposition,
+                        "operation metadata is not model context",
+                    ));
+                }
             }
         }
 
-        ModelRequest {
-            blocks,
-            tools: self.tools.clone(),
-            params: self.params.clone(),
-            extra: json!(null),
-        }
+        ContextPlan::new(
+            budget,
+            entries,
+            totals,
+            self.tools.clone(),
+            self.params.clone(),
+        )
+        .with_extra(json!(null))
     }
 
     fn needs_permission(&self, capability: &str) -> bool {

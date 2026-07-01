@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::Value;
+use crate::primitives::{Seq, Value};
 
 /// A logical model **role**, not a concrete endpoint. The brain names a role;
 /// the host's model registry resolves it to a provider/model/key/adapter
@@ -55,6 +55,238 @@ impl ModelRequest {
             tools,
             params,
             extra: Value::Null,
+        }
+    }
+}
+
+/// The token budget a projection must plan against.
+///
+/// Counts are estimates supplied by the host when records enter the log
+/// (ARCHITECTURE §3.5). The brain only sums them; it never tokenizes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TokenBudget {
+    pub max_tokens: u64,
+}
+
+impl TokenBudget {
+    pub fn new(max_tokens: u64) -> Self {
+        Self { max_tokens }
+    }
+}
+
+impl Default for TokenBudget {
+    fn default() -> Self {
+        Self {
+            max_tokens: 128_000,
+        }
+    }
+}
+
+/// A pure, inspectable context projection plan.
+///
+/// The reducer derives a [`ModelRequest`] from this plan; hosts can inspect the
+/// same data to explain why each log block was included, referenced,
+/// summarized, or omitted (ROADMAP_2 A1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ContextPlan {
+    pub budget: TokenBudget,
+    pub entries: Vec<ContextPlanEntry>,
+    pub totals: ContextBudgetTotals,
+    pub cache_hints: Vec<ContextCacheHint>,
+    pub tools: Vec<ToolSchema>,
+    pub params: SamplingParams,
+    pub extra: Value,
+}
+
+impl ContextPlan {
+    pub fn new(
+        budget: TokenBudget,
+        entries: Vec<ContextPlanEntry>,
+        totals: ContextBudgetTotals,
+        tools: Vec<ToolSchema>,
+        params: SamplingParams,
+    ) -> Self {
+        Self {
+            budget,
+            entries,
+            totals,
+            cache_hints: Vec::new(),
+            tools,
+            params,
+            extra: Value::Null,
+        }
+    }
+
+    /// Render the actual model request sent to the host.
+    pub fn to_model_request(&self) -> ModelRequest {
+        ModelRequest {
+            blocks: self
+                .entries
+                .iter()
+                .filter_map(|entry| entry.disposition.as_request_block().cloned())
+                .collect(),
+            tools: self.tools.clone(),
+            params: self.params.clone(),
+            extra: self.extra.clone(),
+        }
+    }
+
+    pub fn with_cache_hints(mut self, cache_hints: Vec<ContextCacheHint>) -> Self {
+        self.cache_hints = cache_hints;
+        self
+    }
+
+    pub fn with_extra(mut self, extra: Value) -> Self {
+        self.extra = extra;
+        self
+    }
+}
+
+/// One source block's disposition in a [`ContextPlan`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ContextPlanEntry {
+    pub source: ContextSource,
+    pub est_tokens: u32,
+    pub disposition: ContextDisposition,
+    pub reason: String,
+}
+
+impl ContextPlanEntry {
+    pub fn new(
+        source: ContextSource,
+        est_tokens: u32,
+        disposition: ContextDisposition,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            source,
+            est_tokens,
+            disposition,
+            reason: reason.into(),
+        }
+    }
+}
+
+/// Where a projected context block came from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ContextSource {
+    System,
+    LogEntry { seq: Seq },
+    Synthetic { label: String },
+}
+
+impl ContextSource {
+    pub fn system() -> Self {
+        Self::System
+    }
+
+    pub fn log_entry(seq: Seq) -> Self {
+        Self::LogEntry { seq }
+    }
+
+    pub fn synthetic(label: impl Into<String>) -> Self {
+        Self::Synthetic {
+            label: label.into(),
+        }
+    }
+}
+
+/// How a source block is represented in the request, if at all.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ContextDisposition {
+    Included { block: ContextBlock },
+    Referenced { block: ContextBlock },
+    Summarized { block: ContextBlock },
+    Omitted,
+}
+
+impl ContextDisposition {
+    pub fn included(block: ContextBlock) -> Self {
+        Self::Included { block }
+    }
+
+    pub fn referenced(block: ContextBlock) -> Self {
+        Self::Referenced { block }
+    }
+
+    pub fn summarized(block: ContextBlock) -> Self {
+        Self::Summarized { block }
+    }
+
+    pub fn omitted() -> Self {
+        Self::Omitted
+    }
+
+    fn as_request_block(&self) -> Option<&ContextBlock> {
+        match self {
+            ContextDisposition::Included { block }
+            | ContextDisposition::Referenced { block }
+            | ContextDisposition::Summarized { block } => Some(block),
+            ContextDisposition::Omitted => None,
+        }
+    }
+}
+
+/// Token totals for the projection plan. `used_tokens` is the sum of blocks
+/// still represented in the request; omitted tokens are tracked separately so
+/// truncation is visible rather than silent.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ContextBudgetTotals {
+    pub used_tokens: u64,
+    pub included_tokens: u64,
+    pub referenced_tokens: u64,
+    pub summarized_tokens: u64,
+    pub omitted_tokens: u64,
+}
+
+impl ContextBudgetTotals {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, disposition: &ContextDisposition, est_tokens: u32) {
+        let est_tokens = u64::from(est_tokens);
+        match disposition {
+            ContextDisposition::Included { .. } => {
+                self.included_tokens += est_tokens;
+                self.used_tokens += est_tokens;
+            }
+            ContextDisposition::Referenced { .. } => {
+                self.referenced_tokens += est_tokens;
+                self.used_tokens += est_tokens;
+            }
+            ContextDisposition::Summarized { .. } => {
+                self.summarized_tokens += est_tokens;
+                self.used_tokens += est_tokens;
+            }
+            ContextDisposition::Omitted => {
+                self.omitted_tokens += est_tokens;
+            }
+        }
+    }
+}
+
+/// Provider/context-cache hint attached to a planned request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ContextCacheHint {
+    pub entry_index: usize,
+    pub key: String,
+    pub reason: String,
+}
+
+impl ContextCacheHint {
+    pub fn new(entry_index: usize, key: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            entry_index,
+            key: key.into(),
+            reason: reason.into(),
         }
     }
 }
