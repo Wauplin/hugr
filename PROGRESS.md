@@ -216,6 +216,19 @@ Tests:
 
 - Verification run: `cargo test -p hugr-wasm`.
 
+### C4 — Host-side skills loader ✅
+
+Done:
+
+- `hugr-host::skills` discovers skill bundles from explicit roots or well-known locations (`HUGR_SKILLS_DIR`, `.hugr/skills`, and `$HOME/.config/hugr/skills`). Each bundle is a directory with `SKILL.md`; roots may point directly at one bundle or at a directory of bundles.
+- A discovered `SkillBundle` exposes stable host metadata: id, title, summary, root path, full instructions, and optional contributed tool schemas loaded from `tools/*.json`. Discovery is host IO only and does not change `hugr-core`.
+- `hugr-host` re-exports `SkillBundle` / `SkillError` for embedders and later CLI/browser surfacing.
+
+Tests:
+
+- `hugr-host::skills::tests::discovers_skill_bundle_metadata_and_tool_schemas` creates a bundle on disk, discovers it, and verifies metadata plus optional tool-schema loading.
+- Verification run: `cargo test -p hugr-host skills`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

@@ -38,6 +38,7 @@ mod model;
 pub mod plugins;
 pub mod policy;
 mod scheduler;
+pub mod skills;
 mod spend;
 
 pub use capability::{Capability, CapabilityRegistry, ChunkSink};
@@ -51,6 +52,7 @@ pub use model::{ModelAdapter, ModelRegistry, ModelSink};
 pub use plugins::PluginCapability;
 pub use policy::Policy;
 pub use scheduler::{CronExpr, Schedule, ScheduleError, TriggerTarget, fire_once};
+pub use skills::{SkillBundle, SkillError};
 pub use spend::{SpendReport, TierSpend, spend_report};
 
 // Re-export the plugin ABI so a host embedder needs only `hugr-host` to load
