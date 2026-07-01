@@ -283,6 +283,19 @@ Tests:
 - `hugr-host::capabilities::fs::tests::fs_write_conflicts_on_stale_expected_version_without_overwriting` proves a stale write returns conflict metadata and leaves the changed file intact.
 - Verification run: `cargo test -p hugr-core versioned_tool_calls_stamp_expected_version_and_route_conflict_retry -q`; `cargo test -p hugr-host fs_write_conflicts_on_stale_expected_version_without_overwriting -q`.
 
+### D3 — Robust edit path ✅
+
+Done:
+
+- `hugr-host` now ships `patch_apply`, an ordinary capability that previews, applies, or reverts unified diffs through `git apply`. Successful results distinguish `preview_ok`, `applied`, and `reverted`.
+- Patch failures return conflict-shaped semantic tool errors, so the existing brain path routes them back to the model as tool results without a special core type.
+- `hugr-cli` registers `patch_apply` in the default coding-agent toolset.
+
+Tests:
+
+- `hugr-host::capabilities::patch::tests::patch_previews_applies_reverts_and_conflicts` proves preview is non-mutating, apply mutates, duplicate apply conflicts, and revert restores the file.
+- Verification run: `cargo test -p hugr-host patch_previews_applies_reverts_and_conflicts -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

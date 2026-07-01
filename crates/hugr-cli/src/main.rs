@@ -20,8 +20,8 @@ use hugr_core::{
     Record, SkillDescriptor, ToolSchema,
 };
 use hugr_host::capabilities::{
-    FsRead, FsWrite, GitDiff, GitLog, GitStatus, Http, PackageMetadata, RepoFiles, RepoRead,
-    RepoSearch, Shell,
+    FsRead, FsWrite, GitDiff, GitLog, GitStatus, Http, PackageMetadata, PatchApply, RepoFiles,
+    RepoRead, RepoSearch, Shell,
 };
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
@@ -601,6 +601,7 @@ fn base_builder(models: TierModelConfigSet, policy: Arc<dyn Policy>) -> Result<E
         .capability(Arc::new(Shell))
         .capability(Arc::new(FsRead))
         .capability(Arc::new(FsWrite))
+        .capability(Arc::new(PatchApply))
         .capability(Arc::new(RepoFiles))
         .capability(Arc::new(RepoSearch))
         .capability(Arc::new(RepoRead))
