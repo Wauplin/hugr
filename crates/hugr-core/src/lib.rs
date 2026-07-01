@@ -56,7 +56,8 @@ pub use event::{Decision, Event, SteerMode, Version, VersionRef};
 pub use model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextCacheHint, ContextDisposition,
     ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
-    ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
+    ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema,
+    ToolVersioning, Usage,
 };
 pub use policy::{
     AgentSeed, CompactionTarget, RoutingInputs, RoutingPhase, RoutingPolicy, SkillDescriptor,

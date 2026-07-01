@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hugr_core::{Event, OpId, ToolSchema, Value};
+use hugr_core::{Event, OpId, ToolSchema, Value, VersionRef};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// A host-provided tool. Streaming-capable: it may emit chunks via the
@@ -41,6 +41,19 @@ pub trait Capability: Send + Sync {
     /// react to, ARCHITECTURE §5.4) — return `Err` only for tool-level failures,
     /// not transport issues.
     async fn invoke(&self, args: Value, sink: &ChunkSink) -> Result<Value, Value>;
+
+    /// Extract the version envelope refreshed by a successful result, if any.
+    /// Defaults to stateless. The engine places this in the typed event slot so
+    /// the brain can rebuild its read-set without interpreting opaque payloads.
+    fn result_version(&self, _result: &Value) -> Option<VersionRef> {
+        None
+    }
+
+    /// Extract the current version from a stale-edit conflict, if this error is
+    /// one. Defaults to an ordinary semantic error.
+    fn conflict_version(&self, _error: &Value) -> Option<VersionRef> {
+        None
+    }
 }
 
 /// Lets a capability stream intermediate chunks (transport only) back to the

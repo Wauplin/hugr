@@ -269,6 +269,20 @@ Tests:
 - `hugr-host::capabilities::repo::tests::repo_orientation_tools_are_read_only_and_list_files` pins read-only registration and fast file listing behavior.
 - Verification run: `cargo test -p hugr-host repo_orientation_tools_are_read_only_and_list_files -q`.
 
+### D2 — Stale-edit CAS ✅
+
+Done:
+
+- `ToolSchema` now carries optional declarative optimistic-concurrency metadata (`ToolVersioning`) naming the object-key argument and the brain-stamped expected-version argument. `StaticPolicy` exposes that metadata to the reducer without hardcoding capability names.
+- The reducer stamps `expected_version` onto mutating capability args from its version table at `StartCapability` time, and `Record::ToolResult` now durably stores optional `VersionRef` metadata so `BrainState::from_log` rebuilds the read-set from the log.
+- `hugr-host::Capability` has default `result_version` / `conflict_version` hooks; `fs_read` returns deterministic content versions and `fs_write` rejects stale expected versions with a conflict-shaped error before writing.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::versioned_tool_calls_stamp_expected_version_and_route_conflict_retry` pins schema-driven stamping, conflict routing back to the model, and read-set reconstruction from a log prefix.
+- `hugr-host::capabilities::fs::tests::fs_write_conflicts_on_stale_expected_version_without_overwriting` proves a stale write returns conflict metadata and leaves the changed file intact.
+- Verification run: `cargo test -p hugr-core versioned_tool_calls_stamp_expected_version_and_route_conflict_retry -q`; `cargo test -p hugr-host fs_write_conflicts_on_stale_expected_version_without_overwriting -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

@@ -371,6 +371,11 @@ pub struct ToolSchema {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+    /// Declarative optimistic-concurrency metadata (ARCHITECTURE §7.3). Omitted
+    /// for stateless capabilities. The brain uses this generically; it never
+    /// hardcodes capability-specific argument names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub versioning: Option<ToolVersioning>,
 }
 
 impl ToolSchema {
@@ -379,6 +384,43 @@ impl ToolSchema {
             name: name.into(),
             description: description.into(),
             parameters,
+            versioning: None,
+        }
+    }
+
+    pub fn with_versioning(mut self, versioning: ToolVersioning) -> Self {
+        self.versioning = Some(versioning);
+        self
+    }
+}
+
+/// Declarative metadata for a capability that reads or mutates a versioned
+/// external object (ARCHITECTURE §7.3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolVersioning {
+    /// Argument field that identifies the target object, e.g. `"path"`.
+    pub object_arg: String,
+    /// Argument field where the brain stamps the last seen version for
+    /// mutating calls. `None` means the capability only refreshes versions.
+    pub expected_version_arg: Option<String>,
+}
+
+impl ToolVersioning {
+    pub fn read(object_arg: impl Into<String>) -> Self {
+        Self {
+            object_arg: object_arg.into(),
+            expected_version_arg: None,
+        }
+    }
+
+    pub fn mutation(
+        object_arg: impl Into<String>,
+        expected_version_arg: impl Into<String>,
+    ) -> Self {
+        Self {
+            object_arg: object_arg.into(),
+            expected_version_arg: Some(expected_version_arg.into()),
         }
     }
 }

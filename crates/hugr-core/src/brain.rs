@@ -284,16 +284,29 @@ impl Brain {
         est_tokens: u32,
     ) {
         if let Some(v) = version {
-            self.state.record_version(v.object, v.version);
+            self.state
+                .record_version(v.object.clone(), v.version.clone());
+            let version = Some(v);
+            let (name, call_id) = self.tool_ids(op);
+            self.append(Record::ToolResult {
+                op,
+                name,
+                call_id,
+                result,
+                version,
+                est_tokens,
+            });
+        } else {
+            let (name, call_id) = self.tool_ids(op);
+            self.append(Record::ToolResult {
+                op,
+                name,
+                call_id,
+                result,
+                version: None,
+                est_tokens,
+            });
         }
-        let (name, call_id) = self.tool_ids(op);
-        self.append(Record::ToolResult {
-            op,
-            name,
-            call_id,
-            result,
-            est_tokens,
-        });
         self.end_op(op, OpOutcome::Ok, None);
         self.maybe_resume_model_turn();
     }
@@ -308,15 +321,17 @@ impl Brain {
         // A stale-edit conflict refreshes the read-set so the model's next edit
         // is stamped correctly; otherwise it is an ordinary error result fed
         // back to the model (ARCHITECTURE §5.4, §7.3).
-        if let Some(v) = conflict {
-            self.state.record_version(v.object, v.version);
-        }
+        let version = conflict.inspect(|v| {
+            self.state
+                .record_version(v.object.clone(), v.version.clone());
+        });
         let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
             op,
             name,
             call_id,
             result: error.clone(),
+            version,
             est_tokens,
         });
         self.end_op(op, OpOutcome::Error(error), None);
@@ -333,6 +348,7 @@ impl Brain {
             name,
             call_id,
             result,
+            version: None,
             est_tokens,
         });
         self.end_op(op, OpOutcome::Ok, None);
@@ -346,6 +362,7 @@ impl Brain {
             name,
             call_id,
             result: error.clone(),
+            version: None,
             est_tokens,
         });
         self.end_op(op, OpOutcome::Error(error), None);
@@ -361,6 +378,7 @@ impl Brain {
             name,
             call_id,
             result: answer,
+            version: None,
             est_tokens,
         });
         self.end_op(op, OpOutcome::Ok, None);
@@ -397,6 +415,7 @@ impl Brain {
                     name,
                     call_id,
                     result: result.clone(),
+                    version: None,
                     est_tokens,
                 });
                 self.end_op(op, OpOutcome::Error(result), None);
@@ -695,6 +714,7 @@ impl Brain {
                     "skill_id": skill.id,
                     "active": true,
                 }),
+                version: None,
                 est_tokens: 0,
             });
             self.end_op(op, OpOutcome::Ok, None);
@@ -745,15 +765,15 @@ impl Brain {
         &mut self,
         op: OpId,
         name: String,
-        args: Value,
+        mut args: Value,
         call_id: String,
         background: bool,
     ) {
-        // Seam for optimistic-concurrency stamping (ARCHITECTURE §7.3): when a
-        // capability's schema declares it mutates a versioned object, the brain
-        // would stamp `expected_version` from `self.state.versions()` here. The
-        // declarative schema metadata that drives it arrives in a later phase;
-        // for Phase 0 args are forwarded verbatim.
+        // Optimistic-concurrency stamping (ARCHITECTURE §7.3): declarative
+        // schema metadata says which arg is the object key and where a mutating
+        // call expects the last-seen version. The brain never hardcodes tool
+        // names or parses paths; it only does opaque equality/table lookup.
+        self.stamp_expected_version(&name, &mut args);
         self.state.mark(
             op,
             OpKind::Capability {
@@ -764,6 +784,28 @@ impl Brain {
         );
         self.state
             .push_command(Command::StartCapability { op, name, args });
+    }
+
+    fn stamp_expected_version(&self, name: &str, args: &mut Value) {
+        let Some(versioning) = self.policy.capability_versioning(name) else {
+            return;
+        };
+        let Some(expected_arg) = versioning.expected_version_arg else {
+            return;
+        };
+        let Some(object) = args
+            .get(&versioning.object_arg)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+        else {
+            return;
+        };
+        let Some(version) = self.state.versions().get(&object) else {
+            return;
+        };
+        if let Some(map) = args.as_object_mut() {
+            map.insert(expected_arg, Value::String(version.clone()));
+        }
     }
 
     /// Resolve a sub-agent [`AgentSeed`] into the actual log prefix to fork

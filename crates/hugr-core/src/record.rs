@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::event::VersionRef;
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
@@ -81,6 +82,11 @@ pub enum Record {
         /// this (not the op id) to correlate the two.
         call_id: String,
         result: Value,
+        /// Version refreshed by this tool result, if it read or conflicted on a
+        /// versioned object. This keeps the brain's read-set rebuildable from
+        /// the durable log (ARCHITECTURE §7.3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<VersionRef>,
         /// Host-provided approximate token count for this content.
         #[serde(default)]
         est_tokens: u32,

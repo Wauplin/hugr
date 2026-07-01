@@ -10,7 +10,7 @@ use hugr_core::{
     Brain, Command, ContentPart, ContextDisposition, ContextPlan, ContextSource, DoneReason, Event,
     LogEntry, ModelSelector, OpId, Record, RoutingInputs, RoutingPhase, RoutingPolicy, Seq,
     SeqRange, SkillDescriptor, StaticPolicy, SummaryCoverage, Timestamp, TokenBudget, ToolRisk,
-    ToolSchema, TurnPolicy,
+    ToolSchema, ToolVersioning, TurnPolicy, VersionRef,
 };
 use serde_json::json;
 
@@ -79,6 +79,124 @@ fn user_model_tool_model_done() {
         })
         .collect();
     assert_eq!(tokens, vec![1, 1, 1, 1]);
+}
+
+#[test]
+fn versioned_tool_calls_stamp_expected_version_and_route_conflict_retry() {
+    let tools = vec![
+        ToolSchema::new(
+            "fs_read",
+            "read",
+            json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+        )
+        .with_versioning(ToolVersioning::read("path")),
+        ToolSchema::new(
+            "fs_write",
+            "write",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" },
+                    "expected_version": { "type": "string" }
+                },
+                "required": ["path", "content"]
+            }),
+        )
+        .with_versioning(ToolVersioning::mutation("path", "expected_version")),
+    ];
+    let mut brain = Brain::new(Box::new(StaticPolicy::default().with_tools(tools)));
+
+    let commands = run_script(
+        &mut brain,
+        vec![
+            user("edit src/lib.rs"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("read-1", "fs_read", json!({ "path": "src/lib.rs" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::CapabilityDone {
+                op: OpId(1),
+                result: json!({ "path": "src/lib.rs", "content": "old", "version": "v1" }),
+                version: Some(VersionRef::new("src/lib.rs", "v1")),
+                est_tokens: 1,
+            },
+            Event::ModelDone {
+                op: OpId(2),
+                output: tool_output(
+                    "write-1",
+                    "fs_write",
+                    json!({ "path": "src/lib.rs", "content": "new" }),
+                ),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::CapabilityError {
+                op: OpId(3),
+                error: json!({
+                    "error": "conflict",
+                    "path": "src/lib.rs",
+                    "current_version": "v2",
+                    "current_content": "changed"
+                }),
+                conflict: Some(VersionRef::new("src/lib.rs", "v2")),
+                est_tokens: 1,
+            },
+            Event::ModelDone {
+                op: OpId(4),
+                output: tool_output("read-2", "fs_read", json!({ "path": "src/lib.rs" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ],
+    );
+
+    let write_args = commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Command::StartCapability {
+                op: OpId(3),
+                name,
+                args,
+            } if name == "fs_write" => Some(args),
+            _ => None,
+        })
+        .expect("write capability should start");
+    assert_eq!(write_args["expected_version"], json!("v1"));
+
+    assert_eq!(
+        brain.state().versions().get("src/lib.rs"),
+        Some(&"v2".to_string())
+    );
+    let restored = Brain::from_log(
+        Box::new(StaticPolicy::default()),
+        brain.state().log().to_vec(),
+    );
+    assert_eq!(
+        restored.state().versions().get("src/lib.rs"),
+        Some(&"v2".to_string())
+    );
+
+    let retry_read = commands.iter().any(|cmd| {
+        matches!(
+            cmd,
+            Command::StartCapability {
+                op: OpId(5),
+                name,
+                ..
+            } if name == "fs_read"
+        )
+    });
+    assert!(
+        retry_read,
+        "conflict should be routed back so the model can re-read"
+    );
 }
 
 #[test]

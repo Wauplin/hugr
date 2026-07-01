@@ -11,6 +11,7 @@ use serde_json::json;
 use crate::model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
     ContextPlanEntry, ContextSource, ModelSelector, Role, SamplingParams, TokenBudget, ToolSchema,
+    ToolVersioning,
 };
 use crate::record::{LogEntry, Record, SeqRange, SummaryCoverage};
 use crate::state::BrainState;
@@ -272,6 +273,13 @@ pub trait TurnPolicy: Send + Sync {
     /// host capability. The reducer asks the policy; the skill choice is not
     /// hardcoded in the reducer (ROADMAP_2 C5).
     fn activate_skill(&self, _capability: &str) -> Option<SkillDescriptor> {
+        None
+    }
+
+    /// Declarative optimistic-concurrency metadata for a capability, if any.
+    /// The reducer uses this to stamp `expected_version` without hardcoding
+    /// capability-specific argument shapes (ARCHITECTURE §7.3).
+    fn capability_versioning(&self, _capability: &str) -> Option<ToolVersioning> {
         None
     }
 }
@@ -829,6 +837,13 @@ impl TurnPolicy for StaticPolicy {
             .iter()
             .find(|skill| skill.tool_name() == capability)
             .cloned()
+    }
+
+    fn capability_versioning(&self, capability: &str) -> Option<ToolVersioning> {
+        self.advertised_tools()
+            .into_iter()
+            .find(|tool| tool.name == capability)
+            .and_then(|tool| tool.versioning)
     }
 }
 

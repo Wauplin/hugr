@@ -49,9 +49,8 @@ impl BrainState {
     /// Rebuild state from an inherited log — the **fork/seed** primitive
     /// (ARCHITECTURE §14): a child sub-agent (or a resumed session) starts from a
     /// copy of a log prefix. `BrainState` is a fold over the log (§3.1), so we
-    /// take the log verbatim and derive the counters/clock from it. Nothing is
-    /// in flight (a consolidated prefix has no open ops) and the version
-    /// read-set is empty (versions are not persisted in consolidated records).
+    /// take the log verbatim and derive the counters/clock/read-set from it.
+    /// Nothing is in flight (a consolidated prefix has no open ops).
     pub(crate) fn from_log(log: Vec<LogEntry>) -> Self {
         let next_seq = log.last().map(|e| e.seq.0 + 1).unwrap_or(0);
         let now = log.last().map(|e| e.at).unwrap_or_default();
@@ -62,11 +61,22 @@ impl BrainState {
             .max()
             .map(|max| max + 1)
             .unwrap_or(0);
+        let versions = log
+            .iter()
+            .filter_map(|entry| match &entry.record {
+                crate::record::Record::ToolResult {
+                    version: Some(version),
+                    ..
+                } => Some((version.object.clone(), version.version.clone())),
+                _ => None,
+            })
+            .collect();
         Self {
             log,
             next_seq,
             next_op,
             now,
+            versions,
             ..Self::default()
         }
     }

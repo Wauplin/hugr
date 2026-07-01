@@ -159,5 +159,14 @@ pub struct VersionRef {
     pub version: Version,
 }
 
+impl VersionRef {
+    pub fn new(object: impl Into<ObjectKey>, version: impl Into<Version>) -> Self {
+        Self {
+            object: object.into(),
+            version: version.into(),
+        }
+    }
+}
+
 /// An opaque version token: content hash / etag / git sha / row xmin / …
 pub type Version = String;

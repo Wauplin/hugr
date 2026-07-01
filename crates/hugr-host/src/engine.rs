@@ -445,18 +445,24 @@ impl Engine {
                     let handle = tokio::spawn(async move {
                         let sink = ChunkSink::new(op, tx.clone());
                         let event = match capability.invoke(args, &sink).await {
-                            Ok(result) => Event::CapabilityDone {
-                                op,
-                                est_tokens: estimate_value_tokens(&result),
-                                result,
-                                version: None,
-                            },
-                            Err(error) => Event::CapabilityError {
-                                op,
-                                est_tokens: estimate_value_tokens(&error),
-                                error,
-                                conflict: None,
-                            },
+                            Ok(result) => {
+                                let version = capability.result_version(&result);
+                                Event::CapabilityDone {
+                                    op,
+                                    est_tokens: estimate_value_tokens(&result),
+                                    result,
+                                    version,
+                                }
+                            }
+                            Err(error) => {
+                                let conflict = capability.conflict_version(&error);
+                                Event::CapabilityError {
+                                    op,
+                                    est_tokens: estimate_value_tokens(&error),
+                                    error,
+                                    conflict,
+                                }
+                            }
                         };
                         let _ = tx.send(event);
                     });
