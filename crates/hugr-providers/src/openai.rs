@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 // Defaults target the Hugging Face router (an OpenAI-compatible endpoint). The
 // `/v1` suffix is part of the base URL; the adapter appends `/chat/completions`.
-// Point `OPENAI_BASE_URL` at `https://api.openai.com/v1` to use OpenAI directly.
+// Point `HUGR_BASE_URL` at `https://api.openai.com/v1` to use OpenAI directly.
 const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
 const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:cerebras";
 
@@ -33,7 +33,7 @@ const RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
 
 /// An adapter for the OpenAI Chat Completions API (or any compatible endpoint
-/// via `OPENAI_BASE_URL`).
+/// via `HUGR_BASE_URL`).
 pub struct OpenAiAdapter {
     client: reqwest::Client,
     api_key: String,
@@ -58,19 +58,24 @@ impl OpenAiAdapter {
 
     /// Build from the environment:
     ///
-    /// - **API key:** `OPENAI_API_KEY`, else `HF_TOKEN`, else the Hugging Face
+    /// - **API key:** `HUGR_API_KEY`, else `HF_TOKEN`, else the Hugging Face
     ///   token file (`HF_TOKEN_PATH`, else `$HF_HOME/token`, else
     ///   `~/.cache/huggingface/token`), else the output of `hf auth token` if
     ///   the `hf` CLI is installed and logged in.
-    /// - **Model:** `OPENAI_MODEL` (default `google/gemma-4-31B-it:cerebras`).
-    /// - **Base URL:** `OPENAI_BASE_URL` (default the Hugging Face router).
+    /// - **Model:** the built-in default (`google/gemma-4-31B-it:cerebras`).
+    ///   Per-tier model overrides live on [`TierModelConfigSet::from_env`] via
+    ///   `HUGR_MODEL_SMALL` / `HUGR_MODEL_MEDIUM` / `HUGR_MODEL_BIG`; this
+    ///   single-adapter builder has no tier, so override it with
+    ///   [`with_model`](Self::with_model) if needed.
+    /// - **Base URL:** `HUGR_BASE_URL` (default the Hugging Face router).
     pub fn from_env() -> anyhow::Result<Self> {
         let api_key = resolve_api_key().context(
-            "no API key found: set OPENAI_API_KEY or HF_TOKEN, or log in with `hf auth login`",
+            "no API key found: set HUGR_API_KEY or HF_TOKEN, or log in with `hf auth login`",
         )?;
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+        let model =
+            std::env::var("HUGR_MODEL_MEDIUM").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         let base_url =
-            std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+            std::env::var("HUGR_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
         Ok(Self {
             client: reqwest::Client::new(),
             api_key,
@@ -347,7 +352,8 @@ impl TierModelConfigSet {
 
     /// Read the `models` section from `HUGR_CONFIG` (JSON), falling back to the
     /// built-in HF-router defaults. Environment overrides are then applied:
-    /// `OPENAI_BASE_URL` for the endpoint and `OPENAI_MODEL` for all tiers.
+    /// `HUGR_BASE_URL` for the endpoint, and `HUGR_MODEL_SMALL` /
+    /// `HUGR_MODEL_MEDIUM` / `HUGR_MODEL_BIG` for the per-tier model ids.
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = match std::env::var_os("HUGR_CONFIG") {
             Some(path) => {
@@ -373,11 +379,17 @@ impl TierModelConfigSet {
             None => Self::hf_router_default(),
         };
 
-        if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
+        if let Ok(base_url) = std::env::var("HUGR_BASE_URL") {
             config.base_url = base_url;
         }
-        if let Ok(model) = std::env::var("OPENAI_MODEL") {
-            config = config.with_all_models(model);
+        if let Ok(model) = std::env::var("HUGR_MODEL_SMALL") {
+            config.small.model = model;
+        }
+        if let Ok(model) = std::env::var("HUGR_MODEL_MEDIUM") {
+            config.medium.model = model;
+        }
+        if let Ok(model) = std::env::var("HUGR_MODEL_BIG") {
+            config.big.model = model;
         }
         Ok(config)
     }
@@ -422,7 +434,7 @@ impl TierModelConfigSet {
     /// [`OpenAiAdapter::from_env`].
     pub fn adapters_from_env(&self) -> anyhow::Result<Vec<(ModelSelector, OpenAiAdapter)>> {
         let api_key = resolve_api_key().context(
-            "no API key found: set OPENAI_API_KEY or HF_TOKEN, or log in with `hf auth login`",
+            "no API key found: set HUGR_API_KEY or HF_TOKEN, or log in with `hf auth login`",
         )?;
         Ok(self
             .tiers()
@@ -732,11 +744,11 @@ fn stringify(value: &Value) -> String {
     }
 }
 
-/// Resolve an API key from, in order: `OPENAI_API_KEY`, `HF_TOKEN`, the Hugging
+/// Resolve an API key from, in order: `HUGR_API_KEY`, `HF_TOKEN`, the Hugging
 /// Face token file read directly, then (last resort) the `hf` CLI's stored
 /// token. Returns `None` if none are available.
 fn resolve_api_key() -> Option<String> {
-    for var in ["OPENAI_API_KEY", "HF_TOKEN"] {
+    for var in ["HUGR_API_KEY", "HF_TOKEN"] {
         if let Ok(value) = std::env::var(var) {
             let value = value.trim().to_string();
             if !value.is_empty() {

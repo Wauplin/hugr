@@ -45,8 +45,8 @@ struct Cli {
     #[arg(short = 'y', long = "yolo", visible_alias = "yes")]
     yolo: bool,
 
-    /// Override the model id for all tiers (defaults to the `OPENAI_MODEL` env
-    /// var, then the built-in HF router model).
+    /// Override the model id for all tiers (defaults to the `HUGR_MODEL_*`
+    /// env vars, then the built-in HF router model).
     #[arg(short = 'm', long = "model")]
     model: Option<String>,
 
@@ -386,8 +386,8 @@ fn select_policy(yolo: bool, models: &TierModelConfigSet) -> Result<Arc<dyn Poli
     }
 }
 
-/// Build the model tier config from `HUGR_CONFIG`/environment, applying a
-/// `--model` override to all three tiers.
+/// Build the model tier config from `HUGR_CONFIG` / `HUGR_MODEL_*` /
+/// `HUGR_BASE_URL`, then apply a `--model` override to all three tiers.
 fn build_model_config(model: Option<String>) -> Result<TierModelConfigSet> {
     let mut models = TierModelConfigSet::from_env()?;
     if let Some(model) = model {
