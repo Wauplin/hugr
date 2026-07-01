@@ -3,11 +3,13 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use common::*;
 use hugr_core::{
-    Brain, Command, ContentPart, ContextDisposition, ContextSource, DoneReason, Event, LogEntry,
-    ModelSelector, OpId, Record, Seq, SeqRange, StaticPolicy, SummaryCoverage, Timestamp,
-    TokenBudget, ToolSchema, TurnPolicy,
+    Brain, Command, ContentPart, ContextDisposition, ContextPlan, ContextSource, DoneReason, Event,
+    LogEntry, ModelSelector, OpId, Record, RoutingInputs, RoutingPhase, Seq, SeqRange,
+    StaticPolicy, SummaryCoverage, Timestamp, TokenBudget, ToolRisk, ToolSchema, TurnPolicy,
 };
 use serde_json::json;
 
@@ -76,6 +78,74 @@ fn user_model_tool_model_done() {
         })
         .collect();
     assert_eq!(tokens, vec![1, 1, 1, 1]);
+}
+
+#[test]
+fn routing_inputs_are_purely_derived_for_turn_and_followup() {
+    struct CapturingPolicy {
+        base: StaticPolicy,
+        seen: Arc<Mutex<Vec<RoutingInputs>>>,
+    }
+
+    impl TurnPolicy for CapturingPolicy {
+        fn choose_model(
+            &self,
+            state: &hugr_core::BrainState,
+            inputs: &RoutingInputs,
+        ) -> ModelSelector {
+            self.seen.lock().unwrap().push(inputs.clone());
+            self.base.choose_model(state, inputs)
+        }
+
+        fn context_budget(&self, state: &hugr_core::BrainState) -> TokenBudget {
+            self.base.context_budget(state)
+        }
+
+        fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan {
+            self.base.project_context(log, budget)
+        }
+
+        fn needs_permission(&self, capability: &str) -> bool {
+            self.base.needs_permission(capability)
+        }
+    }
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let policy = CapturingPolicy {
+        base: StaticPolicy::default().with_context_budget(TokenBudget::new(4)),
+        seen: seen.clone(),
+    };
+    let mut brain = Brain::new(Box::new(policy));
+
+    run_script(
+        &mut brain,
+        vec![
+            user("first"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("call-1", "shell", json!({ "cmd": "false" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::CapabilityError {
+                op: OpId(1),
+                error: json!({ "error": "test failed" }),
+                conflict: None,
+                est_tokens: 1,
+            },
+        ],
+    );
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].phase, RoutingPhase::Normal);
+    assert_eq!(seen[0].tool_risk, ToolRisk::None);
+    assert_eq!(seen[0].recent_failures, 0);
+    assert!(seen[0].context_pressure > 0.0);
+    assert_eq!(seen[1].phase, RoutingPhase::ToolFollowup);
+    assert_eq!(seen[1].tool_risk, ToolRisk::Failed);
+    assert!(seen[1].recent_failures >= 1);
+    assert!(seen[1].context_pressure >= seen[0].context_pressure);
 }
 
 /// The same session, but the tool requires permission. The sequence gains a

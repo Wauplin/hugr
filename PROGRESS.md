@@ -107,6 +107,20 @@ Tests:
 - `crates/hugr-wasm/src/lib.rs::tests::context_plan_json_exposes_projection` pins the JSON binding.
 - Verification run: `cargo test -p hugr-wasm -q`; `./crates/hugr-wasm/build-extension.sh`.
 
+## Roadmap 2 Phase B — Tier routing
+
+### B1 — Pure routing inputs ✅
+
+Done:
+
+- `TurnPolicy::choose_model` now receives a pure `RoutingInputs` snapshot alongside `BrainState`. The snapshot exposes the routing phase, recent tool-risk signal, context pressure, recent failure count, and a future one-shot override slot; every field is derived from the log/state/current `ContextPlan`, so routing remains sans-IO and replay-deterministic.
+- The reducer computes `RoutingInputs` at the normal model-call boundary, classifying fresh user turns vs tool-follow-up turns without consulting the host. `StaticPolicy` keeps its previous behavior and simply ignores the inputs.
+- `docs/ARCHITECTURE.md` documents the routing-input contract as derived state, never observed environment.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::routing_inputs_are_purely_derived_for_turn_and_followup` pins the B1 inputs for a normal turn and a failed-tool follow-up.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

@@ -58,7 +58,9 @@ pub use model::{
     ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
     ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
 };
-pub use policy::{AgentSeed, CompactionTarget, StaticPolicy, TurnPolicy};
+pub use policy::{
+    AgentSeed, CompactionTarget, RoutingInputs, RoutingPhase, StaticPolicy, ToolRisk, TurnPolicy,
+};
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};
 pub use record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage};
 pub use state::{BrainState, InflightOp, OpKind};

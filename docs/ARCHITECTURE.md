@@ -235,6 +235,10 @@ Projection decides what fits a `TokenBudget`, but the brain **cannot tokenize** 
 
 The stored count is an estimate (necessarily approximate across model families — a count for one model ≠ another); it's good enough for projection *decisions*. Authoritative accounting still comes from the returned `Usage` after each call.
 
+### 3.6 Routing inputs are derived, never observed
+
+Model-tier routing is another policy decision over projected state, not host state. Before a normal model call the reducer builds a pure `RoutingInputs` snapshot from `BrainState`, the durable log, and the current `ContextPlan`: routing phase, recent tool-risk signal, context pressure, recorded recent failures, and any recorded one-shot override. `TurnPolicy::choose_model(state, inputs)` receives that snapshot and returns a logical selector. Because every input is reconstructed from the same recorded event stream and stored token estimates, replay re-derives the same selector without tokenizing or consulting the environment.
+
 ## 4. In-flight operations & concurrency
 
 ### 4.1 The op table

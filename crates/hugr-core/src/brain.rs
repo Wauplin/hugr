@@ -21,7 +21,7 @@ use crate::model::{
     ContentPart, ContextBlock, ContextPlan, ModelDelta, ModelOutput, ModelRequest, ModelSelector,
     Role, SamplingParams, ToolCall, Usage,
 };
-use crate::policy::{AgentSeed, StaticPolicy, TurnPolicy};
+use crate::policy::{AgentSeed, RoutingInputs, RoutingPhase, StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Seq, Value};
 use crate::record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage};
 use crate::state::{BrainState, OpKind};
@@ -462,7 +462,9 @@ impl Brain {
         }
 
         let op = self.state.alloc_op();
-        let selector = self.policy.choose_model(&self.state);
+        let inputs =
+            RoutingInputs::from_state(&self.state, &plan, next_routing_phase(self.state.log()));
+        let selector = self.policy.choose_model(&self.state, &inputs);
         let request = plan.to_model_request();
         self.state.mark(
             op,
@@ -836,5 +838,17 @@ fn render_summary_record(seq: Seq, record: &Record) -> Option<String> {
         }
         Record::Summary { text, .. } => Some(format!("log:{} summary: {}", seq.0, text)),
         Record::OpEnded { .. } => None,
+    }
+}
+
+fn next_routing_phase(log: &[LogEntry]) -> RoutingPhase {
+    match log
+        .iter()
+        .rev()
+        .find(|entry| !matches!(entry.record, Record::OpEnded { .. }))
+        .map(|entry| &entry.record)
+    {
+        Some(Record::ToolResult { .. }) => RoutingPhase::ToolFollowup,
+        _ => RoutingPhase::Normal,
     }
 }

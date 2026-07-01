@@ -15,6 +15,88 @@ use crate::model::{
 use crate::record::{LogEntry, Record, SeqRange, SummaryCoverage};
 use crate::state::BrainState;
 
+/// The kind of model step being routed.
+///
+/// This is pure reducer state, not host state: a normal turn starts after user
+/// input; a follow-up starts after tool / permission / agent results have been
+/// folded into the log; compaction and judge calls are included so hosts and
+/// custom policies can use one vocabulary even when those paths are currently
+/// forced to `small` outside [`choose_model`](TurnPolicy::choose_model).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum RoutingPhase {
+    Normal,
+    ToolFollowup,
+    Compaction,
+    PermissionJudge,
+    SessionTitle,
+    QuickClassification,
+}
+
+/// Recent tool-risk signal visible to the brain from its durable log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ToolRisk {
+    None,
+    ReadOnly,
+    Permissioned,
+    Denied,
+    Failed,
+}
+
+/// Pure inputs for model-tier routing (ROADMAP_2 B1).
+///
+/// Every field is derived from [`BrainState`] / the append-only log and the
+/// current [`ContextPlan`]; no IO, clocks, RNG, tokenization, or host side table
+/// participates. This keeps routing replay-safe: re-feeding the same recorded
+/// events reconstructs the same inputs and therefore the same selector.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RoutingInputs {
+    pub phase: RoutingPhase,
+    pub tool_risk: ToolRisk,
+    /// `0.0` when the budget is empty/unknown, otherwise used / max tokens.
+    pub context_pressure: f32,
+    /// Recent failed operations / denied permissions, derived from log records.
+    pub recent_failures: u32,
+    /// Host-injected one-shot override, if present. This is `None` until B4
+    /// wires an override event into the reducer.
+    pub override_selector: Option<ModelSelector>,
+}
+
+impl RoutingInputs {
+    pub fn new(
+        phase: RoutingPhase,
+        tool_risk: ToolRisk,
+        context_pressure: f32,
+        recent_failures: u32,
+        override_selector: Option<ModelSelector>,
+    ) -> Self {
+        Self {
+            phase,
+            tool_risk,
+            context_pressure,
+            recent_failures,
+            override_selector,
+        }
+    }
+
+    pub fn from_state(state: &BrainState, plan: &ContextPlan, phase: RoutingPhase) -> Self {
+        let context_pressure = if plan.budget.max_tokens == 0 {
+            0.0
+        } else {
+            (plan.totals.used_tokens as f32 / plan.budget.max_tokens as f32).clamp(0.0, 1.0)
+        };
+        Self::new(
+            phase,
+            recent_tool_risk(state.log()),
+            context_pressure,
+            recent_failure_count(state.log()),
+            None,
+        )
+    }
+}
+
 /// How to seed a **sub-agent's** log when it is spawned (ARCHITECTURE §14). A
 /// fork is *copying a log prefix*: the child then evolves independently. Values
 /// are compared, never parsed — the brain resolves this to the actual prefix.
@@ -56,7 +138,12 @@ impl CompactionTarget {
 /// (e.g. a sub-agent runner, ARCHITECTURE §13.2) own a brain on another thread.
 pub trait TurnPolicy: Send + Sync {
     /// Pick which logical model to call for the next step (multi-model routing).
-    fn choose_model(&self, state: &BrainState) -> ModelSelector;
+    ///
+    /// The reducer passes a pure [`RoutingInputs`] snapshot so the policy can
+    /// branch on phase, recent tool risk, context pressure, and recorded
+    /// failures without reading the environment. This is the only place a tier
+    /// is decided for normal model turns (ARCHITECTURE §2.5; ROADMAP_2 B1).
+    fn choose_model(&self, state: &BrainState, inputs: &RoutingInputs) -> ModelSelector;
 
     /// Pick the token budget the next context projection plans against.
     fn context_budget(&self, _state: &BrainState) -> TokenBudget {
@@ -228,7 +315,7 @@ impl StaticPolicy {
 }
 
 impl TurnPolicy for StaticPolicy {
-    fn choose_model(&self, _state: &BrainState) -> ModelSelector {
+    fn choose_model(&self, _state: &BrainState, _inputs: &RoutingInputs) -> ModelSelector {
         self.model.clone()
     }
 
@@ -416,6 +503,48 @@ impl TurnPolicy for StaticPolicy {
             .find(|(name, _)| name == capability)
             .map(|(_, seed)| *seed)
     }
+}
+
+fn recent_failure_count(log: &[LogEntry]) -> u32 {
+    log.iter()
+        .rev()
+        .take(24)
+        .filter(|entry| match &entry.record {
+            Record::OpEnded { outcome, .. } => !matches!(outcome, crate::record::OpOutcome::Ok),
+            Record::ToolResult { result, .. } => result.as_object().is_some_and(|object| {
+                object.contains_key("error") || object.contains_key("reason")
+            }),
+            _ => false,
+        })
+        .count()
+        .min(u32::MAX as usize) as u32
+}
+
+fn recent_tool_risk(log: &[LogEntry]) -> ToolRisk {
+    log.iter()
+        .rev()
+        .take(24)
+        .find_map(|entry| match &entry.record {
+            Record::ToolResult { result, .. } => {
+                let object = result.as_object()?;
+                if object
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|v| v == "permission_denied")
+                {
+                    Some(ToolRisk::Denied)
+                } else if object.contains_key("error") {
+                    Some(ToolRisk::Failed)
+                } else {
+                    Some(ToolRisk::ReadOnly)
+                }
+            }
+            Record::OpEnded { outcome, .. } if !matches!(outcome, crate::record::OpOutcome::Ok) => {
+                Some(ToolRisk::Failed)
+            }
+            _ => None,
+        })
+        .unwrap_or(ToolRisk::None)
 }
 
 fn default_compaction_high_water_percent() -> u8 {
