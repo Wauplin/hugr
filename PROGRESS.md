@@ -255,6 +255,20 @@ Tests:
 
 - Verification run: `cargo check -p hugr-cli`; `cargo test -p hugr-wasm`; `cargo test -p hugr-host skills`.
 
+## Roadmap 2 Phase D — Rust CLI as a serious coding agent
+
+### D1 — Repo-orientation capabilities ✅
+
+Done:
+
+- `hugr-host` now ships ordinary read-only repo-orientation capabilities: `repo_files`, `repo_search`, `repo_read`, `git_status`, `git_diff`, `git_log`, and `package_metadata`. They perform host-side filesystem/process IO while the brain sees only tool schemas and opaque JSON results.
+- `hugr-cli` registers those capabilities in the default laptop host alongside shell/fs/http, so a model can orient in an unfamiliar Rust repo without needing generic shell commands for common discovery.
+
+Tests:
+
+- `hugr-host::capabilities::repo::tests::repo_orientation_tools_are_read_only_and_list_files` pins read-only registration and fast file listing behavior.
+- Verification run: `cargo test -p hugr-host repo_orientation_tools_are_read_only_and_list_files -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

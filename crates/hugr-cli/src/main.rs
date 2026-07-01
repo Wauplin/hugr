@@ -19,7 +19,10 @@ use hugr_core::{
     AgentSeed, Command, ContextDisposition, ContextPlan, ContextSource, Event, ModelSelector,
     Record, SkillDescriptor, ToolSchema,
 };
-use hugr_host::capabilities::{FsRead, FsWrite, Http, Shell};
+use hugr_host::capabilities::{
+    FsRead, FsWrite, GitDiff, GitLog, GitStatus, Http, PackageMetadata, RepoFiles, RepoRead,
+    RepoSearch, Shell,
+};
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
     Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, McpServerConfig,
@@ -598,6 +601,13 @@ fn base_builder(models: TierModelConfigSet, policy: Arc<dyn Policy>) -> Result<E
         .capability(Arc::new(Shell))
         .capability(Arc::new(FsRead))
         .capability(Arc::new(FsWrite))
+        .capability(Arc::new(RepoFiles))
+        .capability(Arc::new(RepoSearch))
+        .capability(Arc::new(RepoRead))
+        .capability(Arc::new(GitStatus))
+        .capability(Arc::new(GitDiff))
+        .capability(Arc::new(GitLog))
+        .capability(Arc::new(PackageMetadata))
         .capability(Arc::new(Http::new()))
         // A `task` sub-agent tool (Phase 6): the model can delegate a self-
         // contained unit of work to a child agent seeded with the full context.
