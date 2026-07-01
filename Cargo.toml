@@ -8,16 +8,19 @@ members = [
     "crates/baton-replay",
     "crates/baton-plugin-abi",
     "crates/baton-example-plugin",
+    "crates/baton-wasm",
 ]
 
 # The full crate layout (see docs/ARCHITECTURE.md §10) still adds baton-model,
-# baton-wasm, baton-py and baton-js over later phases. Phase 0 shipped the pure,
-# sans-IO brain (`baton-core`); Phase 1 adds the native host, an OpenAI provider
-# adapter, and the showcase CLI; Phase 3 adds `baton-replay` (the versioned,
-# portable trace format); Phase 5 adds `baton-plugin-abi` (the versioned plugin
-# contract + subprocess transport) and `baton-example-plugin` (a standalone
-# example plugin). Phase 6 (sub-agents & forks) is entirely inside baton-core +
-# baton-host. All of these are host-side (may touch IO), never `baton-core`.
+# baton-py and baton-js over later phases. Phase 0 shipped the pure, sans-IO
+# brain (`baton-core`); Phase 1 adds the native host, an OpenAI provider adapter,
+# and the showcase CLI; Phase 3 adds `baton-replay` (the versioned, portable
+# trace format); Phase 5 adds `baton-plugin-abi` (the versioned plugin contract +
+# subprocess transport) and `baton-example-plugin` (a standalone example plugin);
+# Phase 4 adds `baton-wasm` (the browser/JS binding — the same brain compiled to
+# WASM, driving a Chrome extension with no backend). Phase 6 (sub-agents & forks)
+# is entirely inside baton-core + baton-host. All host crates may touch IO (or,
+# for baton-wasm, the JS host does); never `baton-core`.
 
 [workspace.package]
 version = "0.0.0"

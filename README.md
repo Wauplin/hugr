@@ -54,15 +54,20 @@ The workspace grows into the full layout from [`ARCHITECTURE.md` §10](docs/ARCH
 
 ```
 crates/
-  baton-core/       # the sans-IO brain — state, log, projection, op table,
-                    #   reducer. NO tokio, NO reqwest, NO fs.
-  baton-host/       # default native host: tokio driver loop, Capability +
-                    #   ModelAdapter traits, shell/fs/http, policy, front-end.
-  baton-providers/  # model adapters — OpenAI chat completions (streaming).
-  baton-cli/        # the `baton` showcase binary.
+  baton-core/          # the sans-IO brain — state, log, projection, op table,
+                       #   reducer. NO tokio, NO reqwest, NO fs.
+  baton-host/          # default native host: tokio driver loop, Capability +
+                       #   ModelAdapter traits, shell/fs/http, policy, front-end.
+  baton-providers/     # model adapters — OpenAI chat completions (streaming).
+  baton-cli/           # the `baton` showcase binary.
+  baton-replay/        # versioned, portable trace format + replay/inspect + blobs.
+  baton-plugin-abi/    # versioned plugin contract + subprocess (stdio) transport.
+  baton-example-plugin/# a standalone third-party plugin (no Baton dependency).
+  baton-wasm/          # the browser/JS binding + a Chrome-extension host (WASM;
+                       #   same brain, no backend). See crates/baton-wasm/extension/.
 ```
 
-Planned (later phases): `baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`, `baton-replay`.
+Planned (later phases): `baton-py`, `baton-js`.
 
 ## Running the CLI
 
@@ -88,6 +93,19 @@ Configuration (all optional) via environment:
 > The model must support **function calling**, since baton always advertises its tools. Small models that don't (e.g. some 8B instruct variants) return `model features function calling not support`.
 
 The engine setup is ~10 lines on top of `baton-host` (see the marked block in [`crates/baton-cli/src/main.rs`](crates/baton-cli/src/main.rs)).
+
+## Running in the browser (Chrome extension)
+
+The **same** brain, compiled to WASM, drives an installable Chrome side-panel agent that reads pages and navigates tabs — with **no backend**. Build the module and load the unpacked extension:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.100
+./crates/baton-wasm/build-extension.sh
+# then: chrome://extensions → Developer mode → Load unpacked → crates/baton-wasm/extension/
+```
+
+A prebuilt `extension/wasm/` is committed, so you can skip the build and load it directly. See [`crates/baton-wasm/extension/README.md`](crates/baton-wasm/extension/README.md) and [`DEMOS.md`](crates/baton-wasm/extension/DEMOS.md).
 
 ## Building & testing
 

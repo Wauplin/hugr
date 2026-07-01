@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Baton</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header id="header">
+      <div class="brand">
+        <span class="dot"></span>
+        <strong>Baton</strong>
+        <span id="subtitle" class="subtitle">browser agent</span>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+    </header>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <main id="log" class="log">
+      <div class="hint" id="hint">
+        <p><strong>Baton</strong> is a runtime-free agent brain (<code>baton-core</code>, compiled to WebAssembly) running entirely in this panel — no backend.</p>
+        <p>It can <strong>read pages</strong> and <strong>navigate tabs</strong>, but cannot click or submit forms.</p>
+        <p>Try: <em>"Summarize the current page"</em> · <em>"List my open tabs"</em> · <em>"Open Hacker News and give me the top 5 headlines."</em></p>
+      </div>
+    </main>
+
+    <form id="composer" class="composer">
+      <textarea id="input" rows="2" placeholder="Ask Baton to read or navigate…" autocomplete="off"></textarea>
+      <div class="composer-row">
+        <label class="approve">
+          <input type="checkbox" id="auto-approve" />
+          auto-approve navigation
+        </label>
+        <div class="spacer"></div>
+        <button type="button" id="stop" class="stop hidden">Stop</button>
+        <button type="submit" id="send" class="send">Send</button>
+      </div>
+    </form>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

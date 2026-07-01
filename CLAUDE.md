@@ -67,7 +67,7 @@ crates/baton-replay/     # versioned, portable trace format (save/load) — Phas
   src/blob.rs        # BlobStore: disk-backed content-addressed (sha256) store
 ```
 
-The remaining crates in `ARCHITECTURE.md` §10 (`baton-wasm`, `baton-py`, `baton-js`, `baton-plugin-abi`) arrive in later phases. `baton-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `baton-core` as *pure data only* and never pulls IO into the core. **Never add environmental dependencies to `baton-core`** to make a host easier; put them in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or another host), never in the core.
+`baton-plugin-abi` (Phase 5, the versioned plugin contract + subprocess transport) and `baton-wasm` (Phase 4, the browser/JS binding — the same brain compiled to WASM, driving the Chrome extension in `crates/baton-wasm/extension/`) now exist too; the remaining crates in `ARCHITECTURE.md` §10 (`baton-py`, `baton-js`) arrive in later phases. `baton-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `baton-core` as *pure data only* and never pulls IO into the core. **Never add environmental dependencies to `baton-core`** to make a host easier; put them in the host crate. All IO/HTTP/shell/clock work lives in `baton-host` (or another host), never in the core.
 
 When extending the host: capabilities are uniform (no privileged built-ins — shell/fs/http are ordinary `Capability`s); a model call is "an effect the host provides" registered like a capability; transport errors (retries, 429s) are the adapter's job, semantic errors route back to the model as tool results.
 

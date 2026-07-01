@@ -1,0 +1,37 @@
+[package]
+name = "baton-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The Phase 4 portability binding: compile the sans-IO brain (`baton-core`) to
+# WASM and expose `poll()`/`submit()` to a browser/JS host. `cdylib` is the WASM
+# output; `rlib` lets the crate be unit-tested on the native target too.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The brain — pure data, no environmental deps. This is the whole point: the
+# SAME core compiles here as in the native host (ARCHITECTURE §10/§11).
+baton-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The only host-side dep: the JS <-> WASM glue generator. Never leaks into
+# `baton-core` (this crate depends on it, not the other way around).
+wasm-bindgen = "=0.2.100"
+
+# Route Rust panics to the browser console instead of an opaque `unreachable`,
+# so a bad event payload surfaces a readable message during development.
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
+
+# A WASM-specific release profile leaning hard on size (ARCHITECTURE §11: the
+# core compiled to WASM should be low single-digit MB, ideally < 2 MB). The
+# workspace release profile already sets opt-level "z" + LTO; this inherits it.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]

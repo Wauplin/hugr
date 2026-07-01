@@ -77,19 +77,19 @@
 
 ---
 
-## Phase 4 — Portability (the attention moment) ⏸️ deferred
+## Phase 4 — Portability (the attention moment) 🔶 Chrome binding done; Python deferred
 
-> **Deferred** for now (by request): Phases 5 and 6 were built first. This means the WASM/Python hosts don't exist yet, so the Phase 5 plugin ABI landed as the **subprocess/stdio** transport (the roadmap's listed secondary path) with the WASM component transport *scaffolded behind a feature* for when this phase lands. Nothing in Phases 5/6 blocks Phase 4 — both stayed host-side and left `baton-core` sans-IO.
+> Phases 5 and 6 were built first (by request). The **Chrome-extension leg** of this phase is now done: `baton-wasm` + an installable MV3 side-panel agent. The `baton-py` (PyO3) leg is still deferred, and the Phase 5 `WasmPlugin` *plugin* transport remains a stub (its wasmtime backend is a separate future item). Nothing in Phases 5/6 blocked Phase 4 — both stayed host-side and left `baton-core` sans-IO.
 
 **Goal.** Same brain, many environments.
 
-- `baton-wasm`: compile `baton-core` to WASM; browser host with `fetch`-based model adapter and DOM front-end. **No backend.**
-- `baton-py`: PyO3 bindings exposing `poll`/`submit`; a Python host script.
-- Size/start-up validation against Architecture §11 targets.
+- ✅ `baton-wasm`: compile `baton-core` to WASM (`wasm-bindgen`); a **Chrome extension** host with a `fetch`-based streaming model adapter, a DOM front-end, and tab/page capabilities (read + navigate, no click/form-submit). **No backend** — an MV3 page fetches the model endpoint cross-origin directly. The binding is JSON-in/JSON-out over `submit`/`poll` (every `Event`/`Command` is already `serde`, so zero marshalling). See `crates/baton-wasm/` and its `extension/`. The brain is byte-for-byte the same reducer as the CLI; only the host differs.
+- `baton-py`: PyO3 bindings exposing `poll`/`submit`; a Python host script. **(deferred)**
+- Size/start-up validation against Architecture §11 targets. The WASM module is **236 KB** (well under the < 2 MB target); formal cold-start benchmarking is **deferred**.
 
 **Exit criteria.**
-- The *same* agent brain demonstrably running in (a) a Chrome extension / browser tab with no server, (b) a Python script, (c) the native CLI.
-- WASM module within size target; cold start within target.
+- 🔶 The *same* agent brain demonstrably running in (a) a Chrome extension / browser tab with no server ✅, (b) a Python script ⏳ (deferred), (c) the native CLI ✅.
+- 🔶 WASM module within size target ✅ (236 KB); cold start within target ⏳ (not yet benchmarked).
 
 ---
 
