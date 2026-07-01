@@ -35,7 +35,9 @@ The brain is `submit(eventJson)` / `poll() -> commandsJson`, synchronous and pur
 
 ## The tools
 
-Read-only (no permission): `list_tabs`, `get_current_page`, `get_page_text`, `get_page_links`, `get_page_outline`, `get_interactive_elements`.
+Read-only (no permission): `list_tabs`, `get_current_page`, `get_page_text`, `get_page_links`, `get_page_outline`, `get_interactive_elements`, `wait_for_page`.
+
+The read tools auto-wait briefly for the page to finish loading; `wait_for_page` (optionally with a CSS `selector` and a `settle_ms` quiet period) is the explicit, more reliable wait for heavy/JS-rendered pages.
 
 Navigation (permission-gated — a prompt appears unless *auto-approve* is on): `open_tab`, `navigate_tab`, `activate_tab`, `close_tab`.
 

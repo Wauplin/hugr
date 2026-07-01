@@ -44,6 +44,74 @@ function summarizeTab(t) {
 }
 
 /**
+ * Resolve once a tab's top-level navigation reaches status === "complete", or
+ * `timeoutMs` elapses. Resolves `true` if it completed, `false` on timeout —
+ * never rejects, so callers can proceed best-effort.
+ */
+function waitForTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const onUpdated = (id, info) => {
+      if (id === tabId && info.status === "complete") finish(true);
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    // Check the current state too — it may already be complete (no event coming).
+    chrome.tabs
+      .get(tabId)
+      .then((t) => {
+        if (t.status === "complete") finish(true);
+      })
+      .catch(() => finish(false));
+  });
+}
+
+/**
+ * Wait until a page is actually ready to read: the tab's top-level load
+ * completes, then (in-page) `document.readyState === "complete"`, an optional
+ * `selector` appears, and an optional `settleMs` quiet period passes — the last
+ * two help with JS-heavy / SPA pages that render after load. Best-effort: it
+ * returns a readiness report rather than throwing on a timeout, so a read can
+ * still proceed against whatever did render.
+ */
+async function waitForReady(tabId, { timeoutMs = 15000, selector = null, settleMs = 0 } = {}) {
+  const start = Date.now();
+  const completed = await waitForTabComplete(tabId, timeoutMs);
+  const remaining = Math.max(1000, timeoutMs - (Date.now() - start));
+  // In-page waiter: poll readyState (and the selector) until ready or deadline.
+  const report = await execOnTab(
+    tabId,
+    async (sel, deadlineMs, settle) => {
+      const deadline = Date.now() + deadlineMs;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      while (document.readyState !== "complete" && Date.now() < deadline) await sleep(100);
+      let selectorFound = null;
+      if (sel) {
+        while (!document.querySelector(sel) && Date.now() < deadline) await sleep(100);
+        selectorFound = !!document.querySelector(sel);
+      }
+      if (settle > 0) await sleep(settle);
+      return {
+        readyState: document.readyState,
+        selectorFound,
+        url: location.href,
+        title: document.title,
+      };
+    },
+    [selector, remaining, settleMs],
+  );
+  const ready = report.readyState === "complete" && (selector == null || report.selectorFound === true);
+  return { ready, timed_out: !ready && !completed, ...report };
+}
+
+/**
  * Build the capability table. `ui` provides the two agent-UX tools with a way to
  * talk to the panel: `ui.confirm(markdown) -> Promise<bool>` and
  * `ui.showPlan(steps)`.
@@ -95,6 +163,8 @@ export function createTools(ui) {
     // --- Page observation (read-only) ------------------------------------
     async get_page_text(args) {
       const tabId = await resolveTabId(args);
+      // Heavy pages may not be rendered yet — wait (best-effort) before reading.
+      await waitForReady(tabId, { timeoutMs: 8000, settleMs: 150 }).catch(() => {});
       const max = (args && args.max_chars) || 8000;
       const text = await execOnTab(tabId, () => {
         // innerText approximates the visible, readable text.
@@ -111,6 +181,7 @@ export function createTools(ui) {
 
     async get_page_links(args) {
       const tabId = await resolveTabId(args);
+      await waitForReady(tabId, { timeoutMs: 8000, settleMs: 150 }).catch(() => {});
       const max = (args && args.max_links) || 100;
       const links = await execOnTab(
         tabId,
@@ -132,6 +203,7 @@ export function createTools(ui) {
 
     async get_page_outline(args) {
       const tabId = await resolveTabId(args);
+      await waitForReady(tabId, { timeoutMs: 8000, settleMs: 150 }).catch(() => {});
       const headings = await execOnTab(tabId, () => {
         const out = [];
         for (const h of document.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
@@ -145,6 +217,7 @@ export function createTools(ui) {
 
     async get_interactive_elements(args) {
       const tabId = await resolveTabId(args);
+      await waitForReady(tabId, { timeoutMs: 8000, settleMs: 150 }).catch(() => {});
       const max = (args && args.max_elements) || 50;
       const elements = await execOnTab(
         tabId,
@@ -167,6 +240,14 @@ export function createTools(ui) {
         [max],
       );
       return { elements, count: elements.length, note: "read-only; this build cannot click or type" };
+    },
+
+    async wait_for_page(args) {
+      const tabId = await resolveTabId(args);
+      const timeoutMs = (args && args.timeout_ms) || 15000;
+      const selector = (args && args.selector) || null;
+      const settleMs = (args && args.settle_ms) || 0;
+      return await waitForReady(tabId, { timeoutMs, selector, settleMs });
     },
 
     // --- Agent UX tools ---------------------------------------------------

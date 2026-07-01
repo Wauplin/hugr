@@ -121,6 +121,33 @@ export const TOOL_SCHEMAS = [
     },
   },
   {
+    name: "wait_for_page",
+    description:
+      "Wait until a tab has finished loading before reading it. Resolves once the page's load " +
+      "completes (optionally also until `selector` appears and a `settle_ms` quiet period passes). " +
+      "The read tools already auto-wait briefly; use this for heavy or JS-rendered (SPA) pages, or " +
+      "right after navigating. Returns {ready, timed_out, readyState, url, title}.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...TAB_ID,
+        timeout_ms: {
+          type: "integer",
+          description: "Max time to wait in milliseconds (default 15000).",
+        },
+        selector: {
+          type: "string",
+          description: "Optional CSS selector to wait for (e.g. a main content container).",
+        },
+        settle_ms: {
+          type: "integer",
+          description: "Extra quiet time to wait after ready, for late-rendering content (default 0).",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_interactive_elements",
     description:
       "List the interactive elements on a page (links, buttons, inputs) as read-only descriptions — " +
