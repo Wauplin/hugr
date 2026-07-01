@@ -74,6 +74,9 @@ pub enum Event {
     /// Host-injected request for one lossless compaction pass.
     CompactContext,
 
+    /// Host-injected one-shot tier override for the next normal model turn.
+    ModelOverride { selector: Option<ModelSelector> },
+
     /// Streaming model output. Many of these per StartModelCall.
     ModelDelta { op: OpId, delta: ModelDelta },
     ModelDone  { op: OpId, usage: Usage, stop: StopReason },

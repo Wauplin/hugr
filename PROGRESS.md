@@ -148,6 +148,20 @@ Tests:
 - `crates/hugr-host/tests/end_to_end.rs::metrics_flow_through_engine` asserts per-tier spend and recent routing decisions are queryable from the engine log via `spend_report`.
 - Verification run: `cargo test -p hugr-core -q`; `cargo test -p hugr-host metrics_flow_through_engine -q`.
 
+### B4 — CLI tier/status controls ✅
+
+Done:
+
+- Added `Event::ModelOverride { selector }`, folded by the reducer as a one-shot selector override for the next normal model turn. The event is recorded like other host input, so tier overrides replay deterministically and clear after one use.
+- `Engine::override_next_model` injects that event for native hosts.
+- The CLI REPL now supports `/model` (tier mapping + pending override), `/tier [small|medium|big|auto]` (set/clear the next-turn override), and `/status` (tier mapping, pending override, context budget fullness, per-tier spend, and recent routing reasons from `spend_report`).
+- `hugr replay --step` summarizes recorded `ModelOverride` events.
+
+Tests:
+
+- `crates/hugr-core/tests/scripted_session.rs::model_override_forces_one_turn_then_clears` pins the one-shot override behavior.
+- Verification run: `cargo test -p hugr-core -q`; `cargo check -p hugr-cli -q`.
+
 ## Phase 0 — Pure core skeleton (no IO) ✅
 
 **Goal:** the brain exists as a pure state machine with zero IO.

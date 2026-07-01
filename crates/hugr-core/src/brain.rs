@@ -92,6 +92,7 @@ impl Brain {
             } => self.on_user_input(content, mode, est_tokens),
             Event::UserAbort => self.cancel_all_inflight(),
             Event::CompactContext => self.on_compact_context(),
+            Event::ModelOverride { selector } => self.state.set_model_override(selector),
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {
@@ -464,8 +465,9 @@ impl Brain {
         }
 
         let op = self.state.alloc_op();
-        let inputs =
+        let mut inputs =
             RoutingInputs::from_state(&self.state, &plan, next_routing_phase(self.state.log()));
+        inputs.override_selector = self.state.take_model_override();
         let selector = self.policy.choose_model(&self.state, &inputs);
         let routing = RoutingDecision::new(
             selector.clone(),

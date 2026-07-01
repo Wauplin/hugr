@@ -36,6 +36,9 @@ pub struct BrainState {
     /// Set when an interrupt cancelled in-flight ops and a fresh turn must start
     /// once they drain.
     pending_resume: bool,
+    /// One-shot model selector override, injected as an event and consumed by
+    /// the next normal model turn.
+    next_model_override: Option<ModelSelector>,
 }
 
 impl BrainState {
@@ -98,6 +101,11 @@ impl BrainState {
     /// The optimistic-concurrency read-set (last-seen version per object).
     pub fn versions(&self) -> &HashMap<ObjectKey, String> {
         &self.versions
+    }
+
+    /// Pending one-shot model selector override, if any.
+    pub fn next_model_override(&self) -> Option<&ModelSelector> {
+        self.next_model_override.as_ref()
     }
 
     // --- mutation helpers, used only by the reducer --------------------------
@@ -173,6 +181,14 @@ impl BrainState {
 
     pub(crate) fn set_pending_resume(&mut self, v: bool) {
         self.pending_resume = v;
+    }
+
+    pub(crate) fn set_model_override(&mut self, selector: Option<ModelSelector>) {
+        self.next_model_override = selector;
+    }
+
+    pub(crate) fn take_model_override(&mut self) -> Option<ModelSelector> {
+        self.next_model_override.take()
     }
 }
 

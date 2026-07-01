@@ -22,8 +22,8 @@ use hugr_core::{
 use hugr_host::capabilities::{FsRead, FsWrite, Http, Shell};
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
-    CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, Policy, Schedule,
-    StdoutFrontend, Trace, TriggerTarget,
+    CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, Policy, Schedule, SpendReport,
+    StdoutFrontend, Trace, TriggerTarget, spend_report,
 };
 use hugr_providers::TierModelConfigSet;
 
@@ -252,6 +252,7 @@ async fn run_session(cli: Cli) -> Result<()> {
         &mut engine,
         cli.prompt,
         "hugr — interactive session (Ctrl-D to exit)",
+        &mapping,
         cli.record.as_deref(),
     )
     .await
@@ -299,6 +300,7 @@ async fn run_resume(
         &mut engine,
         prompt,
         "hugr — resumed interactive session (Ctrl-D to exit)",
+        &mapping,
         Some(out_path.as_path()),
     )
     .await
@@ -460,11 +462,12 @@ async fn drive_session(
     engine: &mut Engine,
     prompt: Vec<String>,
     intro: &str,
+    tier_mapping: &str,
     out_path: Option<&std::path::Path>,
 ) -> Result<()> {
     if !prompt.is_empty() {
         let text = prompt.join(" ");
-        if !handle_repl_command(engine, &text).await? {
+        if !handle_repl_command(engine, &text, tier_mapping).await? {
             engine.user_turn(text).await;
         }
         engine.session_end();
@@ -485,7 +488,7 @@ async fn drive_session(
         if line.is_empty() {
             continue;
         }
-        if handle_repl_command(engine, line).await? {
+        if handle_repl_command(engine, line, tier_mapping).await? {
             continue;
         }
         engine.user_turn(line.to_string()).await;
@@ -494,8 +497,12 @@ async fn drive_session(
     save_recording(engine, out_path)
 }
 
-async fn handle_repl_command(engine: &mut Engine, line: &str) -> Result<bool> {
-    match line {
+async fn handle_repl_command(engine: &mut Engine, line: &str, tier_mapping: &str) -> Result<bool> {
+    let mut parts = line.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Ok(false);
+    };
+    match command {
         "/context" => {
             print_context_plan(&engine.context_plan());
             Ok(true)
@@ -504,11 +511,117 @@ async fn handle_repl_command(engine: &mut Engine, line: &str) -> Result<bool> {
             engine.compact_context().await;
             Ok(true)
         }
-        _ if line.starts_with('/') => {
+        "/model" => {
+            print_model_status(engine, tier_mapping);
+            Ok(true)
+        }
+        "/tier" => {
+            handle_tier_command(engine, parts.next());
+            Ok(true)
+        }
+        "/status" => {
+            print_status(engine, tier_mapping);
+            Ok(true)
+        }
+        _ if command.starts_with('/') => {
             eprintln!("unknown command: {line}");
             Ok(true)
         }
         _ => Ok(false),
+    }
+}
+
+fn handle_tier_command(engine: &mut Engine, tier: Option<&str>) {
+    match tier {
+        None => print_tier_override(engine),
+        Some(name @ ("small" | "medium" | "big")) => {
+            let selector = ModelSelector::named(name);
+            engine.override_next_model(Some(selector.clone()));
+            println!("next turn tier override: {}", selector_label(&selector));
+        }
+        Some("auto" | "clear") => {
+            engine.override_next_model(None);
+            println!("next turn tier override cleared");
+        }
+        Some(other) => {
+            eprintln!("usage: /tier [small|medium|big|auto] (got {other})");
+        }
+    }
+}
+
+fn print_model_status(engine: &Engine, tier_mapping: &str) {
+    println!("models: {tier_mapping}");
+    print_tier_override(engine);
+}
+
+fn print_tier_override(engine: &Engine) {
+    match engine.brain().state().next_model_override() {
+        Some(selector) => println!("next turn tier override: {}", selector_label(selector)),
+        None => println!("next turn tier override: auto"),
+    }
+}
+
+fn print_status(engine: &Engine, tier_mapping: &str) {
+    let plan = engine.context_plan();
+    let report = spend_report(engine.brain().state().log());
+    println!("models: {tier_mapping}");
+    print_tier_override(engine);
+    println!(
+        "context: {}/{} tokens ({:.0}% full)",
+        plan.totals.used_tokens,
+        plan.budget.max_tokens,
+        context_percent(plan.totals.used_tokens, plan.budget.max_tokens)
+    );
+    print_spend_report(&report);
+}
+
+fn print_spend_report(report: &SpendReport) {
+    if report.tiers.is_empty() {
+        println!("spend: no model calls yet");
+    } else {
+        println!("spend:");
+        for tier in &report.tiers {
+            let cost = tier
+                .cost
+                .map(|cost| format!(" · ${cost:.6}"))
+                .unwrap_or_default();
+            println!(
+                "- {} · {} calls · in {} / out {} tok · {} ms{}",
+                selector_label(&tier.selector),
+                tier.model_calls,
+                tier.input_tokens,
+                tier.output_tokens,
+                tier.latency_ms,
+                cost
+            );
+        }
+    }
+    if report.recent_routing.is_empty() {
+        println!("routing: no recorded model routing yet");
+    } else {
+        println!("routing:");
+        for decision in &report.recent_routing {
+            println!(
+                "- {} · {}",
+                selector_label(&decision.selector),
+                decision.reasons.join("; ")
+            );
+        }
+    }
+}
+
+fn context_percent(used: u64, max: u64) -> f64 {
+    if max == 0 {
+        0.0
+    } else {
+        used as f64 * 100.0 / max as f64
+    }
+}
+
+fn selector_label(selector: &ModelSelector) -> String {
+    match selector {
+        ModelSelector::Named(name) => name.clone(),
+        other => format!("{other:?}"),
     }
 }
 
@@ -634,6 +747,7 @@ fn summarize_event(event: &Event) -> String {
         UserInput { content, mode, .. } => format!("UserInput({content} · {mode:?})"),
         UserAbort => "UserAbort".to_string(),
         CompactContext => "CompactContext".to_string(),
+        ModelOverride { selector } => format!("ModelOverride({selector:?})"),
         ModelDelta { op, .. } => format!("ModelDelta(op={})", op.0),
         ModelDone { op, .. } => format!("ModelDone(op={})", op.0),
         ModelError { op, .. } => format!("ModelError(op={})", op.0),

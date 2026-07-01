@@ -227,6 +227,37 @@ fn routing_policy_deterministically_uses_small_medium_and_big() {
     assert_eq!(big_brain.state().log(), replay_brain.state().log());
 }
 
+#[test]
+fn model_override_forces_one_turn_then_clears() {
+    let script = vec![
+        Event::ModelOverride {
+            selector: Some(ModelSelector::named("big")),
+        },
+        user("ordinary request"),
+        Event::ModelDone {
+            op: OpId(0),
+            output: text_output("Done."),
+            usage: usage(),
+            est_tokens: 1,
+        },
+        user("another ordinary request"),
+    ];
+    let mut brain = Brain::new(Box::new(RoutingPolicy::default()));
+    let commands = run_script(&mut brain, script);
+    let selectors: Vec<_> = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::StartModelCall { model, .. } => Some(model.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        selectors,
+        vec![ModelSelector::named("big"), ModelSelector::named("medium")]
+    );
+    assert!(brain.state().next_model_override().is_none());
+}
+
 /// The same session, but the tool requires permission. The sequence gains a
 /// `RequestPermission` before the capability actually starts, and the granted
 /// capability reuses the same op id.

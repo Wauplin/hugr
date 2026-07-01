@@ -207,6 +207,13 @@ impl Engine {
         self.drive_to_idle().await;
     }
 
+    /// Force the next normal model turn to use `selector`, or clear a pending
+    /// override with `None`. This is recorded as a host event so replay stays
+    /// deterministic.
+    pub fn override_next_model(&mut self, selector: Option<ModelSelector>) {
+        self.submit(Event::ModelOverride { selector });
+    }
+
     /// A cloneable handle for injecting [`Event`]s into the running loop from
     /// *outside* a turn — e.g. a Ctrl-C / signal handler sending
     /// [`Event::UserAbort`] while [`user_turn`](Self::user_turn) is awaiting the

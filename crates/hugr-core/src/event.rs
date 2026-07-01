@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{ModelDelta, ModelOutput, Usage};
+use crate::model::{ModelDelta, ModelOutput, ModelSelector, Usage};
 use crate::primitives::{ObjectKey, OpId, Timestamp, Value};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -28,6 +28,13 @@ pub enum Event {
     /// current projection. Hosts fire this from `/compact` or a UI button; the
     /// reducer deterministically selects the span via [`TurnPolicy`].
     CompactContext,
+    /// Pure control signal: force the next normal model turn to use this
+    /// selector. `None` clears a pending override. Hosts use this for `/tier`
+    /// style controls; replay re-feeds the recorded event instead of relying on
+    /// UI state.
+    ModelOverride {
+        selector: Option<ModelSelector>,
+    },
 
     // --- model streaming (transport only; never logged) ---------------------
     ModelDelta {
