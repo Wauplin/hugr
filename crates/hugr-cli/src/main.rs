@@ -816,7 +816,9 @@ async fn handle_repl_command(
             Ok(true)
         }
         "/diff" => {
-            print_git_diff(parts.collect::<Vec<_>>().join(" "))?;
+            // Keep the args as separate tokens: joining them into one string
+            // would turn `/diff a b` into the single bogus pathspec "a b".
+            print_git_diff(&parts.collect::<Vec<_>>())?;
             Ok(true)
         }
         "/review" => {
@@ -944,16 +946,33 @@ fn handle_todo_command(engine: &mut Engine, rest: String) {
     }
 }
 
-fn print_git_diff(args: String) -> Result<()> {
+fn print_git_diff(args: &[&str]) -> Result<()> {
     let mut cmd = std::process::Command::new("git");
-    cmd.arg("diff").arg("--no-color");
-    let args = args.trim();
-    if args == "--cached" || args == "cached" {
-        cmd.arg("--cached");
-    } else if !args.is_empty() {
-        cmd.arg("--").arg(args);
-    }
+    cmd.args(git_diff_args(args));
     print_command_output(&mut cmd)
+}
+
+/// Build the `git diff` argument list for `/diff`. `--cached` (or bare
+/// `cached`) selects the staged diff; every other token is passed as its own
+/// pathspec after `--`. Paths containing spaces can't be expressed here anyway
+/// — the REPL splits its input on whitespace before this is called.
+fn git_diff_args(args: &[&str]) -> Vec<String> {
+    let mut out = vec!["diff".to_string(), "--no-color".to_string()];
+    let mut paths = Vec::new();
+    for &arg in args {
+        if arg == "--cached" || arg == "cached" {
+            if !out.iter().any(|a| a == "--cached") {
+                out.push("--cached".to_string());
+            }
+        } else {
+            paths.push(arg.to_string());
+        }
+    }
+    if !paths.is_empty() {
+        out.push("--".to_string());
+        out.extend(paths);
+    }
+    out
 }
 
 fn print_review_prompt() -> Result<()> {
@@ -1485,6 +1504,26 @@ mod tests {
         assert_eq!(configs[1].args, vec![OsString::from(".")]);
         assert_eq!(configs[2].name, "git");
         assert_eq!(configs[2].args, vec![OsString::from("--stdio")]);
+    }
+
+    // Regression: `/diff a b` used to join the remainder into the single
+    // pathspec "a b" (an empty diff); each token must stay its own argument.
+    #[test]
+    fn git_diff_args_keeps_pathspecs_separate() {
+        assert_eq!(git_diff_args(&[]), ["diff", "--no-color"]);
+        assert_eq!(
+            git_diff_args(&["a.rs", "b.rs"]),
+            ["diff", "--no-color", "--", "a.rs", "b.rs"]
+        );
+        // `--cached` (or bare `cached`) is a flag, not a pathspec.
+        assert_eq!(
+            git_diff_args(&["--cached"]),
+            ["diff", "--no-color", "--cached"]
+        );
+        assert_eq!(
+            git_diff_args(&["cached", "src/main.rs"]),
+            ["diff", "--no-color", "--cached", "--", "src/main.rs"]
+        );
     }
 
     #[test]

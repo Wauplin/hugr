@@ -475,39 +475,74 @@ impl ModelAdapter for OpenAiAdapter {
             model: self.model.clone(),
             ..Accumulator::default()
         };
-        let mut buf: Vec<u8> = Vec::new();
-        let mut stream = resp.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let bytes = chunk.context("error while streaming response")?;
-            buf.extend_from_slice(&bytes);
-
-            // SSE is newline-delimited; process every complete line. Scan with
-            // a start offset and parse borrowed slices, then compact the buffer
-            // once per network chunk (avoids an O(buffer) drain per line).
-            let mut start = 0;
-            while let Some(rel) = buf[start..].iter().position(|&b| b == b'\n') {
-                let pos = start + rel;
-                // Borrows for valid UTF-8; allocates only for the rare invalid
-                // line (same lossy tolerance as before).
-                let line = String::from_utf8_lossy(&buf[start..pos]);
-                start = pos + 1;
-                let line = line.trim_end_matches(['\r', '\n']);
-                if let Some(data) = line.strip_prefix("data:") {
-                    let data = data.trim();
-                    if data == "[DONE]" {
-                        break;
-                    }
-                    if let Ok(value) = serde_json::from_str::<Value>(data) {
-                        acc.ingest(&value, sink);
-                    }
-                }
-            }
-            buf.drain(..start);
-        }
+        consume_sse(resp.bytes_stream(), &mut acc, sink).await?;
 
         Ok(acc.finish(sink))
     }
+}
+
+/// Drain an SSE byte stream into the accumulator, line by line.
+///
+/// Generic over the stream so tests can feed fixture chunks without HTTP; the
+/// adapter passes `reqwest`'s `bytes_stream()`.
+async fn consume_sse<S, B, E>(
+    mut stream: S,
+    acc: &mut Accumulator,
+    sink: &ModelSink,
+) -> anyhow::Result<()>
+where
+    S: futures_util::Stream<Item = Result<B, E>> + Unpin,
+    B: AsRef<[u8]>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let mut buf: Vec<u8> = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.context("error while streaming response")?;
+        buf.extend_from_slice(bytes.as_ref());
+
+        // SSE is newline-delimited; process every complete line. Scan with
+        // a start offset and parse borrowed slices, then compact the buffer
+        // once per network chunk (avoids an O(buffer) drain per line).
+        let mut start = 0;
+        while let Some(rel) = buf[start..].iter().position(|&b| b == b'\n') {
+            let pos = start + rel;
+            // Borrows for valid UTF-8; allocates only for the rare invalid
+            // line (same lossy tolerance as before).
+            let line = String::from_utf8_lossy(&buf[start..pos]);
+            start = pos + 1;
+            if ingest_sse_line(&line, acc, sink) {
+                break; // [DONE]
+            }
+        }
+        buf.drain(..start);
+    }
+
+    // Some servers close the stream without a trailing newline on the final
+    // line — often the one carrying `usage` or the last `finish_reason`.
+    // Parse the residual bytes through the same path so they aren't dropped.
+    if !buf.is_empty() {
+        let line = String::from_utf8_lossy(&buf);
+        ingest_sse_line(&line, acc, sink);
+    }
+
+    Ok(())
+}
+
+/// Parse one SSE line, folding any `data:` payload into the accumulator.
+/// Returns `true` for the `[DONE]` sentinel.
+fn ingest_sse_line(line: &str, acc: &mut Accumulator, sink: &ModelSink) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if let Some(data) = line.strip_prefix("data:") {
+        let data = data.trim();
+        if data == "[DONE]" {
+            return true;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(data) {
+            acc.ingest(&value, sink);
+        }
+    }
+    false
 }
 
 /// Accumulates a streamed chat-completions response into a consolidated result.
@@ -1145,6 +1180,43 @@ mod tests {
         assert_eq!(call.id, "call-9");
         assert_eq!(call.name, "shell");
         assert_eq!(call.args, json!({ "cmd": "ls" }));
+    }
+
+    // Regression: a server that closes the byte stream without a trailing
+    // newline after the final `data:` line (here carrying both `finish_reason`
+    // and the `usage` chunk) must not have that line silently dropped — that
+    // would fold Usage to 0/0, lose the cost, and degrade the stop reason.
+    #[tokio::test]
+    async fn final_unterminated_sse_line_is_parsed() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = ModelSink::new(hugr_core::OpId(0), tx);
+
+        let mut acc = Accumulator {
+            model: "gpt-test".into(),
+            ..Accumulator::default()
+        };
+        // Fixture: a normal newline-terminated delta, then a final line split
+        // across two network chunks with NO trailing newline before EOF.
+        let chunks: Vec<Result<Vec<u8>, std::convert::Infallible>> = vec![
+            Ok(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n".to_vec()),
+            Ok(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],".to_vec()),
+            Ok(
+                b"\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"cost\":0.000123}}"
+                    .to_vec(),
+            ),
+        ];
+        let stream = futures_util::stream::iter(chunks);
+        consume_sse(stream, &mut acc, &sink).await.unwrap();
+
+        let (output, usage) = acc.finish(&sink);
+        assert_eq!(output.text, "hi");
+        // `length` must survive as MaxTokens, not degrade to the EndTurn default.
+        assert_eq!(output.stop, StopReason::MaxTokens);
+        // The usage chunk on the unterminated line must not fold to 0/0.
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(usage.extra["cost"], json!(0.000123));
+        assert_eq!(usage.extra["cost_source"], json!("router"));
     }
 
     // Regression: a (non-conforming) OpenAI-compatible server that streams a tool
