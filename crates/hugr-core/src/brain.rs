@@ -205,31 +205,21 @@ impl Brain {
             self.state.get_op(op).map(|entry| &entry.kind),
             Some(OpKind::Compaction { .. } | OpKind::ManualCompaction { .. })
         );
-        match &delta {
+        match delta {
             ModelDelta::Text(t) => {
-                self.state.buffer_model_text(op, t);
+                self.state.buffer_model_text(op, &t);
                 if !is_compaction {
-                    self.emit(OutputEvent::ModelText {
-                        op,
-                        text: t.clone(),
-                    });
+                    self.emit(OutputEvent::ModelText { op, text: t });
                 }
             }
             ModelDelta::Reasoning(t) => {
                 if !is_compaction {
-                    self.emit(OutputEvent::ModelReasoning {
-                        op,
-                        text: t.clone(),
-                    });
+                    self.emit(OutputEvent::ModelReasoning { op, text: t });
                 }
             }
             ModelDelta::ToolCallStart { id, name } => {
                 if !is_compaction {
-                    self.emit(OutputEvent::ToolCallStarted {
-                        op,
-                        id: id.clone(),
-                        name: name.clone(),
-                    });
+                    self.emit(OutputEvent::ToolCallStarted { op, id, name });
                 }
             }
             ModelDelta::ToolCallArgsDelta { .. } | ModelDelta::ToolCallEnd { .. } => {}
@@ -298,6 +288,35 @@ impl Brain {
         self.done(DoneReason::Error(stringify(&error)));
     }
 
+    /// The shared tail of every tool-result-shaped resolution (capability,
+    /// sub-agent, user answer, permission denial): record a version refresh if
+    /// one rode along (ARCHITECTURE §7.3), append the *one* consolidated
+    /// `ToolResult` record (ARCHITECTURE §4.5), end the op, and resume the turn.
+    fn finish_tool_result(
+        &mut self,
+        op: OpId,
+        result: Value,
+        version: Option<VersionRef>,
+        outcome: OpOutcome,
+        est_tokens: u32,
+    ) {
+        if let Some(v) = &version {
+            self.state
+                .record_version(v.object.clone(), v.version.clone());
+        }
+        let (name, call_id) = self.tool_ids(op);
+        self.append(Record::ToolResult {
+            op,
+            name,
+            call_id,
+            result,
+            version,
+            est_tokens,
+        });
+        self.end_op(op, outcome, None);
+        self.maybe_resume_model_turn();
+    }
+
     fn on_capability_done(
         &mut self,
         op: OpId,
@@ -305,32 +324,7 @@ impl Brain {
         version: Option<VersionRef>,
         est_tokens: u32,
     ) {
-        if let Some(v) = version {
-            self.state
-                .record_version(v.object.clone(), v.version.clone());
-            let version = Some(v);
-            let (name, call_id) = self.tool_ids(op);
-            self.append(Record::ToolResult {
-                op,
-                name,
-                call_id,
-                result,
-                version,
-                est_tokens,
-            });
-        } else {
-            let (name, call_id) = self.tool_ids(op);
-            self.append(Record::ToolResult {
-                op,
-                name,
-                call_id,
-                result,
-                version: None,
-                est_tokens,
-            });
-        }
-        self.end_op(op, OpOutcome::Ok, None);
-        self.maybe_resume_model_turn();
+        self.finish_tool_result(op, result, version, OpOutcome::Ok, est_tokens);
     }
 
     fn on_capability_error(
@@ -343,68 +337,30 @@ impl Brain {
         // A stale-edit conflict refreshes the read-set so the model's next edit
         // is stamped correctly; otherwise it is an ordinary error result fed
         // back to the model (ARCHITECTURE §5.4, §7.3).
-        let version = conflict.inspect(|v| {
-            self.state
-                .record_version(v.object.clone(), v.version.clone());
-        });
-        let (name, call_id) = self.tool_ids(op);
-        self.append(Record::ToolResult {
+        self.finish_tool_result(
             op,
-            name,
-            call_id,
-            result: error.clone(),
-            version,
+            error.clone(),
+            conflict,
+            OpOutcome::Error(error),
             est_tokens,
-        });
-        self.end_op(op, OpOutcome::Error(error), None);
-        self.maybe_resume_model_turn();
+        );
     }
 
     fn on_agent_done(&mut self, op: OpId, result: Value, est_tokens: u32) {
         // A sub-agent result returns to the parent as a tool-result-shaped value
         // the next model turn consumes (ARCHITECTURE §13.1/§14.3): the child's
         // digest flows back as *one* value; forks diverge, results flow back.
-        let (name, call_id) = self.tool_ids(op);
-        self.append(Record::ToolResult {
-            op,
-            name,
-            call_id,
-            result,
-            version: None,
-            est_tokens,
-        });
-        self.end_op(op, OpOutcome::Ok, None);
-        self.maybe_resume_model_turn();
+        self.finish_tool_result(op, result, None, OpOutcome::Ok, est_tokens);
     }
 
     fn on_agent_error(&mut self, op: OpId, error: Value, est_tokens: u32) {
-        let (name, call_id) = self.tool_ids(op);
-        self.append(Record::ToolResult {
-            op,
-            name,
-            call_id,
-            result: error.clone(),
-            version: None,
-            est_tokens,
-        });
-        self.end_op(op, OpOutcome::Error(error), None);
-        self.maybe_resume_model_turn();
+        self.finish_tool_result(op, error.clone(), None, OpOutcome::Error(error), est_tokens);
     }
 
     fn on_user_answer(&mut self, op: OpId, answer: Value, est_tokens: u32) {
         // The answer to an `AskUser` becomes a tool-result-shaped value the next
         // model turn consumes.
-        let (name, call_id) = self.tool_ids(op);
-        self.append(Record::ToolResult {
-            op,
-            name,
-            call_id,
-            result: answer,
-            version: None,
-            est_tokens,
-        });
-        self.end_op(op, OpOutcome::Ok, None);
-        self.maybe_resume_model_turn();
+        self.finish_tool_result(op, answer, None, OpOutcome::Ok, est_tokens);
     }
 
     fn on_permission_decision(&mut self, op: OpId, decision: Decision, est_tokens: u32) {
@@ -430,18 +386,14 @@ impl Brain {
                 }
             }
             Decision::Deny { reason } => {
-                let (name, call_id) = self.tool_ids(op);
                 let result = json!({ "error": "permission_denied", "reason": reason });
-                self.append(Record::ToolResult {
+                self.finish_tool_result(
                     op,
-                    name,
-                    call_id,
-                    result: result.clone(),
-                    version: None,
+                    result.clone(),
+                    None,
+                    OpOutcome::Error(result),
                     est_tokens,
-                });
-                self.end_op(op, OpOutcome::Error(result), None);
-                self.maybe_resume_model_turn();
+                );
             }
         }
     }
@@ -483,7 +435,9 @@ impl Brain {
             ));
             return;
         }
-        if !self.start_selected_compaction(false) {
+        let budget = self.policy.context_budget(&self.state);
+        let plan = self.policy.project_context(self.state.log(), budget);
+        if !self.start_selected_compaction(&plan, false) {
             self.emit(OutputEvent::Notice(
                 "compaction skipped: no compactable context span".to_string(),
             ));
@@ -499,7 +453,7 @@ impl Brain {
     fn start_model_turn(&mut self) {
         let budget = self.policy.context_budget(&self.state);
         let plan = self.policy.project_context(self.state.log(), budget);
-        if self.should_compact(&plan, budget) && self.start_selected_compaction(true) {
+        if self.should_compact(&plan, budget) && self.start_selected_compaction(&plan, true) {
             return;
         }
 
@@ -530,10 +484,11 @@ impl Brain {
         });
     }
 
-    fn start_selected_compaction(&mut self, resume_turn: bool) -> bool {
-        let budget = self.policy.context_budget(&self.state);
-        let plan = self.policy.project_context(self.state.log(), budget);
-        let Some(target) = self.policy.select_compaction_span(self.state.log(), &plan) else {
+    /// Start a policy-selected compaction from a projection `plan` the caller
+    /// already computed (turn-start reuses its own; manual compaction computes
+    /// one) — avoids projecting the same log twice per decision.
+    fn start_selected_compaction(&mut self, plan: &ContextPlan, resume_turn: bool) -> bool {
+        let Some(target) = self.policy.select_compaction_span(self.state.log(), plan) else {
             return false;
         };
         self.start_compaction_turn(target.summary_of, target.est_tokens_in, resume_turn);

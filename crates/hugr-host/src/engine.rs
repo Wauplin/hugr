@@ -424,36 +424,27 @@ impl Engine {
     fn observe(&mut self, event: &Event) {
         // A model/tool *completion* line must appear after the text it follows:
         // flush any buffered streamed text before rendering the lifecycle hook.
-        if matches!(
-            event,
-            Event::ModelDone { .. }
-                | Event::CapabilityDone { .. }
-                | Event::CapabilityError { .. }
-                | Event::AgentDone { .. }
-                | Event::AgentError { .. }
-        ) {
+        // Classify the event once so the flush condition and the dispatch can
+        // never diverge. A sub-agent completing reads like a tool completing
+        // to the front-end.
+        let tool_end = match event {
+            Event::ModelDone { op, usage, .. } => {
+                self.flush_render();
+                self.frontend.on_model_end(*op, usage);
+                return;
+            }
+            Event::CapabilityDone { op, result, .. } | Event::AgentDone { op, result, .. } => {
+                Some((*op, result, false))
+            }
+            Event::CapabilityError { op, error, .. } | Event::AgentError { op, error, .. } => {
+                Some((*op, error, true))
+            }
+            _ => None,
+        };
+        if let Some((op, payload, is_error)) = tool_end {
             self.flush_render();
-        }
-        match event {
-            Event::ModelDone { op, usage, .. } => self.frontend.on_model_end(*op, usage),
-            Event::CapabilityDone { op, result, .. } => {
-                let name = self.op_labels.remove(op).unwrap_or_default();
-                self.frontend.on_tool_end(*op, &name, result, false);
-            }
-            Event::CapabilityError { op, error, .. } => {
-                let name = self.op_labels.remove(op).unwrap_or_default();
-                self.frontend.on_tool_end(*op, &name, error, true);
-            }
-            // A sub-agent completing reads like a tool completing to the front-end.
-            Event::AgentDone { op, result, .. } => {
-                let name = self.op_labels.remove(op).unwrap_or_default();
-                self.frontend.on_tool_end(*op, &name, result, false);
-            }
-            Event::AgentError { op, error, .. } => {
-                let name = self.op_labels.remove(op).unwrap_or_default();
-                self.frontend.on_tool_end(*op, &name, error, true);
-            }
-            _ => {}
+            let name = self.op_labels.remove(&op).unwrap_or_default();
+            self.frontend.on_tool_end(op, &name, payload, is_error);
         }
     }
 
@@ -659,7 +650,10 @@ fn system_clock() -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn estimate_text_tokens(text: &str) -> u32 {
+/// Rough token estimate for a piece of text (~4 bytes per token, min 1).
+/// Public so embedders (e.g. the CLI) can size opaque payloads consistently
+/// with the host's own estimates.
+pub fn estimate_text_tokens(text: &str) -> u32 {
     let bytes = text.len() as u64;
     bytes.div_ceil(4).max(1).min(u32::MAX as u64) as u32
 }

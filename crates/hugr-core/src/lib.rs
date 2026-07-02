@@ -61,7 +61,7 @@ pub use model::{
 };
 pub use policy::{
     AgentSeed, CompactionTarget, RoutingInputs, RoutingPhase, RoutingPolicy, SkillDescriptor,
-    StaticPolicy, ToolRisk, TurnPolicy,
+    StaticPolicy, ToolRisk, TurnPolicy, decode_policy,
 };
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};
 pub use record::{

@@ -5,6 +5,8 @@
 
 use hugr_core::{LogEntry, ModelSelector, Record, RoutingDecision};
 
+use crate::frontend::usage_cost;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct SpendReport {
@@ -82,8 +84,4 @@ pub fn spend_report(log: &[LogEntry]) -> SpendReport {
     }
 
     SpendReport::new(tiers, routing.into_iter().rev().take(8).collect())
-}
-
-fn usage_cost(usage: &hugr_core::Usage) -> Option<f64> {
-    usage.extra.get("cost").and_then(|value| value.as_f64())
 }

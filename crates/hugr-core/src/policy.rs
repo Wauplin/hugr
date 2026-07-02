@@ -13,8 +13,25 @@ use crate::model::{
     ContextPlanEntry, ContextSource, ModelSelector, Role, SamplingParams, TokenBudget, ToolSchema,
     ToolVersioning,
 };
+use crate::primitives::Value;
 use crate::record::{LogEntry, Record, SeqRange, SummaryCoverage};
 use crate::state::BrainState;
+
+/// Decode a policy captured as an opaque [`Value`] — e.g. a trace's stored
+/// policy config or the JSON handed across the WASM boundary. Tries the
+/// built-in serializable policies in order: [`RoutingPolicy`] first, then the
+/// legacy [`StaticPolicy`]. Returns `None` when the value decodes as neither
+/// (e.g. a custom host policy); the caller picks its own fallback. Faithful
+/// replay needs the *same* policy a session was recorded under — the brain
+/// branches on its pure decisions (ARCHITECTURE §6.3).
+pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
+    if let Ok(policy) = serde_json::from_value::<RoutingPolicy>(value.clone()) {
+        return Some(Box::new(policy));
+    }
+    serde_json::from_value::<StaticPolicy>(value.clone())
+        .ok()
+        .map(|policy| Box::new(policy) as Box<dyn TurnPolicy>)
+}
 
 /// The kind of model step being routed.
 ///
@@ -613,6 +630,10 @@ impl TurnPolicy for RoutingPolicy {
     fn activate_skill(&self, capability: &str) -> Option<SkillDescriptor> {
         self.base.activate_skill(capability)
     }
+
+    fn capability_versioning(&self, capability: &str) -> Option<ToolVersioning> {
+        self.base.capability_versioning(capability)
+    }
 }
 
 impl TurnPolicy for StaticPolicy {
@@ -630,6 +651,21 @@ impl TurnPolicy for StaticPolicy {
         // the originals (ARCHITECTURE §3.4).
         let mut entries = Vec::new();
         let mut totals = ContextBudgetTotals::new();
+        // One projected block: count it against the budget totals and record
+        // the plan entry, in one step. The arms that deliberately do *not*
+        // count against the totals (superseded todo snapshots, `OpEnded`
+        // bookkeeping) push their entries directly instead of calling this.
+        fn push(
+            totals: &mut ContextBudgetTotals,
+            entries: &mut Vec<ContextPlanEntry>,
+            source: ContextSource,
+            est_tokens: u32,
+            disposition: ContextDisposition,
+            note: &str,
+        ) {
+            totals.add(&disposition, est_tokens);
+            entries.push(ContextPlanEntry::new(source, est_tokens, disposition, note));
+        }
         let summaries = complete_summaries(log);
         let latest_todo_seq = log.iter().rev().find_map(|entry| match entry.record {
             Record::TodoList { .. } => Some(entry.seq),
@@ -640,13 +676,14 @@ impl TurnPolicy for StaticPolicy {
                 Role::System,
                 vec![ContentPart::Text(system.clone())],
             ));
-            totals.add(&disposition, 0);
-            entries.push(ContextPlanEntry::new(
+            push(
+                &mut totals,
+                &mut entries,
                 ContextSource::system(),
                 0,
                 disposition,
                 "static system prompt",
-            ));
+            );
         }
         for entry in log {
             if let Some(summary_seq) = covering_summary(&summaries, entry.seq) {
@@ -658,13 +695,14 @@ impl TurnPolicy for StaticPolicy {
                         est_tokens: 1,
                     }],
                 ));
-                totals.add(&disposition, 1);
-                entries.push(ContextPlanEntry::new(
+                push(
+                    &mut totals,
+                    &mut entries,
                     ContextSource::log_entry(entry.seq),
                     1,
                     disposition,
                     "source entry is covered by a durable summary",
-                ));
+                );
                 continue;
             }
             match &entry.record {
@@ -673,13 +711,14 @@ impl TurnPolicy for StaticPolicy {
                         Role::User,
                         vec![ContentPart::Text(text.clone())],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "static pass-through projection",
-                    ));
+                    );
                 }
                 Record::ModelOutput {
                     output, est_tokens, ..
@@ -698,13 +737,14 @@ impl TurnPolicy for StaticPolicy {
                     if !parts.is_empty() {
                         let disposition =
                             ContextDisposition::included(ContextBlock::new(Role::Assistant, parts));
-                        totals.add(&disposition, *est_tokens);
-                        entries.push(ContextPlanEntry::new(
+                        push(
+                            &mut totals,
+                            &mut entries,
                             ContextSource::log_entry(entry.seq),
                             *est_tokens,
                             disposition,
                             "static pass-through projection",
-                        ));
+                        );
                     }
                 }
                 Record::ToolResult {
@@ -720,13 +760,14 @@ impl TurnPolicy for StaticPolicy {
                             result: result.clone(),
                         }],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "static pass-through projection",
-                    ));
+                    );
                 }
                 Record::Summary {
                     text,
@@ -753,13 +794,14 @@ impl TurnPolicy for StaticPolicy {
                             text
                         ))],
                     ));
-                    totals.add(&disposition, *est_tokens_out);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens_out,
                         disposition,
                         "durable summary projection",
-                    ));
+                    );
                 }
                 Record::SkillActivated {
                     id,
@@ -780,13 +822,14 @@ impl TurnPolicy for StaticPolicy {
                             entry.seq.0
                         ))],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "active skill instructions from durable record",
-                    ));
+                    );
                 }
                 Record::Plan { text, est_tokens } => {
                     let disposition = ContextDisposition::included(ContextBlock::new(
@@ -796,13 +839,14 @@ impl TurnPolicy for StaticPolicy {
                             entry.seq.0, text
                         ))],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "accepted task plan from durable record",
-                    ));
+                    );
                 }
                 Record::TodoList { items, est_tokens } => {
                     if Some(entry.seq) != latest_todo_seq {
@@ -838,13 +882,14 @@ impl TurnPolicy for StaticPolicy {
                             rendered
                         ))],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "latest durable todo snapshot",
-                    ));
+                    );
                 }
                 Record::Hook {
                     phase,
@@ -859,13 +904,14 @@ impl TurnPolicy for StaticPolicy {
                             entry.seq.0, result
                         ))],
                     ));
-                    totals.add(&disposition, *est_tokens);
-                    entries.push(ContextPlanEntry::new(
+                    push(
+                        &mut totals,
+                        &mut entries,
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
                         "host hook result from durable record",
-                    ));
+                    );
                 }
                 // OpEnded entries are bookkeeping (timing/cost); they do not
                 // contribute to model context, but the plan still explains why
@@ -923,10 +969,16 @@ impl TurnPolicy for StaticPolicy {
     }
 
     fn capability_versioning(&self, capability: &str) -> Option<ToolVersioning> {
-        self.advertised_tools()
-            .into_iter()
-            .find(|tool| tool.name == capability)
-            .and_then(|tool| tool.versioning)
+        // This runs on every tool call, so look the tool up directly instead
+        // of cloning the whole advertised set (`advertised_tools`). Same
+        // lookup order: configured tools first, then skill-derived schemas.
+        if let Some(tool) = self.tools.iter().find(|tool| tool.name == capability) {
+            return tool.versioning.clone();
+        }
+        self.skills
+            .iter()
+            .find(|skill| skill.tool_name() == capability)
+            .and_then(|skill| skill.tool_schema().versioning)
     }
 }
 
@@ -1081,7 +1133,12 @@ fn default_compaction_target(log: &[LogEntry], plan: &ContextPlan) -> Option<Com
             if !matches!(entry.disposition, ContextDisposition::Included { .. }) {
                 return None;
             }
-            let record = log.iter().find(|candidate| candidate.seq == seq)?;
+            // The log is append-only and `seq`-ordered, so a binary search
+            // replaces what would otherwise be a linear scan per plan entry.
+            let record = log
+                .binary_search_by_key(&seq, |candidate| candidate.seq)
+                .ok()
+                .map(|index| &log[index])?;
             if !is_compactable_record(&record.record) {
                 return None;
             }

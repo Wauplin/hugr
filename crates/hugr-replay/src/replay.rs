@@ -21,7 +21,7 @@
 //! the session one event at a time, watching the commands each event produced
 //! and the log entries it appended.
 
-use hugr_core::{Brain, Command, Event, LogEntry, RoutingPolicy, StaticPolicy, TurnPolicy};
+use hugr_core::{Brain, Command, Event, LogEntry, RoutingPolicy, TurnPolicy, decode_policy};
 
 use crate::{Trace, TraceError};
 
@@ -44,35 +44,29 @@ pub struct Replay {
 /// on some of the policy's pure decisions (`needs_permission`, `is_background`)
 /// — so reconstructing the exact command/log sequence requires the *same*
 /// policy, not just the recorded events. If the trace captured its policy
-/// ([`Trace::with_policy`]), this decodes it as a [`StaticPolicy`]; otherwise it
+/// ([`Trace::with_policy`]), this decodes it via [`decode_policy`]; otherwise it
 /// falls back to the default. Use [`replay_with_policy`] to supply a custom one.
 pub fn replay(trace: &Trace) -> Replay {
     replay_with_policy(trace, policy_from_trace(trace))
 }
 
 /// Reconstruct the [`TurnPolicy`] a trace was recorded under: decode the
-/// captured [`RoutingPolicy`] / [`StaticPolicy`] config if present, else the default.
+/// captured [`RoutingPolicy`] / [`StaticPolicy`](hugr_core::StaticPolicy)
+/// config if present (via [`decode_policy`]), else the default.
 ///
 /// This is the policy a faithful replay (or **resume**, P3-4) must run under —
 /// the brain branches on the policy's pure decisions, so continuing a session
 /// requires the same policy the trace was recorded with. A trace with no
 /// captured policy (or one we can't decode) falls back to the default.
 pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
-    match &trace.policy {
-        Some(value) => {
-            if let Ok(policy) = serde_json::from_value::<RoutingPolicy>(value.clone()) {
-                return Box::new(policy);
-            }
-            match serde_json::from_value::<StaticPolicy>(value.clone()) {
-                Ok(policy) => Box::new(policy),
-                // A policy we can't decode (e.g. a custom host policy): fall
-                // back to the default rather than fail. The caller can supply
-                // the right policy via `replay_with_policy`.
-                Err(_) => Box::new(RoutingPolicy::default()),
-            }
-        }
-        None => Box::new(RoutingPolicy::default()),
-    }
+    trace
+        .policy
+        .as_ref()
+        .and_then(decode_policy)
+        // No captured policy, or one we can't decode (e.g. a custom host
+        // policy): fall back to the default rather than fail. The caller can
+        // supply the right policy via `replay_with_policy`.
+        .unwrap_or_else(|| Box::new(RoutingPolicy::default()))
 }
 
 /// Fold an ordered event stream into `brain`, draining and returning every
@@ -162,7 +156,7 @@ pub struct Inspector {
 
 impl Inspector {
     /// An inspector over a trace, using the policy the trace captured (or the
-    /// default [`StaticPolicy`] if none) — see [`replay`] for why the policy
+    /// default [`RoutingPolicy`] if none) — see [`replay`] for why the policy
     /// matters for faithful reconstruction.
     pub fn new(trace: &Trace) -> Self {
         Self::with_policy(trace, policy_from_trace(trace))

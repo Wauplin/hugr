@@ -109,7 +109,8 @@ impl Metrics {
 
 /// Read a provider-reported cost from `Usage.extra` (set by the adapter as
 /// `{ "cost": …, "cost_source": … }`, ARCHITECTURE §2.4 narrow waist).
-fn usage_cost(usage: &Usage) -> Option<f64> {
+/// Shared with [`crate::spend`], which folds the same field over the log.
+pub(crate) fn usage_cost(usage: &Usage) -> Option<f64> {
     usage.extra.get("cost").and_then(Value::as_f64)
 }
 

@@ -44,7 +44,7 @@ mod spend;
 pub use capability::{Capability, CapabilityRegistry, ChunkSink};
 pub use engine::{
     CheckpointCadence, Clock, CrashResumePolicy, Engine, EngineBuilder, EventSender,
-    TraceCompaction,
+    TraceCompaction, estimate_text_tokens,
 };
 pub use frontend::{Frontend, Metrics, StdoutFrontend};
 pub use mcp::{McpError, McpServerConfig, McpToolCapability};

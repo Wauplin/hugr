@@ -26,7 +26,8 @@ use hugr_host::capabilities::{
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
     Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, McpServerConfig,
-    Policy, Schedule, SkillBundle, SpendReport, StdoutFrontend, Trace, TriggerTarget, spend_report,
+    Policy, Schedule, SkillBundle, SpendReport, StdoutFrontend, Trace, TriggerTarget,
+    estimate_text_tokens, spend_report,
 };
 use hugr_providers::TierModelConfigSet;
 use serde::Deserialize;
@@ -572,11 +573,6 @@ fn skill_status(skills: &[SkillBundle]) -> Vec<SkillStatus> {
             summary: skill.summary.clone(),
         })
         .collect()
-}
-
-fn estimate_text_tokens(text: &str) -> u32 {
-    let bytes = text.len() as u64;
-    bytes.div_ceil(4).max(1).min(u32::MAX as u64) as u32
 }
 
 /// Print a startup banner to stderr, dimmed only on a real terminal (and not

@@ -36,7 +36,7 @@
 //! wasm-bindgen string intrinsics abort on non-wasm targets, so the tests
 //! exercise `Core`, never the wrapper).
 
-use hugr_core::{Brain, Command, Event, RoutingPolicy, StaticPolicy, TurnPolicy};
+use hugr_core::{Brain, Command, Event, TurnPolicy, decode_policy};
 use wasm_bindgen::prelude::*;
 
 /// The pure binding logic, target-independent and native-testable. Every method
@@ -47,8 +47,8 @@ pub struct Core {
 }
 
 impl Core {
-    /// Build from a JSON-serialized [`RoutingPolicy`] or legacy
-    /// [`StaticPolicy`] (see [`HugrBrain::new`]).
+    /// Build from a JSON-serialized [`RoutingPolicy`](hugr_core::RoutingPolicy)
+    /// or legacy [`StaticPolicy`](hugr_core::StaticPolicy) (see [`HugrBrain::new`]).
     pub fn from_policy_json(policy_json: &str) -> Result<Core, String> {
         let policy = policy_from_json(policy_json)?;
         Ok(Core {
@@ -56,7 +56,7 @@ impl Core {
         })
     }
 
-    /// Build with the default [`StaticPolicy`] (no tools, no permissions).
+    /// Build with the default [`StaticPolicy`](hugr_core::StaticPolicy) (no tools, no permissions).
     pub fn default_policy() -> Core {
         Core {
             inner: Brain::with_default_policy(),
@@ -95,7 +95,8 @@ impl Core {
 }
 
 /// A [`Brain`] wrapped for JavaScript. Construct one with a serialized
-/// [`RoutingPolicy`] / [`StaticPolicy`], then drive it with [`submit`](HugrBrain::submit) /
+/// [`RoutingPolicy`](hugr_core::RoutingPolicy) /
+/// [`StaticPolicy`](hugr_core::StaticPolicy), then drive it with [`submit`](HugrBrain::submit) /
 /// [`poll`](HugrBrain::poll) exactly as the native host's driver loop does.
 #[wasm_bindgen]
 pub struct HugrBrain {
@@ -104,7 +105,7 @@ pub struct HugrBrain {
 
 #[wasm_bindgen]
 impl HugrBrain {
-    /// Create a brain from a JSON-serialized [`RoutingPolicy`] — the same policy
+    /// Create a brain from a JSON-serialized [`RoutingPolicy`](hugr_core::RoutingPolicy) — the same policy
     /// the native [`EngineBuilder`](hugr_host) assembles (model selector,
     /// advertised tools, permissioned set, system prompt). The brain branches on
     /// the policy's pure decisions (`needs_permission`, `is_background`,
@@ -118,7 +119,7 @@ impl HugrBrain {
         Ok(HugrBrain { core })
     }
 
-    /// Create a brain with the default [`StaticPolicy`] (no tools, no
+    /// Create a brain with the default [`StaticPolicy`](hugr_core::StaticPolicy) (no tools, no
     /// permissions) — handy for a bare "chat only" host.
     #[wasm_bindgen(js_name = withDefaultPolicy)]
     pub fn with_default_policy() -> HugrBrain {
@@ -172,12 +173,14 @@ impl HugrBrain {
 }
 
 fn policy_from_json(policy_json: &str) -> Result<Box<dyn TurnPolicy>, String> {
-    if let Ok(policy) = serde_json::from_str::<RoutingPolicy>(policy_json) {
-        return Ok(Box::new(policy));
-    }
-    let policy: StaticPolicy =
+    let value: serde_json::Value =
         serde_json::from_str(policy_json).map_err(|e| format!("invalid policy JSON: {e}"))?;
-    Ok(Box::new(policy))
+    // The shared core decoder tries `RoutingPolicy`, then legacy `StaticPolicy`.
+    // Unlike the replay crate's default-policy fallback, an undecodable policy
+    // is a construction *error* here: the JS host must know its configuration
+    // was not applied (ARCHITECTURE §2.5).
+    decode_policy(&value)
+        .ok_or_else(|| "invalid policy JSON: not a RoutingPolicy or StaticPolicy".to_string())
 }
 
 /// The `hugr-wasm` version this binding was built from, exposed so the JS host

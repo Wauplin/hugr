@@ -76,14 +76,9 @@ impl OpenAiAdapter {
             std::env::var("HUGR_MODEL_MEDIUM").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         let base_url =
             std::env::var("HUGR_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-        Ok(Self {
-            client: reqwest::Client::new(),
-            api_key,
-            model,
-            base_url,
-            default_params: SamplingParams::default(),
-            max_attempts: DEFAULT_MAX_ATTEMPTS,
-        })
+        // `::new` is the single source of field defaults; only env-derived
+        // overrides are applied on top.
+        Ok(Self::new(api_key, model).with_base_url(base_url))
     }
 
     /// Override the base URL (for Azure / OpenAI-compatible gateways).
@@ -487,10 +482,16 @@ impl ModelAdapter for OpenAiAdapter {
             let bytes = chunk.context("error while streaming response")?;
             buf.extend_from_slice(&bytes);
 
-            // SSE is newline-delimited; process every complete line.
-            while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = buf.drain(..=pos).collect();
-                let line = String::from_utf8_lossy(&line);
+            // SSE is newline-delimited; process every complete line. Scan with
+            // a start offset and parse borrowed slices, then compact the buffer
+            // once per network chunk (avoids an O(buffer) drain per line).
+            let mut start = 0;
+            while let Some(rel) = buf[start..].iter().position(|&b| b == b'\n') {
+                let pos = start + rel;
+                // Borrows for valid UTF-8; allocates only for the rare invalid
+                // line (same lossy tolerance as before).
+                let line = String::from_utf8_lossy(&buf[start..pos]);
+                start = pos + 1;
                 let line = line.trim_end_matches(['\r', '\n']);
                 if let Some(data) = line.strip_prefix("data:") {
                     let data = data.trim();
@@ -502,6 +503,7 @@ impl ModelAdapter for OpenAiAdapter {
                     }
                 }
             }
+            buf.drain(..start);
         }
 
         Ok(acc.finish(sink))
