@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use hugr_docs::{DocsConfig, answer_question};
+use hugr_docs::{DocsConfigOptions, answer_with_options};
 
 #[derive(Parser)]
 #[command(
@@ -30,10 +30,14 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let question = cli.question.join(" ");
-    anyhow::ensure!(!question.trim().is_empty(), "question cannot be empty");
-
-    let config = DocsConfig::from_env(cli.docs_path.clone(), cli.model.clone())?;
-    let answer = answer_question(config, &question).await?;
+    let mut options = DocsConfigOptions::new();
+    if let Some(model) = cli.model.clone() {
+        options = options.with_model(model);
+    }
+    // `answer_with_options` swallows every failure (bad API key, missing docs
+    // root, model produced no final answer, …) into a `"status": "error"` JSON
+    // object so stdout always carries a parseable result and exit stays 0.
+    let answer = answer_with_options(cli.docs_path, options, &question).await?;
     if cli.pretty {
         println!("{}", serde_json::to_string_pretty(&answer)?);
     } else {

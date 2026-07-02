@@ -15,7 +15,8 @@ Output shape:
 
 ```json
 {
-  "answer": "By default, you'll be watching all the organizations you are a member of, and will be notified of any new activity on those.",
+  "status": "success",
+  "message": "By default, you'll be watching all the organizations you are a member of, and will be notified of any new activity on those.",
   "related_documents": ["hub/notifications.md"],
   "metadata": {
     "model": "google/gemma-4-31B-it:cerebras",
@@ -34,13 +35,19 @@ Output shape:
 }
 ```
 
+`status` is a string enum with three values, all still emitted as a single JSON object on stdout with exit code `0`:
+
+- `"success"` — the model produced an answer.
+- `"off_topic"` — the docs did not contain enough evidence; `message` is the `It is not possible to find an answer in the docs.` phrase.
+- `"error"` — an error stopped the run before a final answer (bad API key, missing docs root, the model never returned a final answer, a provider/transport failure, …); `message` is the error text.
+
 Use `--pretty` to pretty-print the JSON and `--model <id>` to override the model for a single run.
 
-The final JSON object is the only stdout output. Operational logs, model/tool lifecycle events, streamed model chunks, and errors are written to stderr so stdout remains safe to pipe into `jq`.
+The final JSON object is the only stdout output and the CLI always exits `0`, so stdout remains safe to pipe into `jq` and the Python binding never raises for a run failure. Operational logs, model/tool lifecycle events, streamed model chunks, and errors are written to stderr.
 
 ## Python binding
 
-The crate also builds a Python extension module with one method, `hugr_docs.answer(question, docs_path=None, api_key=None, base_url=None, model=None, input_usd_per_m_tokens=None, output_usd_per_m_tokens=None)`, returning a Python `dict` with the same `answer`, `related_documents`, and `metadata` fields emitted by the CLI.
+The crate also builds a Python extension module with one method, `hugr_docs.answer(question, docs_path=None, api_key=None, base_url=None, model=None, input_usd_per_m_tokens=None, output_usd_per_m_tokens=None)`, returning a Python `dict` with the same `status`, `message`, `related_documents`, and `metadata` fields emitted by the CLI. The binding never raises for a run failure — config errors, missing docs roots, and model/transport failures all come back as `{"status": "error", "message": "<error>", ...}` so callers can branch on `result["status"]` without a `try`/`except`.
 
 Build or install it with maturin from this directory:
 
@@ -63,7 +70,10 @@ result = hugr_docs.answer(
     input_usd_per_m_tokens=1.0,
     output_usd_per_m_tokens=1.5,
 )
-print(result["answer"])
+if result["status"] == "success":
+    print(result["message"])
+else:
+    print(result["status"], ":", result["message"])
 print(result["metadata"])
 ```
 
@@ -106,8 +116,8 @@ Each tool canonicalizes paths and rejects anything outside the folder passed as 
 
 The system prompt instructs the model to use only the docs tools, decompose compound questions into facets, gather evidence for every facet, and finish with a JSON object containing `answer` and `related_documents`. If the docs do not contain enough evidence, it must answer: `It is not possible to find an answer in the docs.`
 
-The CLI always emits valid JSON even if the final model text is imperfect: it parses fenced or raw JSON when possible, otherwise wraps the text as `answer`; related documents are sanitized, limited to non-index documents actually read during the run, and fall back to the full non-index read set when needed.
+The CLI always emits a single valid JSON object with `status`, `message`, `related_documents`, and `metadata`, and always exits `0`. `status` is `"success"` only when the model produced a real answer; it is `"off_topic"` when the model emitted the not-found phrase and `"error"` when an error stopped the run (in which case `message` is the error text). Even when the final model text is imperfect, it parses fenced or raw JSON when possible and otherwise wraps the text as `message`; related documents are sanitized, limited to non-index documents actually read during the run, and fall back to the full non-index read set when needed.
 
 ## Troubleshooting
 
-If the run fails before a final answer, the CLI reports the recorded terminal model/tool error. Common causes are an invalid `HUGR_DOCS_API_KEY`, a `HUGR_DOCS_BASE_URL` that is not OpenAI-compatible, or a model that does not support function/tool calling.
+When an error stops a run (invalid `HUGR_DOCS_API_KEY`, a `HUGR_DOCS_BASE_URL` that is not OpenAI-compatible, a model that does not support function/tool calling, a missing docs root, or the model never returning a final answer), the CLI still prints a single JSON object with `"status": "error"` and the error text in `message`, and exits `0`. The recorded terminal model/tool error is surfaced there. Operational logs remain on stderr.

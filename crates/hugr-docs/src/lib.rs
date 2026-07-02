@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use hugr_core::{
-    ModelSelector, OpMeta, OpOutcome, Record, SamplingParams, ToolSchema, Value,
-};
+use hugr_core::{ModelSelector, OpMeta, OpOutcome, Record, SamplingParams, ToolSchema, Value};
 use hugr_host::{Capability, ChunkSink, Engine, Frontend, estimate_text_tokens, policy::AllowAll};
 use hugr_providers::OpenAiAdapter;
 use serde::{Deserialize, Serialize};
@@ -32,6 +30,12 @@ const MAX_RANGE_LINES: usize = 5_000;
 const MAX_BATCH_READS: usize = 50;
 const DEFAULT_OUTLINE_MAX_DOCUMENTS: usize = 100;
 const DEFAULT_OUTLINE_MAX_HEADINGS: usize = 1_000;
+
+/// Exact phrasing the system prompt tells the model to emit when the docs do not
+/// contain enough evidence. `build_answer` matches this (case-insensitively, after
+/// trim) to mark a run [`DocsStatus::OffTopic`] while still surfacing the phrase
+/// as `message`.
+pub const NOT_FOUND_MESSAGE: &str = "It is not possible to find an answer in the docs.";
 
 pub const SYSTEM_PROMPT: &str = "\
 You are a documentation retrieval agent. Answer the user's question using only the documentation available through the provided read-only tools. Start by using docs_search, docs_list, or docs_outline to plan retrieval, then read every source document needed to support the answer. Decompose compound questions into facets and gather evidence for every facet before answering; if a question asks about multiple concepts, comparisons, constraints, or how mechanisms differ, do not stop after the first relevant document. Prefer docs_read_many or docs_read_range_many when several sources look relevant. AI_INDEX.md files are navigation aids only: use them to decide what to read, but never cite them as related documents. If the docs do not contain enough evidence for any facet, say what cannot be found in the docs instead of filling gaps from prior knowledge. Do not use prior knowledge. Your final response must be a single JSON object with exactly these fields: answer (string) and related_documents (array of document paths relative to the docs root, excluding AI_INDEX.md).";
@@ -164,6 +168,23 @@ fn parse_env_f64(name: &str, default: f64) -> Result<f64> {
 }
 
 pub async fn answer_question(config: DocsConfig, question: &str) -> Result<DocsAnswer> {
+    let started = Instant::now();
+    match answer_question_inner(&config, question, started).await {
+        Ok(answer) => Ok(answer),
+        Err(error) => Ok(failure_answer(
+            &config.model,
+            &config.base_url,
+            started.elapsed(),
+            error.to_string(),
+        )),
+    }
+}
+
+async fn answer_question_inner(
+    config: &DocsConfig,
+    question: &str,
+    started: Instant,
+) -> Result<DocsAnswer> {
     anyhow::ensure!(!question.trim().is_empty(), "question cannot be empty");
     let docs = DocsRoot::new(&config.root)?;
     let selector = ModelSelector::named("docs");
@@ -183,12 +204,38 @@ pub async fn answer_question(config: DocsConfig, question: &str) -> Result<DocsA
     }
 
     let mut engine = builder.build();
-    let started = Instant::now();
     engine.user_turn(user_prompt(question)).await;
     engine.session_end();
 
-    build_answer(engine.brain().state().log(), &config, started.elapsed())
+    build_answer(engine.brain().state().log(), config, started.elapsed())
         .context("building JSON answer from Hugr session")
+}
+
+/// Build a docs answer from raw inputs, swallowing every error into a
+/// [`DocsStatus::Error`] [`DocsAnswer`] so callers (notably the Python binding)
+/// always receive a uniform result dict and never have to catch process failures.
+///
+/// Config-build failures (missing API key, bad price, …) are reported with the
+/// default model/endpoint in `metadata`; everything else is reported with the
+/// resolved config. This is the entry point the CLI and Python binding use.
+pub async fn answer_with_options(
+    root: PathBuf,
+    options: DocsConfigOptions,
+    question: &str,
+) -> Result<DocsAnswer> {
+    let started = Instant::now();
+    let config = match DocsConfig::from_options(root, options) {
+        Ok(config) => config,
+        Err(error) => {
+            return Ok(failure_answer(
+                DEFAULT_MODEL,
+                DEFAULT_BASE_URL,
+                started.elapsed(),
+                error.to_string(),
+            ));
+        }
+    };
+    answer_question(config, question).await
 }
 
 #[derive(Clone, Debug)]
@@ -1125,9 +1172,29 @@ fn strip_json_fence(text: &str) -> &str {
     rest.strip_suffix("```").unwrap_or(rest).trim()
 }
 
+/// The outcome of a docs-retrieval run, serialized as a lowercase string so the
+/// Python side can branch on `result["status"]` instead of guessing from `bool`.
+///
+/// - [`DocsStatus::Success`] — `success`: the model produced a real answer.
+/// - [`DocsStatus::OffTopic`] — `off_topic`: the docs lacked evidence; the model
+///   emitted [`NOT_FOUND_MESSAGE`] and `message` carries that phrase.
+/// - [`DocsStatus::Error`] — `error`: an error stopped the run before a final
+///   answer; `message` carries the error text.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocsStatus {
+    Success,
+    OffTopic,
+    Error,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DocsAnswer {
-    pub answer: String,
+    /// See [`DocsStatus`].
+    pub status: DocsStatus,
+    /// The answer on success; the [`NOT_FOUND_MESSAGE`] phrasing when the docs
+    /// lacked evidence; the error message/stacktrace when an error stopped the run.
+    pub message: String,
     pub related_documents: Vec<String>,
     pub metadata: RunMetadata,
 }
@@ -1153,19 +1220,36 @@ pub fn build_answer(
     config: &DocsConfig,
     elapsed: Duration,
 ) -> Result<DocsAnswer> {
-    let final_text = log
-        .iter()
-        .rev()
-        .find_map(|entry| match &entry.record {
-            Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {
-                Some(output.text.as_str())
-            }
-            _ => None,
-        })
-        .ok_or_else(|| missing_final_answer_error(log))?;
-    let payload = AnswerPayload::from_model_text(final_text);
-    let read = read_document_sets(log);
-    let related_documents = sanitize_related_documents(payload.related_documents, &read.documents);
+    build_answer_with_reads(log, config, elapsed, ReadSets::default())
+}
+
+/// Build a `DocsAnswer` from a finished Hugr session.
+///
+/// Three outcomes, all returned as `Ok(DocsAnswer)` so the Python binding can
+/// surface every case through `status`/`message` instead of raising:
+///
+/// - real answer → [`DocsStatus::Success`], `message` = the answer.
+/// - model emitted [`NOT_FOUND_MESSAGE`] → [`DocsStatus::OffTopic`], `message`
+///   = that phrase.
+/// - no final model text (error stopped the run) → [`DocsStatus::Error`],
+///   `message` = the recorded terminal error (or a fallback summary),
+///   `related_documents` and token/usage metadata are still populated from
+///   whatever the log holds.
+///
+/// `read_override` lets callers inject the read-document set (used when a
+/// pre-amble error happens before the run produces any reads); pass
+/// [`ReadSets::default()`] for the normal path.
+fn build_answer_with_reads(
+    log: &[hugr_core::LogEntry],
+    config: &DocsConfig,
+    elapsed: Duration,
+    read_override: ReadSets,
+) -> Result<DocsAnswer> {
+    let read = if read_override.documents.is_empty() && read_override.indexes.is_empty() {
+        read_document_sets(log)
+    } else {
+        read_override
+    };
     let (tokens_in, tokens_out, model_calls, tool_calls) = usage_totals(log);
     let estimated_cost_micro_usd = estimate_cost_micro_usd(
         tokens_in,
@@ -1173,29 +1257,86 @@ pub fn build_answer(
         config.input_usd_per_m_tokens,
         config.output_usd_per_m_tokens,
     );
+    let metadata = RunMetadata {
+        model: config.model.clone(),
+        endpoint: config.base_url.clone(),
+        elapsed_ms: elapsed.as_millis(),
+        tokens_in,
+        tokens_out,
+        estimated_cost_micro_usd,
+        input_usd_per_m_tokens: config.input_usd_per_m_tokens,
+        output_usd_per_m_tokens: config.output_usd_per_m_tokens,
+        model_calls,
+        tool_calls,
+        read_documents: read.documents.len(),
+        read_indexes: read.indexes.len(),
+    };
+
+    let final_text = log.iter().rev().find_map(|entry| match &entry.record {
+        Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {
+            Some(output.text.as_str())
+        }
+        _ => None,
+    });
+
+    let Some(final_text) = final_text else {
+        return Ok(DocsAnswer {
+            status: DocsStatus::Error,
+            message: missing_final_answer_message(log),
+            related_documents: sanitize_related_documents(Vec::new(), &read.documents),
+            metadata,
+        });
+    };
+
+    let payload = AnswerPayload::from_model_text(final_text);
+    let related_documents = sanitize_related_documents(payload.related_documents, &read.documents);
+    let status = if is_not_found_message(&payload.answer) {
+        DocsStatus::OffTopic
+    } else {
+        DocsStatus::Success
+    };
     Ok(DocsAnswer {
-        answer: payload.answer,
+        status,
+        message: payload.answer,
         related_documents,
-        metadata: RunMetadata {
-            model: config.model.clone(),
-            endpoint: config.base_url.clone(),
-            elapsed_ms: elapsed.as_millis(),
-            tokens_in,
-            tokens_out,
-            estimated_cost_micro_usd,
-            input_usd_per_m_tokens: config.input_usd_per_m_tokens,
-            output_usd_per_m_tokens: config.output_usd_per_m_tokens,
-            model_calls,
-            tool_calls,
-            read_documents: read.documents.len(),
-            read_indexes: read.indexes.len(),
-        },
+        metadata,
     })
 }
 
-fn missing_final_answer_error(log: &[hugr_core::LogEntry]) -> anyhow::Error {
+fn is_not_found_message(text: &str) -> bool {
+    text.trim().eq_ignore_ascii_case(NOT_FOUND_MESSAGE)
+}
+
+/// Construct a [`DocsStatus::Error`] answer for a process error that stopped the
+/// run before a final model answer (config build failure, docs root missing,
+/// engine panic, …). The error text lands in `message`; metadata is populated
+/// with the resolved model/endpoint and a zeroed spend because no tokens were
+/// consumed.
+fn failure_answer(model: &str, endpoint: &str, elapsed: Duration, message: String) -> DocsAnswer {
+    DocsAnswer {
+        status: DocsStatus::Error,
+        message,
+        related_documents: Vec::new(),
+        metadata: RunMetadata {
+            model: model.to_string(),
+            endpoint: endpoint.to_string(),
+            elapsed_ms: elapsed.as_millis(),
+            tokens_in: 0,
+            tokens_out: 0,
+            estimated_cost_micro_usd: 0,
+            input_usd_per_m_tokens: 0.0,
+            output_usd_per_m_tokens: 0.0,
+            model_calls: 0,
+            tool_calls: 0,
+            read_documents: 0,
+            read_indexes: 0,
+        },
+    }
+}
+
+fn missing_final_answer_message(log: &[hugr_core::LogEntry]) -> String {
     if let Some(message) = last_terminal_error(log) {
-        return anyhow!("model did not produce a final answer; {message}");
+        return format!("model did not produce a final answer; {message}");
     }
     let model_outputs = log
         .iter()
@@ -1205,7 +1346,7 @@ fn missing_final_answer_error(log: &[hugr_core::LogEntry]) -> anyhow::Error {
         .iter()
         .filter(|entry| matches!(entry.record, Record::ToolResult { .. }))
         .count();
-    anyhow!(
+    format!(
         "model did not produce a final answer; log contains {model_outputs} model output(s) and {tool_results} tool result(s)"
     )
 }
@@ -1358,7 +1499,7 @@ fn usage_totals(log: &[hugr_core::LogEntry]) -> (u64, u64, usize, usize) {
 
 pub fn user_prompt(question: &str) -> String {
     format!(
-        "Question: {question}\n\nBefore answering, make sure each distinct part of the question is backed by at least one read non-index document. Return only the final JSON object after using the docs tools. If the answer is absent from the docs, use this answer exactly: \"It is not possible to find an answer in the docs.\""
+        "Question: {question}\n\nBefore answering, make sure each distinct part of the question is backed by at least one read non-index document. Return only the final JSON object after using the docs tools. If the answer is absent from the docs, use this answer exactly: \"{NOT_FOUND_MESSAGE}\""
     )
 }
 
@@ -1369,7 +1510,7 @@ pub fn prompt_est_tokens(question: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hugr_core::{LogEntry, OpId, Seq, Timestamp};
+    use hugr_core::{LogEntry, ModelOutput, OpId, Seq, Timestamp};
 
     #[test]
     fn parses_json_from_fenced_model_text() {
@@ -1454,8 +1595,135 @@ mod tests {
             }))
             .unwrap(),
         }];
-        let message = missing_final_answer_error(&log).to_string();
+        let message = missing_final_answer_message(&log);
         assert!(message.contains("model operation 7 failed: provider rejected tools"));
+    }
+
+    fn test_config() -> DocsConfig {
+        DocsConfig {
+            root: PathBuf::from("/docs"),
+            model: "provider/model".to_string(),
+            base_url: "https://example.test/v1".to_string(),
+            api_key: "key".to_string(),
+            input_usd_per_m_tokens: 1.0,
+            output_usd_per_m_tokens: 1.5,
+            sampling: SamplingParams::new().with_temperature(0.0),
+        }
+    }
+
+    fn model_output_entry(seq: u64, text: &str) -> LogEntry {
+        LogEntry {
+            seq: Seq(seq),
+            at: Timestamp(seq),
+            record: Record::ModelOutput {
+                op: OpId(seq),
+                output: ModelOutput::text(text.to_string()),
+                est_tokens: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn build_answer_success_for_real_answer() {
+        let log = vec![model_output_entry(
+            0,
+            "```json\n{\"answer\":\"A\",\"related_documents\":[]}\n```",
+        )];
+        let config = test_config();
+        let answer = build_answer(&log, &config, Duration::from_millis(10)).unwrap();
+        assert_eq!(answer.status, DocsStatus::Success);
+        assert_eq!(answer.message, "A");
+        assert!(answer.related_documents.is_empty());
+        assert_eq!(answer.metadata.model, "provider/model");
+        assert_eq!(answer.metadata.model_calls, 0);
+    }
+
+    #[test]
+    fn build_answer_off_topic_for_not_found_phrase() {
+        let log = vec![model_output_entry(
+            0,
+            "```json\n{\"answer\":\"It is not possible to find an answer in the docs.\",\"related_documents\":[]}\n```",
+        )];
+        let config = test_config();
+        let answer = build_answer(&log, &config, Duration::from_millis(10)).unwrap();
+        assert_eq!(answer.status, DocsStatus::OffTopic);
+        assert_eq!(answer.message, NOT_FOUND_MESSAGE);
+    }
+
+    #[test]
+    fn build_answer_error_for_missing_final_answer() {
+        let log = vec![LogEntry {
+            seq: Seq(0),
+            at: Timestamp(0),
+            record: serde_json::from_value(json!({
+                "OpEnded": {
+                    "op": 7,
+                    "outcome": { "Error": { "message": "provider rejected tools" } },
+                    "meta": {
+                        "started_at": 0,
+                        "ended_at": 1,
+                        "model": { "Named": "docs" },
+                        "usage": null,
+                        "extra": null
+                    }
+                }
+            }))
+            .unwrap(),
+        }];
+        let config = test_config();
+        let answer = build_answer(&log, &config, Duration::from_millis(10)).unwrap();
+        assert_eq!(answer.status, DocsStatus::Error);
+        assert!(
+            answer
+                .message
+                .contains("model operation 7 failed: provider rejected tools"),
+            "message was: {}",
+            answer.message
+        );
+        assert!(answer.related_documents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn answer_with_options_surfaces_config_error_as_failure() {
+        // A NaN token price is an unambiguous config-validation failure
+        // (independent of any HUGR_DOCS_* env the test process may inherit).
+        // The call still returns Ok with status=error and the error in `message`.
+        let answer = answer_with_options(
+            PathBuf::from("/does/not/exist"),
+            DocsConfigOptions::new()
+                .with_api_key("key")
+                .with_input_usd_per_m_tokens(f64::NAN),
+            "any question",
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer.status, DocsStatus::Error);
+        assert!(answer.message.contains("token price"));
+        assert_eq!(answer.metadata.model, DEFAULT_MODEL);
+        assert!(answer.related_documents.is_empty());
+    }
+
+    #[test]
+    fn docs_status_serializes_as_snake_case_strings() {
+        // The Python side branches on `result["status"]`; pin the exact strings
+        // so a serde-attribute change can't silently break the contract.
+        assert_eq!(
+            serde_json::to_string(&DocsStatus::Success).unwrap(),
+            "\"success\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DocsStatus::OffTopic).unwrap(),
+            "\"off_topic\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DocsStatus::Error).unwrap(),
+            "\"error\""
+        );
+        // And round-trips back.
+        assert_eq!(
+            serde_json::from_str::<DocsStatus>("\"off_topic\"").unwrap(),
+            DocsStatus::OffTopic
+        );
     }
 
     #[test]
