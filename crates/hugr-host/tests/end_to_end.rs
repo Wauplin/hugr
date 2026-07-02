@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use hugr_core::{
     ContentPart, ContextDisposition, DoneReason, HookPhase, ModelOutput, ModelRequest,
-    ModelSelector, OpOutcome, OutputEvent, Record, ToolCall, ToolSchema, Usage, Value,
+    ModelSelector, OpOutcome, OutputEvent, Record, Role, ToolCall, ToolSchema, Usage, Value,
 };
 use hugr_host::capabilities::Shell;
 use hugr_host::mcp::{self, McpServerConfig};
@@ -127,7 +127,7 @@ async fn builtin_pre_tool_and_stop_hooks_are_recorded_in_trace() {
         ModelOutput::text("done"),
     ]);
     let mut engine = Engine::builder()
-        .model(ModelSelector::named("medium"), model)
+        .model(ModelSelector::named("medium"), model.clone())
         .capability(Arc::new(Shell))
         .policy(Arc::new(AllowAll))
         .clock(deterministic_clock())
@@ -150,6 +150,25 @@ async fn builtin_pre_tool_and_stop_hooks_are_recorded_in_trace() {
     assert!(hooks.contains(&(HookPhase::PreTool, "builtin_pre_tool".to_string())));
     assert!(hooks.contains(&(HookPhase::PostTool, "builtin_post_tool".to_string())));
     assert!(hooks.contains(&(HookPhase::Stop, "builtin_stop".to_string())));
+
+    let requests = model.requests.lock().unwrap();
+    let followup = requests.get(1).expect("follow-up model request");
+    let assistant_idx = followup
+        .blocks
+        .iter()
+        .position(|block| {
+            block.role == Role::Assistant
+                && block
+                    .content
+                    .iter()
+                    .any(|part| matches!(part, ContentPart::ToolUse { id, .. } if id == "call-1"))
+        })
+        .expect("assistant tool-call block");
+    assert_eq!(followup.blocks[assistant_idx + 1].role, Role::Tool);
+    assert!(matches!(
+        followup.blocks[assistant_idx + 1].content.as_slice(),
+        [ContentPart::ToolResult { id, .. }] if id == "call-1"
+    ));
 }
 
 fn python3_available() -> bool {

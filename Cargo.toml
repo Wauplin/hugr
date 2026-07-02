@@ -5,6 +5,7 @@ members = [
     "crates/hugr-host",
     "crates/hugr-providers",
     "crates/hugr-cli",
+    "crates/hugr-docs",
     "crates/hugr-replay",
     "crates/hugr-plugin-abi",
     "crates/hugr-example-plugin",
@@ -18,7 +19,9 @@ members = [
 # trace format); Phase 5 adds `hugr-plugin-abi` (the versioned plugin contract +
 # subprocess transport) and `hugr-example-plugin` (a standalone example plugin);
 # Phase 4 adds `hugr-wasm` (the browser/JS binding — the same brain compiled to
-# WASM, driving a Chrome extension with no backend). Phase 6 (sub-agents & forks)
+# WASM, driving a Chrome extension with no backend). `hugr-docs` is a specialized
+# read-only retrieval host that showcases the same core with a different CLI and
+# capability set. Phase 6 (sub-agents & forks)
 # is entirely inside hugr-core + hugr-host. All host crates may touch IO (or,
 # for hugr-wasm, the JS host does); never `hugr-core`.
 

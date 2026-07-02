@@ -416,6 +416,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hugr-docs"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "hugr-core",
+ "hugr-host",
+ "hugr-providers",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hugr-example-plugin"
 version = "0.0.0"
 dependencies = [

@@ -61,6 +61,7 @@ crates/
                        #   ModelAdapter traits, shell/fs/http, policy, front-end.
   hugr-providers/     # model adapters — OpenAI chat completions (streaming).
   hugr-cli/           # the `hugr` showcase binary.
+  hugr-docs/          # specialized read-only docs retrieval CLI.
   hugr-replay/        # versioned, portable trace format + replay/inspect + blobs.
   hugr-plugin-abi/    # versioned plugin contract + subprocess (stdio) transport.
   hugr-example-plugin/# a standalone third-party plugin (no Hugr dependency).
@@ -120,6 +121,17 @@ Example config:
 > The model must support **function calling**, since hugr always advertises its tools. Small models that don't (e.g. some 8B instruct variants) return `model features function calling not support`.
 
 The engine setup is ~10 lines on top of `hugr-host` (see the marked block in [`crates/hugr-cli/src/main.rs`](crates/hugr-cli/src/main.rs)).
+
+## Docs retrieval showcase
+
+`hugr-docs` is a specialized host built on the same brain, but with a different CLI and a deliberately narrow read-only tool set for listing, searching, reading whole docs, reading line ranges, batched reads, and markdown-style outlines, all scoped to the folder passed on the command line. It has no shell, no write/edit tools, no interactive mode, and always emits JSON.
+
+```bash
+export HUGR_DOCS_API_KEY=...
+cargo run -p hugr-docs -- ./archive-light-2026-07-01 "Which repositories do I watch by default?" | jq
+```
+
+See [`crates/hugr-docs/README.md`](crates/hugr-docs/README.md) for the output schema and crate-specific environment variables.
 
 ## Running in the browser (Chrome extension)
 

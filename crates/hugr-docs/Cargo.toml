@@ -1,0 +1,23 @@
+[package]
+name = "hugr-docs"
+description = "A read-only Hugr docs retrieval CLI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "hugr-docs"
+path = "src/main.rs"
+
+[dependencies]
+hugr-core = { workspace = true }
+hugr-host = { workspace = true }
+hugr-providers = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

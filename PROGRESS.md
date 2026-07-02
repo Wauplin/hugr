@@ -2,6 +2,24 @@
 
 Running log of what's implemented, phase by phase (see `docs/ROADMAP.md`).
 
+## Docs retrieval showcase — `hugr-docs` ✅
+
+Done:
+
+- Added `crates/hugr-docs`, a specialized Rust CLI host that answers a single question from a docs folder and prints one JSON object with `answer`, `related_documents`, and run metadata.
+- The crate reuses `hugr-core`, `hugr-host`, and the OpenAI-compatible streaming adapter, but does not build on `hugr-cli`; it wires its own system prompt, single logical model selector, no-op JSON frontend, and crate-specific `HUGR_DOCS_*` environment variables.
+- Tooling is deliberately read-only and scoped to the provided folder: `docs_list`, `docs_search`, `docs_read`, `docs_read_range`, `docs_read_many`, `docs_read_range_many`, and `docs_outline`. Paths are canonicalized and rejected if they escape the docs root; there is no shell, no write/edit tool, and no permission-mode option because registered docs tools are non-mutating.
+- Added range, batched, and outline docs retrieval helpers so the model can inspect specific line windows, fetch several known source files in one call, and navigate markdown-style headings without semantic indexes or metadata search.
+- Final output post-processing parses the model's JSON answer, filters `AI_INDEX.md` out of related documents, falls back to non-index files actually read when needed, and computes metadata including elapsed time, model, endpoint, model/tool calls, token totals, read document counts, and estimated cost in microUSD using configurable per-million-token prices.
+- Fixed the model follow-up transcript after docs tool calls: `hugr-core` projection now renders matching `ToolResult` blocks immediately after the assistant `tool_calls` block even when durable host hooks were logged between the call and result, preserving the append-only log while satisfying strict OpenAI-compatible providers such as the Hugging Face router.
+- Added `crates/hugr-docs/README.md` and updated workspace/architecture docs to include the new showcase host.
+
+Tests:
+
+- `hugr-docs` unit tests cover fenced JSON answer parsing, related-document filtering/fallback, docs-root path-escape rejection, line-range reads, batched partial successes, markdown-style outline extraction, and read-document accounting for the expanded tool set.
+- Regression coverage pins tool-call/result adjacency in `crates/hugr-core/tests/scripted_session.rs::tool_results_are_projected_adjacent_to_tool_calls_even_with_hooks_between` and the real host hook path in `crates/hugr-host/tests/end_to_end.rs::builtin_pre_tool_and_stop_hooks_are_recorded_in_trace`.
+- Verification run: `cargo test -p hugr-core -q`; `cargo test -p hugr-host -q`; `cargo test -p hugr-providers -q`; `cargo test -p hugr-docs -q`.
+
 ## Branding rename — Hugr ✅
 
 The project branding now uses Hugr across the workspace, keeping only the repository root directory unchanged. Crate directories, package names, Rust crate imports, CLI binary/help text, env var docs, browser extension metadata, generated WASM glue, tests, and design/progress docs now use the `hugr-*` / `hugr_*` / `Hugr` naming scheme from `docs/BRANDING.md`. Verification: `cargo check --workspace`, `cargo test`, `cargo clippy --all-targets`, `cargo tree -p hugr-core`, and `./crates/hugr-wasm/build-extension.sh`.

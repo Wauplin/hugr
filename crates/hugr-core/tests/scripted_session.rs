@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use common::*;
 use hugr_core::{
     Brain, Command, ContentPart, ContextDisposition, ContextPlan, ContextSource, DoneReason, Event,
-    LogEntry, ModelSelector, OpId, Record, RoutingInputs, RoutingPhase, RoutingPolicy, Seq,
+    LogEntry, ModelSelector, OpId, Record, Role, RoutingInputs, RoutingPhase, RoutingPolicy, Seq,
     SeqRange, SkillDescriptor, StaticPolicy, SummaryCoverage, Timestamp, TokenBudget, ToolRisk,
     ToolSchema, ToolVersioning, TurnPolicy, VersionRef,
 };
@@ -79,6 +79,64 @@ fn user_model_tool_model_done() {
         })
         .collect();
     assert_eq!(tokens, vec![1, 1, 1, 1]);
+}
+
+#[test]
+fn tool_results_are_projected_adjacent_to_tool_calls_even_with_hooks_between() {
+    let mut brain = Brain::with_default_policy();
+
+    let commands = run_script(
+        &mut brain,
+        vec![
+            user("list the files"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("call-1", "shell", json!({ "cmd": "ls" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::HookFired {
+                phase: hugr_core::HookPhase::PreTool,
+                name: "builtin_pre_tool".to_string(),
+                result: json!({ "op": 1, "capability": "shell" }),
+                est_tokens: 1,
+            },
+            Event::CapabilityDone {
+                op: OpId(1),
+                result: json!({ "stdout": "a.txt\nb.txt" }),
+                version: None,
+                est_tokens: 1,
+            },
+        ],
+    );
+
+    let followup = commands
+        .iter()
+        .rev()
+        .filter_map(|cmd| match cmd {
+            Command::StartModelCall { request, .. } => Some(request),
+            _ => None,
+        })
+        .next()
+        .expect("follow-up model request");
+
+    let roles: Vec<Role> = followup.blocks.iter().map(|block| block.role).collect();
+    assert_eq!(roles[..3], [Role::User, Role::Assistant, Role::Tool]);
+    assert!(matches!(
+        followup.blocks[1].content.as_slice(),
+        [ContentPart::ToolUse { id, .. }] if id == "call-1"
+    ));
+    assert!(matches!(
+        followup.blocks[2].content.as_slice(),
+        [ContentPart::ToolResult { id, .. }] if id == "call-1"
+    ));
+    assert!(
+        followup
+            .blocks
+            .iter()
+            .skip(3)
+            .any(|block| matches!(block.role, Role::System))
+    );
 }
 
 #[test]

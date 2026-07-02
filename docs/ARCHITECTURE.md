@@ -203,6 +203,7 @@ pub trait TurnPolicy {
 `ContextPlan` carries one entry per source block with its disposition (`Included`, `Referenced`, `Summarized`, or `Omitted`), a reason, the recorded token estimate, budget totals, and cache hints. The reducer derives `ModelRequest` from the plan by rendering only included/referenced/summarized entries. Projection decides, per block, whether to include verbatim, summarize, evict-to-reference, or drop. Crucially:
 
 - **Evicted content is referenced, not deleted.** A large tool output becomes `{ ref: "op:8", summary: "...", tokens: 12000 }` in context, with the full bytes still in the log (or a content-addressed blob store, §3.3). It can be rehydrated on demand.
+- **Tool-call transcripts stay provider-valid.** The log may contain host hook records or op metadata between a model `tool_calls` output and the matching durable `ToolResult`; projection renders the matching tool-result blocks immediately after the originating assistant tool-call block, then marks the later log-position tool result as already represented. This preserves the append-only source of truth while satisfying strict OpenAI-compatible chat formats.
 - Compaction is a *projection choice*, never mutation of the log. Nothing is ever lost.
 
 ### 3.3 Large payloads: content-addressed blobs
@@ -568,6 +569,7 @@ hugr-providers    # Anthropic/OpenAI/... adapters (host-side, behind features).
 hugr-host         # default native host: tokio driver, reqwest, shell/fs/http
                    # capabilities, disk blob store, interactive policy.
 hugr-cli          # the batteries-included showcase CLI (≈ thin wrapper).
+hugr-docs         # specialized read-only docs retrieval host/CLI.
 hugr-wasm         # wasm-bindgen host glue for browser/extension.
 hugr-py           # PyO3 bindings (poll/submit exposed).
 hugr-js           # napi/wasm bindings for Node/Deno.
@@ -578,6 +580,8 @@ hugr-replay       # versioned, portable TRACE format (save/load) + replay/inspec
 ```
 
 Dependency rule: **`hugr-core` depends on nothing environmental.** Everything async/IO/provider-specific lives outside it.
+
+Implemented showcase host: `hugr-docs` demonstrates that host shape is not tied to the batteries-included terminal agent. It reuses `hugr-core`, `hugr-host`, and the OpenAI-compatible streaming adapter, but registers only folder-scoped read-only documentation capabilities (`docs_list`, `docs_search`, `docs_read`, `docs_read_range`, `docs_read_many`, `docs_read_range_many`, `docs_outline`) and emits a single machine-parseable JSON answer. It has no shell, no write/edit capability, no interactive policy surface, and no docs-specific core types; all retrieval arguments/results stay opaque `Value`s under the narrow-waist rule (§2.4).
 
 ## 11. Sizing & performance targets (initial)
 

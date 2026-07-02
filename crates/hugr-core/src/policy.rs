@@ -5,6 +5,8 @@
 //! log, and whether a capability needs permission — but never hardcodes those
 //! decisions. Swap the policy to change behaviour without touching the reducer.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -685,7 +687,18 @@ impl TurnPolicy for StaticPolicy {
                 "static system prompt",
             );
         }
+        let mut projected_tool_results = HashSet::new();
         for entry in log {
+            if projected_tool_results.contains(&entry.seq) {
+                let est_tokens = entry.record.content_est_tokens().unwrap_or(0);
+                entries.push(ContextPlanEntry::new(
+                    ContextSource::log_entry(entry.seq),
+                    est_tokens,
+                    ContextDisposition::omitted(),
+                    "tool result projected adjacent to originating tool call",
+                ));
+                continue;
+            }
             if let Some(summary_seq) = covering_summary(&summaries, entry.seq) {
                 let disposition = ContextDisposition::referenced(ContextBlock::new(
                     Role::User,
@@ -745,6 +758,42 @@ impl TurnPolicy for StaticPolicy {
                             disposition,
                             "static pass-through projection",
                         );
+                    }
+                    // OpenAI-compatible chat formats require tool result
+                    // messages to immediately follow the assistant message
+                    // containing the corresponding `tool_calls`. Durable host
+                    // hooks and op metadata can be logged between those facts,
+                    // so projection groups matching results here without
+                    // changing the append-only log (ARCHITECTURE §2.4/§4.5).
+                    for call in &output.tool_calls {
+                        if let Some(result_entry) =
+                            find_tool_result_for_call(log, entry.seq, &call.id)
+                        {
+                            if let Record::ToolResult {
+                                call_id,
+                                result,
+                                est_tokens,
+                                ..
+                            } = &result_entry.record
+                            {
+                                let disposition = ContextDisposition::included(ContextBlock::new(
+                                    Role::Tool,
+                                    vec![ContentPart::ToolResult {
+                                        id: call_id.clone(),
+                                        result: result.clone(),
+                                    }],
+                                ));
+                                push(
+                                    &mut totals,
+                                    &mut entries,
+                                    ContextSource::log_entry(result_entry.seq),
+                                    *est_tokens,
+                                    disposition,
+                                    "tool result grouped with originating tool call",
+                                );
+                                projected_tool_results.insert(result_entry.seq);
+                            }
+                        }
                     }
                 }
                 Record::ToolResult {
@@ -988,6 +1037,23 @@ impl StaticPolicy {
         tools.extend(self.skills.iter().map(SkillDescriptor::tool_schema));
         tools
     }
+}
+
+fn find_tool_result_for_call<'a>(
+    log: &'a [LogEntry],
+    after: crate::primitives::Seq,
+    call_id: &str,
+) -> Option<&'a LogEntry> {
+    log.iter().find(|entry| {
+        entry.seq > after
+            && matches!(
+                &entry.record,
+                Record::ToolResult {
+                    call_id: result_call_id,
+                    ..
+                } if result_call_id == call_id
+            )
+    })
 }
 
 fn recent_failure_count(log: &[LogEntry]) -> u32 {
