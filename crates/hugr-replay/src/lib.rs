@@ -60,6 +60,8 @@ use serde::{Deserialize, Serialize};
 
 mod blob;
 mod replay;
+#[doc(hidden)]
+pub mod test_support;
 pub use blob::BlobStore;
 pub use replay::{
     Inspector, Replay, Step, drive, policy_from_trace, replay, replay_with_policy, verify,

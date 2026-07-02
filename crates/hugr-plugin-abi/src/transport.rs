@@ -80,3 +80,14 @@ pub enum PluginError {
     #[error("unsupported plugin protocol version {found} (host supports up to {supported})")]
     UnsupportedVersion { found: u32, supported: u32 },
 }
+
+impl From<crate::framing::FramingError> for PluginError {
+    fn from(err: crate::framing::FramingError) -> Self {
+        // Preserve the pre-framing error taxonomy: stream failures were `Io`,
+        // malformed protocol JSON was `Serde`.
+        match err {
+            crate::framing::FramingError::Io(e) => PluginError::Io(e),
+            crate::framing::FramingError::Json(e) => PluginError::Serde(e),
+        }
+    }
+}

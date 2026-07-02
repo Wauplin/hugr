@@ -165,24 +165,16 @@ fn missing_version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use hugr_core::{Event, OpId};
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::test_support::TempDir;
 
     #[tokio::test]
     async fn fs_write_conflicts_on_stale_expected_version_without_overwriting() {
-        let root = std::env::temp_dir().join(format!(
-            "hugr_fs_cas_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("demo.txt");
+        let root = TempDir::new("fs-cas");
+        let path = root.path().join("demo.txt");
         std::fs::write(&path, "first").unwrap();
 
         let (tx, _rx) = mpsc::unbounded_channel::<Event>();

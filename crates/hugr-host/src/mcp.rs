@@ -11,9 +11,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hugr_core::{ToolSchema, Value};
+use hugr_plugin_abi::framing::{self, FramingError};
 use serde_json::json;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
@@ -59,6 +60,20 @@ pub enum McpError {
     Json(#[from] serde_json::Error),
     #[error("MCP protocol error: {0}")]
     Protocol(String),
+}
+
+impl From<FramingError> for McpError {
+    fn from(err: FramingError) -> Self {
+        // Preserve the pre-framing error taxonomy: stream failures were `Io`,
+        // malformed JSON was `Json`.
+        match err {
+            FramingError::Io(e) => McpError::Io(e),
+            FramingError::Json(e) => McpError::Json(e),
+            // `FramingError` is #[non_exhaustive]; treat unknown kinds as
+            // protocol-level failures.
+            other => McpError::Protocol(other.to_string()),
+        }
+    }
 }
 
 /// One MCP tool exposed through the host capability interface.
@@ -195,17 +210,11 @@ impl McpClient {
             "method": method,
             "params": params,
         });
-        write_json_line(&mut inner.stdin, &message).await?;
+        framing::write_json_line(&mut inner.stdin, &message).await?;
         loop {
-            let line = inner
-                .stdout
-                .next_line()
+            let response: Value = framing::read_json_line(&mut inner.stdout)
                 .await?
                 .ok_or_else(|| McpError::Protocol("MCP server closed stdout".into()))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let response: Value = serde_json::from_str(&line)?;
             if response.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -226,16 +235,10 @@ impl McpClient {
             "method": method,
             "params": params,
         });
-        write_json_line(&mut inner.stdin, &message).await
+        framing::write_json_line(&mut inner.stdin, &message)
+            .await
+            .map_err(McpError::from)
     }
-}
-
-async fn write_json_line(stdin: &mut ChildStdin, value: &Value) -> Result<(), McpError> {
-    let mut bytes = serde_json::to_vec(value)?;
-    bytes.push(b'\n');
-    stdin.write_all(&bytes).await?;
-    stdin.flush().await?;
-    Ok(())
 }
 
 #[derive(serde::Deserialize)]

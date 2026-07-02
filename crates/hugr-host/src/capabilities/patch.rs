@@ -122,23 +122,16 @@ async fn run_git_apply(mut cmd: Command, patch: &str) -> Result<std::process::Ou
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use hugr_core::{Event, OpId};
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::test_support::TempDir;
 
     #[tokio::test]
     async fn patch_previews_applies_reverts_and_conflicts() {
-        let root = std::env::temp_dir().join(format!(
-            "hugr_patch_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
+        let root = TempDir::new("patch");
+        let root = root.path();
         let file = root.join("demo.txt");
         std::fs::write(&file, "old\n").unwrap();
         let patch = "\

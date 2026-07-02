@@ -42,10 +42,12 @@
 //! do IO. It uses `hugr-core` only as pure data (`ToolSchema`/`Value`), so it
 //! never pulls IO into the sans-IO core.
 
+pub mod framing;
 mod protocol;
 mod subprocess;
 mod transport;
 
+pub use framing::{FramingError, read_json_line, write_json_line};
 pub use protocol::{PROTOCOL_VERSION, Request, Response};
 pub use subprocess::SubprocessPlugin;
 pub use transport::{PluginError, PluginSink, PluginTransport};

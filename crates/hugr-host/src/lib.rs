@@ -40,6 +40,8 @@ pub mod policy;
 mod scheduler;
 pub mod skills;
 mod spend;
+#[cfg(test)]
+mod test_support;
 
 pub use capability::{Capability, CapabilityRegistry, ChunkSink};
 pub use engine::{

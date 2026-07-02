@@ -106,23 +106,12 @@ impl BlobStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn temp_root(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "hugr-blobstore-{}-{}-{:?}",
-            std::process::id(),
-            tag,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
+    use crate::test_support::TempDir;
 
     #[test]
     fn put_get_roundtrips_a_large_payload() {
-        let root = temp_root("roundtrip");
-        let store = BlobStore::new(&root);
+        let root = TempDir::new("blobstore-roundtrip");
+        let store = BlobStore::new(root.path());
 
         // A "large" tool result (1 MiB).
         let payload = vec![0xABu8; 1024 * 1024];
@@ -134,28 +123,24 @@ mod tests {
 
         let back = store.get(&blob.hash).unwrap();
         assert_eq!(back, payload, "rehydrated bytes must equal the original");
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn same_content_dedups_to_same_hash() {
-        let root = temp_root("dedup");
-        let store = BlobStore::new(&root);
+        let root = TempDir::new("blobstore-dedup");
+        let store = BlobStore::new(root.path());
 
         let a = store.put(b"identical bytes", "text/plain").unwrap();
         let b = store.put(b"identical bytes", "text/plain").unwrap();
         assert_eq!(a.hash, b.hash, "same content -> same hash");
 
         // Exactly one file on disk for the deduped content.
-        let count = std::fs::read_dir(&root).unwrap().count();
+        let count = std::fs::read_dir(root.path()).unwrap().count();
         assert_eq!(count, 1, "identical content must dedup to one file");
 
         // Different content -> different hash.
         let c = store.put(b"other bytes", "text/plain").unwrap();
         assert_ne!(a.hash, c.hash);
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -172,8 +157,8 @@ mod tests {
 
     #[test]
     fn get_missing_blob_is_an_error() {
-        let root = temp_root("missing");
-        let store = BlobStore::new(&root);
+        let root = TempDir::new("blobstore-missing");
+        let store = BlobStore::new(root.path());
         let err = store.get("sha256:deadbeef").unwrap_err();
         assert!(matches!(err, TraceError::BlobNotFound { .. }));
         assert!(!store.contains("sha256:deadbeef"));

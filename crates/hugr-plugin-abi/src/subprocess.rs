@@ -19,9 +19,10 @@ use std::process::Stdio;
 use async_trait::async_trait;
 use hugr_core::{ToolSchema, Value};
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::framing::{read_json_line, write_json_line};
 use crate::protocol::{PROTOCOL_VERSION, Request, Response};
 use crate::transport::{PluginError, PluginSink, PluginTransport};
 
@@ -68,10 +69,7 @@ impl SubprocessPlugin {
                 .stdin
                 .take()
                 .ok_or_else(|| PluginError::Protocol("plugin stdin unavailable".into()))?;
-            let mut line = serde_json::to_vec(request)?;
-            line.push(b'\n');
-            stdin.write_all(&line).await?;
-            stdin.flush().await?;
+            write_json_line(&mut stdin, request).await?;
             // `stdin` drops here → EOF for the plugin.
         }
 
@@ -82,11 +80,8 @@ impl SubprocessPlugin {
         let mut lines = BufReader::new(stdout).lines();
 
         let mut terminal = None;
-        while let Some(line) = lines.next_line().await? {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str::<Response>(&line)? {
+        while let Some(response) = read_json_line::<_, Response>(&mut lines).await? {
+            match response {
                 Response::Chunk { value } => sink.chunk(value),
                 other => {
                     terminal = Some(other);

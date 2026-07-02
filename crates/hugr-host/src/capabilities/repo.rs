@@ -382,22 +382,17 @@ async fn command_json(label: &str, mut cmd: Command) -> Result<Value, Value> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use hugr_core::{Event, OpId};
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::test_support::TempDir;
 
     #[tokio::test]
     async fn repo_orientation_tools_are_read_only_and_list_files() {
-        let root = std::env::temp_dir().join(format!(
-            "hugr_repo_files_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = TempDir::new("repo-files");
+        let root = root.path();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join("target")).unwrap();
         std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();

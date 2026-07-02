@@ -149,18 +149,8 @@ impl Capability for Blob {
 mod tests {
     use super::*;
     use crate::capability::ChunkSink;
+    use crate::test_support::TempDir;
     use hugr_core::OpId;
-
-    fn temp_root() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "hugr-blobcap-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
 
     fn sink() -> ChunkSink {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -169,8 +159,8 @@ mod tests {
 
     #[tokio::test]
     async fn put_then_get_roundtrips_a_large_payload() {
-        let root = temp_root();
-        let cap = Blob::new(&root);
+        let root = TempDir::new("blobcap-roundtrip");
+        let cap = Blob::new(root.path());
 
         let big = "x".repeat(200_000);
         let put = cap
@@ -198,14 +188,12 @@ mod tests {
             cap.store()
                 .contains(put.get("hash").and_then(Value::as_str).unwrap())
         );
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[tokio::test]
     async fn same_content_yields_same_hash() {
-        let root = temp_root();
-        let cap = Blob::new(&root);
+        let root = TempDir::new("blobcap-dedup");
+        let cap = Blob::new(root.path());
         let a = cap
             .invoke(json!({ "op": "put", "content": "same" }), &sink())
             .await
@@ -218,12 +206,12 @@ mod tests {
             a.get("hash").and_then(Value::as_str),
             b.get("hash").and_then(Value::as_str)
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[tokio::test]
     async fn get_missing_is_a_semantic_error() {
-        let cap = Blob::new(temp_root());
+        let root = TempDir::new("blobcap-missing");
+        let cap = Blob::new(root.path());
         let err = cap
             .invoke(json!({ "op": "get", "hash": "sha256:nope" }), &sink())
             .await
@@ -233,7 +221,8 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_op_is_a_semantic_error() {
-        let cap = Blob::new(temp_root());
+        let root = TempDir::new("blobcap-unknown-op");
+        let cap = Blob::new(root.path());
         let err = cap
             .invoke(json!({ "op": "delete" }), &sink())
             .await

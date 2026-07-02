@@ -171,13 +171,14 @@ fn well_known_dirs() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use serde_json::json;
     use std::io::Write;
 
     #[test]
     fn discovers_skill_bundle_metadata_and_tool_schemas() {
-        let root = temp_root("discover");
-        let skill = root.join("rust-reviewer");
+        let root = TempDir::new("skill-discover");
+        let skill = root.path().join("rust-reviewer");
         std::fs::create_dir_all(skill.join("tools")).unwrap();
         write_file(
             &skill.join("SKILL.md"),
@@ -193,7 +194,7 @@ mod tests {
             .unwrap(),
         );
 
-        let bundles = discover_from([root.clone()]).unwrap();
+        let bundles = discover_from([root.path().to_path_buf()]).unwrap();
         assert_eq!(bundles.len(), 1);
         assert_eq!(bundles[0].id, "rust-reviewer");
         assert_eq!(bundles[0].title, "Rust Reviewer");
@@ -203,16 +204,6 @@ mod tests {
         );
         assert!(bundles[0].instructions.contains("Review Rust diffs"));
         assert_eq!(bundles[0].tool_schemas[0].name, "cargo_check");
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    fn temp_root(label: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("hugr-skill-{label}-{}-{nanos}", std::process::id()))
     }
 
     fn write_file(path: &Path, text: &str) {
