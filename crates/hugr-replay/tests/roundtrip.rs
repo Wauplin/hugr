@@ -203,6 +203,57 @@ fn blob_manifest_roundtrips() {
 }
 
 #[test]
+fn recorded_commands_roundtrip() {
+    use hugr_core::{Command, DoneReason};
+    let commands = vec![
+        Command::Checkpoint,
+        Command::Done {
+            reason: DoneReason::EndTurn,
+        },
+    ];
+    let trace =
+        Trace::new(sample_events(), sample_log(), Some(1_000)).with_commands(commands.clone());
+    let back = Trace::from_json(&trace.to_json().unwrap()).unwrap();
+    assert_eq!(back.commands, commands, "commands round-trip through JSON");
+    assert_eq!(back, trace, "the whole trace round-trips exactly");
+}
+
+/// Back-compat: a trace JSON with NO `commands` key (an old recording) still
+/// deserializes, defaulting to an empty command sequence (serde default).
+#[test]
+fn old_json_without_commands_field_deserializes() {
+    let bytes = serde_json::to_vec(&json!({
+        "meta": {
+            "codename": "hugr-trace",
+            "format_version": FORMAT_VERSION,
+            "created_at": null
+        },
+        "events": [],
+        "log": [],
+        "blobs": { "refs": [] }
+    }))
+    .unwrap();
+    let trace = Trace::from_json(&bytes).expect("old commandless JSON must still parse");
+    assert!(
+        trace.commands.is_empty(),
+        "a missing commands field defaults to empty"
+    );
+}
+
+/// A trace with no commands does not emit a `commands` key at all, so a
+/// recording made without command capture stays byte-identical to the
+/// pre-`commands` on-disk format (skip_serializing_if).
+#[test]
+fn empty_commands_are_omitted_from_json() {
+    let trace = Trace::new(sample_events(), sample_log(), Some(1_000));
+    let json = String::from_utf8(trace.to_json().unwrap()).unwrap();
+    assert!(
+        !json.contains("\"commands\""),
+        "empty commands must not appear in serialized JSON"
+    );
+}
+
+#[test]
 fn rejects_unsupported_future_version() {
     // Hand-craft a trace JSON claiming a far-future format version.
     let bytes = serde_json::to_vec(&json!({

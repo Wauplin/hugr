@@ -24,17 +24,25 @@
 //!
 //! ```text
 //! Trace
-//! ├── meta: TraceMeta        // format version, codename, created-at
-//! ├── events: Vec<Event>     // the ordered host→brain stream (the replay input)
-//! ├── log:    Vec<LogEntry>  // the consolidated, seq-stamped durable log (the truth)
-//! └── blobs:  BlobManifest   // refs to content-addressed payloads (BlobStore; not inlined)
+//! ├── meta:     TraceMeta       // format version, codename, created-at
+//! ├── events:   Vec<Event>      // the ordered host→brain stream (the replay input)
+//! ├── commands: Vec<Command>    // the ordered brain→host commands the host emitted (the replay *output*)
+//! ├── log:      Vec<LogEntry>   // the consolidated, seq-stamped durable log (the truth)
+//! └── blobs:    BlobManifest    // refs to content-addressed payloads (BlobStore; not inlined)
 //! ```
 //!
-//! Two complementary views are stored deliberately:
+//! Three complementary views are stored deliberately:
 //!
 //! - **`events`** is the *input* to replay — the exact ordered stream the host
 //!   fed the brain (including the raw transport deltas, if the recorder kept
 //!   them). Re-feeding it into a fresh brain yields identical commands (§6.3).
+//! - **`commands`** is the recorded *output* — the exact ordered [`Command`]
+//!   sequence the live host drained from the brain. [`verify`] re-feeds `events`
+//!   into a fresh brain and asserts the reconstructed commands equal this
+//!   sequence bit-for-bit, so command-order nondeterminism (e.g. a
+//!   `HashMap`-ordered cancel-all) is caught — the log alone never records
+//!   command order (§6.3). Empty for older traces recorded before this field
+//!   existed (serde default); [`verify`] then falls back to log-only checking.
 //! - **`log`** is the *output* truth — the consolidated record stream
 //!   ([one record per logical message/tool-result](hugr_core::Record), §4.5),
 //!   from which `BrainState` is always rederivable. A trace can be inspected,
@@ -55,7 +63,7 @@
 
 use std::path::Path;
 
-use hugr_core::{Event, LogEntry};
+use hugr_core::{Command, Event, LogEntry};
 use serde::{Deserialize, Serialize};
 
 mod blob;
@@ -88,6 +96,17 @@ pub struct Trace {
     pub meta: TraceMeta,
     /// The ordered host→brain [`Event`] stream — the *input* to replay (§6.3).
     pub events: Vec<Event>,
+    /// The ordered brain→host [`Command`] sequence the live host drained — the
+    /// recorded *output* (§6.3). [`verify`](crate::verify) re-feeds `events`
+    /// into a fresh brain and asserts the reconstructed commands equal this
+    /// sequence bit-for-bit, catching command-order nondeterminism the log
+    /// alone cannot see. A **new** field (serde default), so older traces
+    /// without it still deserialize — an empty vec means "not recorded", and
+    /// verify falls back to log-only comparison. Skipped from serialized JSON
+    /// when empty so traces recorded without commands stay byte-identical to
+    /// the pre-`commands` format.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<Command>,
     /// The consolidated, seq-stamped durable log — the *truth* (§4.5/§12.1).
     pub log: Vec<LogEntry>,
     /// References to content-addressed payloads (the bytes live in the
@@ -191,6 +210,7 @@ impl Trace {
         Self {
             meta: TraceMeta::new(created_at),
             events,
+            commands: Vec::new(),
             log,
             blobs: BlobManifest::new(),
             policy: None,
@@ -208,10 +228,19 @@ impl Trace {
         Self {
             meta: TraceMeta::new(created_at),
             events,
+            commands: Vec::new(),
             log,
             blobs,
             policy: None,
         }
+    }
+
+    /// Attach the recorded brain→host [`Command`] sequence (in emission order)
+    /// so [`verify`](crate::verify) can assert replay reproduces it bit-for-bit
+    /// (§6.3). The host's recorder captures these as it drains `brain.poll()`.
+    pub fn with_commands(mut self, commands: Vec<Command>) -> Self {
+        self.commands = commands;
+        self
     }
 
     /// Attach the session's policy configuration (an opaque JSON value the host
@@ -305,6 +334,22 @@ pub enum TraceError {
         "replay mismatch: recorded log has {recorded} entries, reconstruction has {reconstructed}"
     )]
     ReplayMismatch {
+        recorded: usize,
+        reconstructed: usize,
+    },
+
+    /// Replaying the trace's events through a fresh brain produced a **command
+    /// sequence** that diverges from the recorded one — the brain no longer
+    /// emits the same commands in the same order for this event stream. Unlike
+    /// [`ReplayMismatch`](Self::ReplayMismatch), this catches nondeterminism
+    /// that never reaches the log (command *ordering*, e.g. a `HashMap`-ordered
+    /// cancel-all), which is the Phase 3 bit-for-bit exit criterion. `index` is
+    /// the position of the first divergent command.
+    #[error(
+        "replay command mismatch at index {index}: recorded {recorded} commands, reconstruction produced {reconstructed}"
+    )]
+    CommandMismatch {
+        index: usize,
         recorded: usize,
         reconstructed: usize,
     },

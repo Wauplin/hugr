@@ -1180,13 +1180,25 @@ async fn record_then_replay_reconstructs_the_session_bit_for_bit() {
     // brain at save time; no desync).
     assert_eq!(trace.log, live_log, "recorded log must equal the live log");
 
-    // Replay through a FRESH brain (no engine, no IO): the reconstructed log is
-    // byte-identical to the original recording — the exit criterion.
+    // The recorder captured the live command sequence too, so `verify` now
+    // checks command ordering (not just the log) bit-for-bit (§6.3).
+    assert!(
+        !trace.commands.is_empty(),
+        "the recorder captured the live command sequence"
+    );
+
+    // Replay through a FRESH brain (no engine, no IO): the reconstructed log AND
+    // command sequence are byte-identical to the original recording — the exit
+    // criterion. (`verify` fails if either diverges.)
     let replay = hugr_host::hugr_replay::verify(&trace)
-        .expect("replay must reconstruct the recorded log bit-for-bit");
+        .expect("replay must reconstruct the recorded log AND commands bit-for-bit");
     assert_eq!(
         replay.log, live_log,
         "replayed log == live log, bit-for-bit"
+    );
+    assert_eq!(
+        replay.commands, trace.commands,
+        "replayed commands == the live-recorded commands, bit-for-bit"
     );
 
     // Determinism: a second replay yields identical commands.

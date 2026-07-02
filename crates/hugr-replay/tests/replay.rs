@@ -104,6 +104,101 @@ fn verify_passes_for_a_faithful_trace() {
     assert!(!replay.commands.is_empty());
 }
 
+/// A faithful trace that *also* carries the recorded command sequence (as the
+/// host recorder now does): `verify` compares commands bit-for-bit in addition
+/// to the log, and still passes for a genuine recording.
+#[test]
+fn verify_compares_recorded_commands_and_passes() {
+    let events = session_events();
+    let derived = replay(&Trace::new(events.clone(), vec![], Some(1)));
+    // Attach BOTH the derived log and the derived command sequence — exactly the
+    // shape `Engine::trace()` now produces.
+    let trace = Trace::new(events, derived.log, Some(1)).with_commands(derived.commands.clone());
+    assert!(!trace.commands.is_empty(), "the trace carries commands");
+
+    let replayed = verify(&trace).expect("a faithful trace with commands must verify");
+    assert_eq!(
+        replayed.commands, trace.commands,
+        "verify reconstructed the exact recorded command sequence"
+    );
+}
+
+/// The regression this whole feature exists for: a trace whose recorded
+/// `commands` disagree with what re-feeding its events re-emits must FAIL
+/// verification — command-order divergence that never touches the log is now
+/// caught (§6.3).
+#[test]
+fn verify_rejects_a_divergent_command_sequence() {
+    let events = session_events();
+    let derived = replay(&Trace::new(events.clone(), vec![], Some(1)));
+
+    // Craft a recording whose command sequence differs from what replay
+    // re-emits: drop the last command. The log still matches bit-for-bit, so
+    // the OLD log-only check would wave this through — only the command
+    // comparison catches it.
+    let mut tampered_commands = derived.commands.clone();
+    tampered_commands.pop().expect("session emitted commands");
+    let trace = Trace::new(events, derived.log, Some(1)).with_commands(tampered_commands);
+
+    let err = verify(&trace).expect_err("divergent command sequence must fail verification");
+    match err {
+        TraceError::CommandMismatch {
+            recorded,
+            reconstructed,
+            ..
+        } => {
+            assert_eq!(
+                recorded + 1,
+                reconstructed,
+                "replay re-emits the dropped command"
+            );
+        }
+        other => panic!("expected CommandMismatch, got {other:?}"),
+    }
+}
+
+/// A reordered command sequence (same length, same set, wrong order) is exactly
+/// the `HashMap`-ordered-cancel-all class of bug — and it, too, must fail.
+#[test]
+fn verify_rejects_reordered_commands() {
+    let events = session_events();
+    let derived = replay(&Trace::new(events.clone(), vec![], Some(1)));
+    assert!(
+        derived.commands.len() >= 2,
+        "need at least two commands to reorder"
+    );
+    let mut reordered = derived.commands.clone();
+    reordered.swap(0, 1);
+    let trace = Trace::new(events, derived.log, Some(1)).with_commands(reordered);
+    let err = verify(&trace).expect_err("reordered commands must fail verification");
+    assert!(
+        matches!(err, TraceError::CommandMismatch { .. }),
+        "expected CommandMismatch, got {err:?}"
+    );
+}
+
+/// Back-compat: an OLD-style trace with no recorded `commands` (empty via serde
+/// default) still verifies — `verify` falls back to the log-only comparison.
+#[test]
+fn verify_falls_back_to_log_only_for_old_traces() {
+    let trace = faithful_trace();
+    assert!(
+        trace.commands.is_empty(),
+        "faithful_trace models a pre-commands recording"
+    );
+    // No commands recorded, but the log is faithful → log-only fallback passes.
+    verify(&trace).expect("an old commandless trace verifies via the log-only fallback");
+
+    // And a commandless trace whose LOG is wrong still fails (the fallback is
+    // not a blanket pass).
+    let mut broken = faithful_trace();
+    broken.log.pop();
+    assert!(matches!(
+        verify(&broken).unwrap_err(),
+        TraceError::ReplayMismatch { .. }
+    ));
+}
+
 #[test]
 fn verify_rejects_a_tampered_log() {
     let mut trace = faithful_trace();

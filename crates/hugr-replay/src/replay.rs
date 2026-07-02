@@ -96,14 +96,24 @@ pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay 
     }
 }
 
-/// Replay a trace and assert the reconstructed log is **byte-identical** to the
-/// recorded log — the Phase 3 exit criterion (record a real session, replay it
+/// Replay a trace and assert the reconstruction is **byte-identical** to the
+/// recording — the Phase 3 exit criterion (record a real session, replay it
 /// bit-for-bit). Returns the [`Replay`] on success.
 ///
-/// The check compares the *consolidated log* (the durable truth), not the raw
-/// deltas (transport, never logged, §4.5). A mismatch means the fold is no
-/// longer deterministic for this trace — exactly the regression replay exists to
-/// catch.
+/// Two things are checked:
+///
+/// - the reconstructed **command sequence** equals the trace's recorded
+///   [`commands`](Trace::commands), in order — this is what catches command-order
+///   nondeterminism (e.g. a `HashMap`-ordered cancel-all) that never reaches the
+///   log at all (§6.3);
+/// - the reconstructed **consolidated log** equals the recorded log (the durable
+///   truth), not the raw deltas (transport, never logged, §4.5).
+///
+/// **Back-compat:** a trace whose `commands` is empty (an older recording made
+/// before the command sequence was captured — serde default) is checked
+/// log-only, exactly as before. Any non-empty `commands` is compared bit-for-bit.
+/// Either mismatch means the fold is no longer deterministic for this trace —
+/// exactly the regression replay exists to catch.
 pub fn verify(trace: &Trace) -> Result<Replay, TraceError> {
     verify_with_policy(trace, policy_from_trace(trace))
 }
@@ -114,6 +124,19 @@ pub fn verify_with_policy(
     policy: Box<dyn TurnPolicy>,
 ) -> Result<Replay, TraceError> {
     let replay = replay_with_policy(trace, policy);
+    // Compare the recorded command sequence bit-for-bit, in order — but only
+    // when the trace actually captured one. An empty `commands` means the trace
+    // predates command recording (serde default), so we fall back to the
+    // log-only check to keep verifying old traces (§6.3). Every `Command` is
+    // serde-serializable, so there is no non-recordable command to special-case.
+    if !trace.commands.is_empty() && replay.commands != trace.commands {
+        let index = first_divergence(&trace.commands, &replay.commands);
+        return Err(TraceError::CommandMismatch {
+            index,
+            recorded: trace.commands.len(),
+            reconstructed: replay.commands.len(),
+        });
+    }
     if replay.log != trace.log {
         return Err(TraceError::ReplayMismatch {
             recorded: trace.log.len(),
@@ -121,6 +144,16 @@ pub fn verify_with_policy(
         });
     }
     Ok(replay)
+}
+
+/// Index of the first position where two command slices differ (or the length
+/// of the shorter one when they share a prefix but differ in length).
+fn first_divergence(recorded: &[Command], reconstructed: &[Command]) -> usize {
+    recorded
+        .iter()
+        .zip(reconstructed.iter())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| recorded.len().min(reconstructed.len()))
 }
 
 /// One step of a replay: the event that was fed, the commands it produced, and

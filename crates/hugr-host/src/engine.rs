@@ -124,17 +124,27 @@ pub enum TraceCompaction {
     PreserveFull,
 }
 
-/// Captures the exact ordered [`Event`] stream the host feeds the brain, so the
-/// session can be persisted as a [`Trace`] and replayed bit-for-bit later
-/// (ARCHITECTURE §6.2/§12). It records the *input* (events, including the
-/// injected `Tick`s) in submission order; the durable *log* is read from the
-/// brain at save time (it is always a fold over these same events).
+/// Captures the exact ordered [`Event`] stream the host feeds the brain **and**
+/// the ordered [`Command`] sequence the brain emits, so the session can be
+/// persisted as a [`Trace`] and replayed bit-for-bit later (ARCHITECTURE
+/// §6.2/§12). It records the *input* (events, including the injected `Tick`s) in
+/// submission order and the *output* (commands) in the order the driver drains
+/// them from `brain.poll()`; the durable *log* is read from the brain at save
+/// time (it is always a fold over these same events).
+///
+/// The recorded commands let [`hugr_replay::verify`] assert that re-feeding the
+/// events reproduces the same command sequence bit-for-bit — command *ordering*
+/// never reaches the log, so without this a divergence (e.g. a `HashMap`-ordered
+/// cancel-all) would pass verification undetected (§6.3).
 ///
 /// Recording is opt-in (`Engine::builder().record()`); a non-recording engine
 /// pays nothing.
 #[derive(Clone, Debug, Default)]
 struct Recorder {
     events: Vec<Event>,
+    /// The brain→host commands, in the order the driver drained them from
+    /// `brain.poll()` (the replay *output* verified against replay, §6.3).
+    commands: Vec<Command>,
     /// The first injected timestamp, used as the trace's `created_at` (the
     /// `seq 0` tick — never a syscall in the core).
     created_at: Option<u64>,
@@ -151,13 +161,27 @@ impl Recorder {
         self.events.push(event.clone());
     }
 
-    /// Pre-load the recorder with a trace's already-recorded events, so a
-    /// **resumed** session (P3-4) re-saves the full history (old + new) and
-    /// still replays bit-for-bit. The events are copied verbatim (including the
-    /// recorded `Tick`s); `created_at` is taken from the trace's metadata so the
-    /// resumed trace keeps the original session's creation time, not a new one.
-    fn seed(events: Vec<Event>, created_at: Option<u64>) -> Self {
-        Self { events, created_at }
+    /// Record commands in the order the driver drained them from the brain, so
+    /// the trace's command sequence matches what replay re-emits (§6.3).
+    fn record_commands(&mut self, commands: &[Command]) {
+        self.commands.extend_from_slice(commands);
+    }
+
+    /// Pre-load the recorder with a trace's already-recorded events **and** the
+    /// commands re-derived by re-folding them, so a **resumed** session (P3-4)
+    /// re-saves the full history (old + new) and still verifies bit-for-bit. The
+    /// events are copied verbatim (including the recorded `Tick`s); `commands`
+    /// come from the resume re-fold (see [`hugr_replay::drive`]) rather than the
+    /// old trace's `commands`, so a resumed *old* trace (empty commands) still
+    /// gets a complete, self-consistent command sequence. `created_at` is taken
+    /// from the trace's metadata so the resumed trace keeps the original
+    /// session's creation time, not a new one.
+    fn seed(events: Vec<Event>, commands: Vec<Command>, created_at: Option<u64>) -> Self {
+        Self {
+            events,
+            commands,
+            created_at,
+        }
     }
 }
 
@@ -382,7 +406,10 @@ impl Engine {
             rec.events.clone(),
             self.brain.state().log().to_vec(),
             rec.created_at,
-        );
+        )
+        // Carry the recorded command sequence so replay can verify it
+        // bit-for-bit (command ordering never reaches the log, §6.3).
+        .with_commands(rec.commands.clone());
         // Capture the policy so replay reproduces the brain's permission /
         // background branching bit-for-bit (§6.3).
         if let Some(policy) = self.policy_config.clone() {
@@ -556,6 +583,13 @@ impl Engine {
                 let commands = self.brain.poll();
                 if commands.is_empty() {
                     break;
+                }
+                // Record the drained commands (in order) before performing them,
+                // so the trace's command sequence matches what a replay re-emits
+                // — the property `hugr_replay::verify` now checks bit-for-bit
+                // (command ordering never reaches the log, §6.3).
+                if let Some(rec) = self.recorder.as_mut() {
+                    rec.record_commands(&commands);
                 }
                 for command in commands {
                     self.perform(command).await;
@@ -1124,14 +1158,20 @@ impl EngineBuilder {
                 let mut brain = Brain::new(policy_from_trace(&trace));
                 let events = trace.events;
                 // Reconstruct the resumed session's state with ZERO IO: re-fold
-                // the recorded events into the fresh brain and discard the commands
-                // they re-emit (the host must not re-run the model/shell/http for
-                // work that already happened — this only rebuilds `BrainState`,
-                // exactly like `hugr_replay::replay`, via the shared `drive` fold).
-                let _ = hugr_replay::drive(&mut brain, &events);
-                // Pre-seed the recorder with the same events (moved, not cloned) so
-                // a later `save_trace` carries old + new (ARCHITECTURE §6.3).
-                let mut recorder = Recorder::seed(events, trace.meta.created_at);
+                // the recorded events into the fresh brain (the host must not
+                // re-run the model/shell/http for work that already happened —
+                // this only rebuilds `BrainState`, exactly like
+                // `hugr_replay::replay`, via the shared `drive` fold). We *keep*
+                // the re-emitted commands (rather than discard them) to seed the
+                // recorder's command sequence: re-deriving them here makes the
+                // resumed trace's `commands` self-consistent with its events even
+                // when the original trace predates command recording (empty
+                // `commands`), so the re-saved trace still verifies bit-for-bit.
+                let resume_commands = hugr_replay::drive(&mut brain, &events);
+                // Pre-seed the recorder with the same events (moved, not cloned)
+                // and the re-derived commands so a later `save_trace` carries
+                // old + new (ARCHITECTURE §6.3).
+                let mut recorder = Recorder::seed(events, resume_commands, trace.meta.created_at);
                 reconcile_crashed_ops(&mut brain, &mut recorder, self.crash_resume, &clock);
                 (brain, Some(recorder), trace.policy)
             }
@@ -1225,7 +1265,11 @@ fn reconcile_crashed_ops(
             // quiescent, so drain and discard those commands here. Otherwise
             // they would fire at the start of the next live turn — a spurious
             // stop hook, or a stale pre-crash model call racing the new one.
-            let _ = brain.poll();
+            // They ARE still recorded: replaying the trace re-emits them, so
+            // the recorded command sequence must include them for `verify` to
+            // match bit-for-bit — "drained, not performed" is a host choice
+            // invisible to the pure fold.
+            recorder.record_commands(&brain.poll());
         }
     }
 }
