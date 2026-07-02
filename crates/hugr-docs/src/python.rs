@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::{DocsConfig, DocsConfigOptions, answer_question};
+use crate::{DocsConfigOptions, answer_with_options};
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     question,
     docs_path=None,
@@ -25,15 +26,11 @@ fn answer(
     input_usd_per_m_tokens: Option<f64>,
     output_usd_per_m_tokens: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
-    if question.trim().is_empty() {
-        return Err(PyValueError::new_err("question cannot be empty"));
-    }
-    let question = question.to_string();
     let docs_path = match docs_path {
         Some(path) => PathBuf::from(path),
         None => std::env::var_os("HUGR_DOCS_PATH")
             .map(PathBuf::from)
-            .ok_or_else(|| PyValueError::new_err("pass docs_path or set HUGR_DOCS_PATH"))?,
+            .unwrap_or_default(),
     };
     let options = DocsConfigOptions {
         api_key: api_key.map(str::to_string),
@@ -42,12 +39,11 @@ fn answer(
         input_usd_per_m_tokens,
         output_usd_per_m_tokens,
     };
-
+    let question = question.to_string();
     let result = py
         .allow_threads(|| {
-            let config = DocsConfig::from_options(docs_path, options)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(answer_question(config, &question))
+            runtime.block_on(answer_with_options(docs_path, options, &question))
         })
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     let json_text = serde_json::to_string(&result)
