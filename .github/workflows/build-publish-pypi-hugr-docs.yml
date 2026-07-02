@@ -1,12 +1,7 @@
-name: Build & publish wheels
+name: PyPI release - hugr-docs
 
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Upload to PyPI (set to 'true' to publish)"
-        required: true
-        default: "skip"
 
 # Prevent this workflow from running in parallel for the same branch.
 concurrency:
@@ -84,7 +79,6 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: [build-linux, build-macos-x86_64, build-macos-aarch64, build-windows]
-    if: github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi-publish
     permissions:
