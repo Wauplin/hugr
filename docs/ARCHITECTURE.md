@@ -152,7 +152,7 @@ This is what lets the interface stay small enough to bind in ~an afternoon, yet 
 
 ### 2.5 What the brain actually does (and what it doesn't)
 
-A fair worry is that the brain, described abstractly, sounds like it "does everything." It does not — it is small and its job is precise. See `draft/brain_sketch.rs` for an annotated, end-to-end sketch of the reducer; the exhaustive list is:
+A fair worry is that the brain, described abstractly, sounds like it "does everything." It does not — it is small and its job is precise. The reducer is implemented in `crates/hugr-core/src/brain.rs`; the exhaustive list of its responsibilities is:
 
 1. **Bookkeeping** — maintain the append-only log and the in-flight op table.
 2. **The turn loop** — drive `user → model → (tool calls?) → tools → model → … → done`. This is the agentic control flow, and it is the brain's core reason to exist.
