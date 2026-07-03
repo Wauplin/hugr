@@ -8,6 +8,8 @@ A **subagent** is, at its essence, a system prompt plus a set of tools with decl
 - **Resumable & forkable traces.** Every run persists an immutable trace. Pass its `trace_id` back to continue the conversation; pass an *older* id to fork a sibling branch. Orchestrators explore many directions without ever growing one shared context — replay is instant and bit-for-bit deterministic.
 - **Sandboxed by construction.** An agent registers exactly the tools its manifest grants. No shell granted = no shell exists in the binary. Plus a private, jailed scratchpad and permissioned blob exchange with the caller.
 - **Token-efficient by design.** Five domain tools and a focused prompt, not fifty generic ones. Small agents are cheaper, faster, and more reliable — and an orchestrator pays one tool call to use them.
+- **Agents compose.** A Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>]`) and it's called like any capability — privileges only narrow on the way down, and the child's cost folds into the caller's answer.
+- **Orchestrator-defined resource grants.** An orchestrator declares named resource groups (a folder, blobs, a database) and passes each subagent a per-group grant — read, read-write, or nothing. Grants ride the ask, are recorded in the trace, and deterministically decide which tools even get registered.
 
 The first such agent, [`hugr-docs`](crates/hugr-docs/) (a self-contained docs-Q&A agent with a CLI and Python binding), is the template the toolkit generalizes.
 

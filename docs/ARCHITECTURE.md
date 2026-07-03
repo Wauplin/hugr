@@ -803,6 +803,33 @@ Design rules: `AnswerMeta` is never optional — an orchestrator can always acco
 
 Per-tier pricing (`input/output USD per M tokens`) lives in the agent definition (§20). `AnswerMeta` is computed by folding the run's trace: every model op already records selector + `Usage` + timestamps in `OpMeta` (§4.1), and sub-agent children aggregate through their recorded digests — so **cost is derivable from the trace alone**, replayable, and auditable after the fact. The scratchpad (§19.3) and the trace store are the only durable side effects of an ask.
 
+### 18.5 Resource groups (orchestrator-defined grants)
+
+An orchestrator often owns a set of resources — a policies folder, a receipts blob set, an expenses database — and wants to hand *different slices with different access levels* to each subagent it calls, without editing manifests per deployment. Resource groups make that a first-class, deterministic part of the contract:
+
+```rust
+// hugr-agent. Typed slots on Ask, not `extra` — the brain/host branch on access mode.
+pub struct ResourceGroup { name: String, resources: Vec<ResourceRef> }
+pub enum ResourceRef {                    // #[non_exhaustive]
+    FsRoot { path: PathBuf },             // a directory subtree
+    Blob { handle: BlobHandle },          // a content-addressed payload (§18.3)
+    Sqlite { path: PathBuf },             // a database file
+    HttpHost { host: String },            // a network origin
+}
+pub struct ResourceGrant { group: String, access: Access }
+pub enum Access { Read, ReadWrite }       // absence of a grant = no access
+
+pub struct Ask { /* §18.1 fields … */ groups: Vec<ResourceGroup>, grants: Vec<ResourceGrant> }
+```
+
+Semantics:
+
+- **The manifest declares bindings, the orchestrator supplies the resources.** A tool scope may name a group instead of a concrete path — `[tools.fs_read] root = "group:policies"` — and that tool is registered only when an ask arrives carrying a matching grant, resolved to the group's resources. No grant → the capability is never registered for that session: this is sandbox-by-registration (§20.1) extended to caller-supplied scopes, not a runtime allow/deny check.
+- **Access modes attenuate registration.** A `Read` grant on a group can satisfy read-class tools only (`fs_read`, `sqlite_query` read-only); a `ReadWrite` grant additionally satisfies mutating tools bound to that group. An agent whose manifest binds a write tool to a group the caller granted read-only simply runs without that tool.
+- **Deterministic by construction.** Groups and grants ride the `Ask`, are recorded in the trace header, and participate in the fold — a resumed or forked ask re-derives the identical capability registration from the trace alone, and replay never re-consults the environment. Changing grants on a follow-up ask is allowed but is a *new* recorded fact on the new trace.
+- **Attenuation on delegation.** When an agent calls another agent (§20.5), it may forward at most the grants it holds, narrowed but never widened (`ReadWrite → Read → nothing`). The host enforces this at the boundary; a grant that never entered the parent's ask cannot appear in a child's.
+- **Enforcement depth is a host property**, exactly like blob perms (§18.3): v1 is registration + jail (the group's `FsRoot` becomes the tool's canonicalized jail root); stronger isolation (bind mounts, read-only mounts) is a host upgrade behind the same types.
+
 ## 19. The trace store: `trace_id`, `depends_on`, forking
 
 The orchestration-facing wrapper around the existing trace machinery (§§12–16). Nothing here adds core mechanisms — it names and files what replay/fork already do.
@@ -867,7 +894,9 @@ Reviewing a subagent's blast radius = reading this file: a tool that is not gran
 
 ### 20.2 The predefined tool library
 
-Vetted, parameterized capabilities with declared privilege classes (read-only / mutating / network), selectable by manifest grant: `fs_read` (jailed list/search/read/read_range/read_many/outline — generalized from `hugr-docs`), `scratchpad` (§19.3), `http_fetch` (host-allowlisted, GET-only default), `sqlite_query` (read-only default, file-scoped), `pdf_read` (text/table extraction, no network — first post-v1 addition, ROADMAP T4.2). Each ships with a jail test and a written threat-model note (T3.6). The library is the 90% path; growing it is the toolkit's ongoing product work.
+Vetted, parameterized capabilities with declared privilege classes (read-only / mutating / network / exec), selectable by manifest grant: `fs_read` (jailed list/search/read/read_range/read_many/outline — generalized from `hugr-docs`), `scratchpad` (§19.3), `http_fetch` (host-allowlisted, GET-only default), `sqlite_query` (read-only default, file-scoped), `pdf_read` (text/table extraction, no network — first post-v1 addition, ROADMAP T4.2). Each ships with a jail test and a written threat-model note (T3.6). The library is the 90% path; growing it is the toolkit's ongoing product work.
+
+**Sandboxed code execution (`code_exec`, designed — ROADMAP T5.6).** The library is deliberately exec-free today: no shell tool exists, and nothing in the library spawns a process. When an agent legitimately needs to run code (data wrangling, computation), it grants `code_exec`, the one exec-class library tool, with layered sandboxing: v1 is a subprocess jail — a manifest-pinned interpreter (`runtime = "python3"`), working directory = the agent's scratchpad (§19.3), no network, wall-clock/memory/output caps from `[limits]`, environment scrubbed to an allowlist; the target backend is WASM/WASI (wasmtime, same trajectory as the plugin ABI §8) where the module gets preopened dirs only — scratchpad plus read-only mounts of granted resource-group roots (§18.5) — making "no filesystem beyond the grant" a property of the runtime, not a convention. Either way the grant is auditable in the manifest (`[tools.code_exec]` with its runtime and caps), the privilege class is `exec` so review tooling can flag it, and a general `shell` never enters the library — the parked `hugr-cli` keeps its shell as a host-registered capability, outside the toolkit path.
 
 ### 20.3 Custom tools, in order of weight
 
@@ -880,6 +909,24 @@ All three land in the same uniform registry — no privileged tools, no privileg
 ### 20.4 Interpret vs bundle
 
 `hugr run <agent-dir> "question"` interprets a definition directly (the development loop). `hugr build` bundles the same definition into standalone surfaces (§21). Same `AgentDefinition`, same runtime — bundling embeds, never forks behavior; the surface conformance suite (T2.5) holds the two modes equal.
+
+### 20.5 Agents as tools (composition)
+
+**A Hugr agent IS a tool.** Because every agent exposes the same `ask` contract (§18.1), granting one agent to another is just another manifest line — no orchestrator code, no MCP config:
+
+```toml
+[tools.agent.receipts]
+ref = "receipts"                      # registry name (§22.1), definition folder, or artifact path
+grants = ["expenses:read"]            # resource-group grants forwarded, attenuated (§18.5)
+max_cost_micro_usd = 20000            # child budget, enforced like [limits]
+```
+
+Mechanics — this is the §13 `StartAgent` machinery surfaced at the definition layer, not a new subsystem:
+
+- The grant registers **one ordinary capability** named `agent_receipts` whose schema is generated from the child's `AgentCard` (`describe()` output — description, extras schema); to the calling model it looks like any other tool. Its args are an `Ask` (question, optional `trace_id` for follow-ups/forks, blob handles); its result is the full `Answer` — so the caller can resume the child's thread across its own turns, exactly like a human orchestrator would.
+- **Resolution follows §20.3 weight order**: a definition folder runs under the interpreter in-process (`StartAgent` with a fresh brain — cheapest), an artifact runs as a subprocess speaking the CLI JSON contract (§21.1), and a registry `ref` resolves through the registry cache with the artifact as ground truth (§22.1). The calling agent cannot tell which; the contract is identical.
+- **Privileges compose downward only.** The child runs under its *own* manifest (its own jail, tiers, limits) — granting an agent never leaks the parent's capabilities into it. Resource-group grants forward per the attenuation rule (§18.5); the child's cost is capped by the grant's budget and folds into the parent's `AnswerMeta` (children aggregate through recorded digests, §18.4), so the orchestrator's cost line stays complete.
+- **Determinism is preserved**: the child's `Answer` (with its `trace_id`) is recorded as the op's result in the parent trace, and a recording host nests the child's own trace as a `ChildTrace` (§13.3) — replaying the parent never re-runs the child, and `verify()` recursively checks the whole tree. Recursion depth is capped host-side (`max_agent_depth`, §13), and a cycle (`a` grants `b` grants `a`) is cut by the same cap with an `agent_depth_exceeded` semantic tool result.
 
 ## 21. Surfaces: one definition, N packagings
 
