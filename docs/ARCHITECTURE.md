@@ -45,6 +45,8 @@ pub enum Command {
     StartCapability { op: OpId, name: CapabilityName, args: Value },
 
     /// Ask the user something (free-form input, choice, confirmation).
+    /// Defined but currently dormant: no reducer path emits it yet; hosts
+    /// handle the command generically when/if it appears.
     AskUser { op: OpId, prompt: UserPrompt },
 
     /// Request permission for a pending action; host's policy decides.
@@ -222,13 +224,13 @@ Implemented (P3-2): `hugr-replay::BlobStore` is the disk-backed, content-address
 
 But real compaction (summarizing old turns to reclaim budget) requires a model call. So compaction is **not** part of projection — it is a **separate model op the brain triggers**, exactly like any other:
 
-1. When projection would exceed the budget (or a watermark is crossed), the brain emits a `StartModelCall` with the `small` selector (§5.3) over the span to compact.
+1. When projection would exceed the budget (or a watermark is crossed), the brain emits a `StartModelCall` over the span to compact, using the selector `TurnPolicy::choose_model` returns for `RoutingPhase::Compaction` (the shipped `RoutingPolicy` picks `small`; `StaticPolicy` falls back to its default model). The selected span never splits a tool_use/tool_result group — the boundary is extended so a `ModelOutput` carrying tool calls and its answering `ToolResult`(s) are summarized together. The summarization prompt and per-record rendering are provided `TurnPolicy` methods (`compaction_request` / `render_summary_record`) with core defaults, so hosts override them without a reducer edit.
 2. Its `ModelDone` result is appended to the log as a **summary `Record`** that references the span it replaces.
 3. The *next* projection sees that summary and evicts the underlying entries to references (§3.2) — nothing is lost; the originals remain in the log/blobs.
 
 This keeps projection pure while compaction stays an ordinary, replayable, cost-attributed op (it shows up in the trace with its own `OpMeta`). The cost: a small **compaction sub-loop** in the brain (decide-when, span-selection, "don't compact while a turn depends on those entries") — straightforward, but it is real logic to design, not free.
 
-Manual compaction is the same mechanism with a different trigger: a host injects `Event::CompactContext`, the reducer selects one span through the same pure `TurnPolicy::select_compaction_span` hook, emits one `small` model call, and appends the returned summary. Because the trigger and summarizer result are events, replay never re-runs the summarizer or re-decides the span.
+Manual compaction is the same mechanism with a different trigger: a host injects `Event::CompactContext`, the reducer selects one span through the same pure `TurnPolicy::select_compaction_span` hook, emits one policy-routed compaction model call, and appends the returned summary. Because the trigger and summarizer result are events, replay never re-runs the summarizer or re-decides the span.
 
 ### 3.5 Token counts come from the host, at ingestion
 
@@ -249,7 +251,7 @@ Model-tier routing is another policy decision over projected state, not host sta
 
 ```rust
 pub struct BrainState {
-    inflight: HashMap<OpId, OpState>,   // every started, not-yet-finished op
+    inflight: BTreeMap<OpId, OpState>,  // every started, not-yet-finished op; ordered so cancel fan-out is deterministic
     // ... projection caches, counters, etc.
 }
 
@@ -601,7 +603,9 @@ A **trace** is the saved form of a session. Because the brain is a pure fold ove
 ```rust
 pub struct Trace {
     meta: TraceMeta,          // codename/version, schema version, created-at(seq 0 tick)
+    events: Vec<Event>,       // the ordered host→brain stream — the replay INPUT
     log: Vec<LogEntry>,       // the ordered, seq-stamped CONSOLIDATED record stream (the truth)
+    commands: Vec<Command>,   // the ordered commands the driver drained (serde-default; old traces load without it)
     blobs: BlobManifest,      // refs to content-addressed payloads (not inlined)
     // NOTE: BrainState is NOT stored — it is always rederivable by folding the log.
 }
@@ -615,11 +619,11 @@ Key points:
 
 ### 12.2 Saving is a host capability, not core logic
 
-The brain emits `Command::Checkpoint`; the host serializes the current trace (append-only, so checkpointing is cheap — usually just flushing new events). Implemented in the native host: `EngineBuilder::checkpoint(path, cadence)` writes atomic trace checkpoints (`Trace::save_atomic`) either on `Command::Checkpoint`, after every submitted host event, or after every N events. The core never decides *where* a trace goes (disk, IndexedDB in a browser, an HTTP endpoint, a Hub repo) — that's a host capability. Same core, any storage.
+The brain emits `Command::Checkpoint`; the host serializes the current trace (append-only, so checkpointing is cheap — usually just flushing new events). Implemented in the native host: `EngineBuilder::checkpoint(path, cadence)` writes atomic trace checkpoints (`Trace::save_atomic`) either on `Command::Checkpoint`, after every submitted host event, or after every N events; writes run in `spawn_blocking` off the driver loop and are single-flight (a checkpoint due mid-write marks dirty and rewrites the latest state when the writer finishes, guarded by a monotone generation), skip when nothing changed, and flush synchronously on session end and `Drop`. The core never decides *where* a trace goes (disk, IndexedDB in a browser, an HTTP endpoint, a Hub repo) — that's a host capability. Same core, any storage.
 
 ### 12.3 Loading / replay / portability
 
-- **Replay** (§6) folds the events into a fresh brain → identical commands.
+- **Replay** (§6) folds the events into a fresh brain → identical commands. `verify()` asserts the reconstructed durable log **and** the reconstructed command sequence equal the recorded ones, bit-for-bit and in order (a pre-commands trace falls back to log-only comparison).
 - A trace is **portable**: record on a server, replay in the browser, because neither the brain nor the trace depends on the environment. (Caveat: replaying *live* — re-issuing real model/tool calls — needs those capabilities present; pure replay of the recorded run needs nothing.)
 - Traces double as the substrate for **resume** (§15), **debugging**, **test fixtures** (§Roadmap cross-cutting), and **sharing reproductions**.
 
@@ -627,14 +631,15 @@ The brain emits `Command::Checkpoint`; the host serializes the current trace (ap
 
 A sub-agent is **not a special subsystem** — it is *another `hugr-core` instance*. Because the core is tiny, pure, and runtime-free, spawning one is cheap, and an arbitrarily deep tree of agents is just a tree of brains.
 
-Implemented (Phase 6): `Command::StartAgent { op, config, seed }` is emitted (instead of `StartCapability`) when the pluggable `TurnPolicy::agent_seed(capability)` designates a tool as a sub-agent spawner — *strategy* in the policy, not hardcoded in the reducer. `config` is the opaque tool-call args (host-interpreted: prompt/model/tools); `seed` is the forked log prefix (§14). The child runs **in-process** as a spawned host task (`hugr_host::agent::run_agent`) reusing a subset of the parent's model + capability registries; its ops live in a `JoinSet` so a parent `Cancel` tears down the subtree. Its digest returns as `Event::AgentDone { op, result }` (a text answer + aggregated usage), folded back like any tool result. Nested agents work with no special case. Replay is flattened (§13.3): the parent trace records each child's `AgentDone`, so re-feeding it reconstructs the parent bit-for-bit without re-running children.
+Implemented (Phase 6): `Command::StartAgent { op, agent, config, seed }` is emitted (instead of `StartCapability`) when the pluggable `TurnPolicy::agent_seed(capability)` designates a tool as a sub-agent spawner — *strategy* in the policy, not hardcoded in the reducer. `agent` is the typed agent-kind name (the capability name; serde-default for old traces); `config` is the model's opaque tool-call args passed through **untouched** (the brain never injects keys into them, §2.4); `seed` is the forked log prefix (§14). Nesting depth is a host concern: `EngineBuilder::max_agent_depth` (default 1) caps it, and exceeding the cap routes back to the model as an `agent_depth_exceeded` semantic tool result. Per-kind defaults (model tier, tool allowlist) are host registration data (`AgentDefaults` via `EngineBuilder::agent_with_defaults`), not reducer knowledge. The child runs **in-process** as a spawned host task (`hugr_host::agent::run_agent`) reusing a subset of the parent's model + capability registries; its ops live in a `JoinSet` so a parent `Cancel` tears down the subtree. Its digest returns as `Event::AgentDone { op, result }` (a text answer + aggregated usage), folded back like any tool result. Nested agents work with no special case. Replay is flattened (§13.3): the parent trace records each child's `AgentDone`, so re-feeding it reconstructs the parent bit-for-bit without re-running children.
 
 ### 13.1 A sub-agent is an op
 
 ```rust
 Command::StartAgent {
     op: OpId,
-    config: AgentConfig,        // model, policy, tools subset, system prompt
+    agent: String,              // typed agent-kind name (the spawning capability)
+    config: AgentConfig,        // model, policy, tools subset, system prompt (opaque, untouched)
     seed: AgentSeed,            // how to initialize the child's log (see §14 forks)
 }
 ```
@@ -708,7 +713,7 @@ Resume is replay (§6.3) followed by going live:
    - **Cancel:** append `OpCancelled` for them and let the brain decide next. The choice is itself logged, so the resumed session stays replayable.
 3. Continue the live driver loop.
 
-Implemented native-host policy: `CrashResumePolicy::CancelInflight` is the conservative default and appends recorded `OpCancelled` events for stale in-flight ops before going live; idempotent re-issue remains a future host policy. `CheckpointCadence::EveryEvent` is the crash-safe recording mode because the checkpoint captures the event that created the in-flight op before the op produces a terminal result.
+Implemented native-host policy: `CrashResumePolicy::CancelInflight` is the conservative default and appends recorded `OpCancelled` events for stale in-flight ops before going live; the commands those reconcile submissions queue are drained (and recorded) so a resumed engine starts quiescent, with no stale pre-crash commands firing into the next live turn. Idempotent re-issue remains a future host policy. `CheckpointCadence::EveryEvent` is the crash-safe recording mode because the checkpoint captures the event that created the in-flight op before the op produces a terminal result.
 
 This is why resume is *not* a feature to bolt on later — it's the same machinery as replay, available from Phase 3.
 
