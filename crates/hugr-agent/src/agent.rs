@@ -28,15 +28,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use hugr_core::{LogEntry, ModelSelector, OpId, Record, SamplingParams};
+use hugr_core::{LogEntry, ModelSelector, OpId, Record, SamplingParams, ToolSchema};
 use hugr_host::policy::AllowAll;
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter, Policy};
 use hugr_replay::{BlobStore, Trace};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::blobs::{self, BlobError};
 use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
-use crate::scratch::{ScratchDir, copy_tree};
-use crate::store::{StoreError, TraceHeader, TraceStore};
+use crate::scratch::{ScratchDir, copy_tree, scratch_tool_schemas};
+use crate::store::{StoreError, TraceHead, TraceHeader, TraceStore};
 
 /// Default name of the scratch subtree directory, placed next to the trace
 /// files inside the store root. Hidden and non-`.json`, so `TraceStore::list`
@@ -63,6 +65,7 @@ const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
 pub struct Agent {
     name: String,
     version: String,
+    description: String,
     store: TraceStore,
     system_prompt: Option<String>,
     models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
@@ -78,6 +81,7 @@ pub struct Agent {
     /// Per-tier pricing used to derive `AnswerMeta.cost_micro_usd` from
     /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
     pricing: Pricing,
+    limits: AgentLimits,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -95,6 +99,7 @@ impl Agent {
         AgentBuilder {
             name: name.into(),
             version: version.into(),
+            description: String::new(),
             store,
             system_prompt: None,
             models: Vec::new(),
@@ -106,6 +111,7 @@ impl Agent {
             scratch_root: None,
             blob_store: None,
             pricing: Pricing::default(),
+            limits: AgentLimits::default(),
         }
     }
 
@@ -119,6 +125,137 @@ impl Agent {
     /// `sha256` ref through here.
     pub fn blob_store(&self) -> &BlobStore {
         &self.blob_store
+    }
+
+    /// Describe this agent's public card: identity, tools + privileges, model
+    /// tiers, pricing, and declared limits (ARCHITECTURE §18.2).
+    pub fn describe(&self) -> AgentCard {
+        let mut tools: Vec<ToolCard> = scratch_tool_schemas()
+            .into_iter()
+            .map(|schema| ToolCard {
+                name: schema.name.clone(),
+                description: schema.description.clone(),
+                privilege: ToolPrivilege::Scratchpad,
+                runs_in_background: false,
+                schema,
+                scope: json!({ "root": self.scratch_root.display().to_string() }),
+            })
+            .collect();
+        tools.extend(self.capabilities.iter().map(|capability| {
+            let schema = capability.schema();
+            ToolCard {
+                name: schema.name.clone(),
+                description: schema.description.clone(),
+                privilege: if capability.requires_permission() {
+                    ToolPrivilege::Gated
+                } else {
+                    ToolPrivilege::ReadOnly
+                },
+                runs_in_background: capability.runs_in_background(),
+                schema,
+                scope: Value::Null,
+            }
+        }));
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+
+        AgentCard {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            description: self.description.clone(),
+            tools,
+            model_tiers: self.model_tiers(),
+            limits: self.limits.clone(),
+        }
+    }
+
+    /// Return the effective runtime configuration that built this agent, with
+    /// stable provenance and redaction slots for future manifest/env/flag
+    /// sources (ARCHITECTURE §18.2).
+    pub fn config(&self) -> AgentConfig {
+        let mut entries = vec![
+            ConfigEntry::visible("agent.name", self.name.clone(), ConfigProvenance::Builder),
+            ConfigEntry::visible(
+                "agent.version",
+                self.version.clone(),
+                ConfigProvenance::Builder,
+            ),
+            ConfigEntry::visible(
+                "agent.description",
+                self.description.clone(),
+                if self.description.is_empty() {
+                    ConfigProvenance::Default
+                } else {
+                    ConfigProvenance::Builder
+                },
+            ),
+            ConfigEntry::visible(
+                "traces.store_root",
+                self.store.root().display().to_string(),
+                ConfigProvenance::Builder,
+            ),
+            ConfigEntry::visible(
+                "scratchpad.root",
+                self.scratch_root.display().to_string(),
+                ConfigProvenance::Builder,
+            ),
+            ConfigEntry::visible(
+                "models.default",
+                self.default_model
+                    .as_ref()
+                    .map(selector_name)
+                    .unwrap_or_else(|| {
+                        self.models
+                            .first()
+                            .map(|(selector, _)| selector_name(selector))
+                            .unwrap_or_else(|| "medium".to_string())
+                    }),
+                if self.default_model.is_some() {
+                    ConfigProvenance::Builder
+                } else {
+                    ConfigProvenance::Default
+                },
+            ),
+            ConfigEntry::visible(
+                "limits",
+                serde_json::to_value(&self.limits).expect("limits serialize"),
+                if self.limits == AgentLimits::default() {
+                    ConfigProvenance::Default
+                } else {
+                    ConfigProvenance::Builder
+                },
+            ),
+        ];
+
+        for tier in self.model_tiers() {
+            entries.push(ConfigEntry::visible(
+                format!("models.{}", tier.selector),
+                json!({
+                    "selector": tier.selector,
+                    "default": tier.default,
+                    "pricing": tier.pricing,
+                }),
+                ConfigProvenance::Builder,
+            ));
+        }
+        for tool in &self.describe().tools {
+            entries.push(ConfigEntry::visible(
+                format!("tools.{}", tool.name),
+                json!({
+                    "privilege": tool.privilege,
+                    "runs_in_background": tool.runs_in_background,
+                    "scope": tool.scope.clone(),
+                }),
+                ConfigProvenance::Builder,
+            ));
+        }
+
+        AgentConfig { entries }
+    }
+
+    /// List stored trace headers for this agent. This is the same cheap
+    /// header-only read as [`TraceStore::list`].
+    pub fn traces(&self) -> Result<Vec<TraceHead>, StoreError> {
+        self.store.list()
     }
 
     /// Run one ask to completion (ARCHITECTURE §18.1/§19.2). See the module
@@ -262,6 +399,28 @@ impl Agent {
         std::fs::rename(working, &final_dir)?;
         Ok(())
     }
+
+    fn model_tiers(&self) -> Vec<ModelTierCard> {
+        let default = self.default_model.as_ref().map(selector_name).or_else(|| {
+            self.models
+                .first()
+                .map(|(selector, _)| selector_name(selector))
+        });
+        let mut tiers: Vec<_> = self
+            .models
+            .iter()
+            .map(|(selector, _)| {
+                let selector = selector_name(selector);
+                ModelTierCard {
+                    default: default.as_ref() == Some(&selector),
+                    pricing: self.pricing.price_for(&selector),
+                    selector,
+                }
+            })
+            .collect();
+        tiers.sort_by(|a, b| a.selector.cmp(&b.selector));
+        tiers
+    }
 }
 
 /// Builds an [`Agent`]. Mirrors `hugr_host::EngineBuilder` for the pieces an
@@ -270,6 +429,7 @@ impl Agent {
 pub struct AgentBuilder {
     name: String,
     version: String,
+    description: String,
     store: TraceStore,
     system_prompt: Option<String>,
     models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
@@ -281,9 +441,16 @@ pub struct AgentBuilder {
     scratch_root: Option<PathBuf>,
     blob_store: Option<BlobStore>,
     pricing: Pricing,
+    limits: AgentLimits,
 }
 
 impl AgentBuilder {
+    /// Set the human-facing description used by `Agent::describe`.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
     /// Register a model adapter under a logical selector. The first registered
     /// selector is the default unless [`default_model`](Self::default_model)
     /// overrides it (same rule as the engine builder).
@@ -357,6 +524,13 @@ impl AgentBuilder {
         self
     }
 
+    /// Set declared limits for introspection. Enforcement lands in T3.1; T0.7
+    /// exposes the audit surface every generated surface will print.
+    pub fn limits(mut self, limits: AgentLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     pub fn build(self) -> Agent {
         let scratch_root = self
             .scratch_root
@@ -367,6 +541,7 @@ impl AgentBuilder {
         Agent {
             name: self.name,
             version: self.version,
+            description: self.description,
             store: self.store,
             system_prompt: self.system_prompt,
             models: self.models,
@@ -378,9 +553,150 @@ impl AgentBuilder {
             scratch_root,
             blob_store,
             pricing: self.pricing,
+            limits: self.limits,
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
     }
+}
+
+/// Public description returned by [`Agent::describe`] (ROADMAP T0.7).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AgentCard {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub tools: Vec<ToolCard>,
+    pub model_tiers: Vec<ModelTierCard>,
+    pub limits: AgentLimits,
+}
+
+/// One advertised tool plus the privilege metadata surfaces need.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolCard {
+    pub name: String,
+    pub description: String,
+    pub privilege: ToolPrivilege,
+    pub runs_in_background: bool,
+    pub schema: ToolSchema,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub scope: Value,
+}
+
+/// Coarse privilege class. T1's manifest tool library will refine scopes; this
+/// T0 layer reports what the registered capability can tell us today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolPrivilege {
+    ReadOnly,
+    Scratchpad,
+    Gated,
+}
+
+/// One logical model tier exposed in the agent card.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ModelTierCard {
+    pub selector: String,
+    pub default: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<TierPrice>,
+}
+
+/// Declared runtime limits. Enforcement is T3.1; this shape is part of the
+/// T0.7 introspection contract so surfaces can expose it consistently.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AgentLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_model_calls: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost_micro_usd: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+impl AgentLimits {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_max_turns(mut self, max_turns: u32) -> Self {
+        self.max_turns = Some(max_turns);
+        self
+    }
+
+    pub fn with_max_model_calls(mut self, max_model_calls: u32) -> Self {
+        self.max_model_calls = Some(max_model_calls);
+        self
+    }
+
+    pub fn with_max_cost_micro_usd(mut self, max_cost_micro_usd: u64) -> Self {
+        self.max_cost_micro_usd = Some(max_cost_micro_usd);
+        self
+    }
+
+    pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = Some(timeout_ms);
+        self
+    }
+}
+
+/// Effective configuration with value provenance and redaction.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AgentConfig {
+    pub entries: Vec<ConfigEntry>,
+}
+
+/// One effective configuration value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ConfigEntry {
+    pub key: String,
+    pub value: Value,
+    pub provenance: ConfigProvenance,
+    pub redacted: bool,
+}
+
+impl ConfigEntry {
+    pub fn visible(
+        key: impl Into<String>,
+        value: impl Serialize,
+        provenance: ConfigProvenance,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            value: serde_json::to_value(value).expect("config values serialize"),
+            provenance,
+            redacted: false,
+        }
+    }
+
+    pub fn redacted(key: impl Into<String>, provenance: ConfigProvenance) -> Self {
+        Self {
+            key: key.into(),
+            value: Value::String("<redacted>".to_string()),
+            provenance,
+            redacted: true,
+        }
+    }
+}
+
+/// Where an effective configuration value came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ConfigProvenance {
+    Default,
+    Builder,
+    Manifest,
+    Env,
+    Flag,
 }
 
 /// Per-tier token prices used by [`Agent`] cost accounting (ROADMAP T0.6).
@@ -420,10 +736,14 @@ impl Pricing {
             + (output_tokens as f64 * price.output_usd_per_m_tokens);
         cost.round().max(0.0) as u64
     }
+
+    fn price_for(&self, selector: &str) -> Option<TierPrice> {
+        self.tiers.get(selector).copied()
+    }
 }
 
 /// One tier's input/output prices in USD per million tokens.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TierPrice {
     pub input_usd_per_m_tokens: f64,

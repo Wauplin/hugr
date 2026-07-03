@@ -22,7 +22,10 @@ mod contract;
 mod scratch;
 mod store;
 
-pub use agent::{Agent, AgentBuilder, AskError, Pricing, TierPrice};
+pub use agent::{
+    Agent, AgentBuilder, AgentCard, AgentConfig, AgentLimits, AskError, ConfigEntry,
+    ConfigProvenance, ModelTierCard, Pricing, TierPrice, ToolCard, ToolPrivilege,
+};
 pub use blobs::BlobError;
 pub use contract::{
     Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,

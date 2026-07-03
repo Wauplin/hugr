@@ -30,6 +30,16 @@ use hugr_core::{ToolSchema, Value};
 use hugr_host::{Capability, ChunkSink};
 use serde_json::json;
 
+/// Schemas for the built-in scratchpad tools. Used by `Agent::describe`
+/// without needing to construct a per-ask scratch jail.
+pub(crate) fn scratch_tool_schemas() -> Vec<ToolSchema> {
+    vec![
+        scratch_write_schema(),
+        scratch_read_schema(),
+        scratch_list_schema(),
+    ]
+}
+
 /// The canonicalized scratch root one ask's tools are jailed to. Cheap to
 /// clone (an `Arc`), so the same root backs all three capabilities.
 #[derive(Clone)]
@@ -173,19 +183,7 @@ impl Capability for ScratchWrite {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchema::new(
-            self.name(),
-            "Write text to a file in your private scratch directory, creating or overwriting it. Paths are relative to the scratch root; parent directories are created as needed.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "File path relative to the scratch root." },
-                    "content": { "type": "string", "description": "The full contents to write." }
-                },
-                "required": ["path", "content"],
-                "additionalProperties": false
-            }),
-        )
+        scratch_write_schema()
     }
 
     async fn invoke(&self, args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
@@ -227,18 +225,7 @@ impl Capability for ScratchRead {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchema::new(
-            self.name(),
-            "Read a UTF-8 text file from your private scratch directory. Paths are relative to the scratch root.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "File path relative to the scratch root." }
-                },
-                "required": ["path"],
-                "additionalProperties": false
-            }),
-        )
+        scratch_read_schema()
     }
 
     async fn invoke(&self, args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
@@ -279,17 +266,7 @@ impl Capability for ScratchList {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchema::new(
-            self.name(),
-            "List files and directories in your private scratch directory. Paths are relative to the scratch root; the default is the root itself.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Relative directory path. Defaults to the scratch root." }
-                },
-                "additionalProperties": false
-            }),
-        )
+        scratch_list_schema()
     }
 
     async fn invoke(&self, args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
@@ -322,4 +299,49 @@ impl Capability for ScratchList {
         }
         Ok(json!({ "entries": entries }))
     }
+}
+
+fn scratch_write_schema() -> ToolSchema {
+    ToolSchema::new(
+        "scratch_write",
+        "Write text to a file in your private scratch directory, creating or overwriting it. Paths are relative to the scratch root; parent directories are created as needed.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path relative to the scratch root." },
+                "content": { "type": "string", "description": "The full contents to write." }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false
+        }),
+    )
+}
+
+fn scratch_read_schema() -> ToolSchema {
+    ToolSchema::new(
+        "scratch_read",
+        "Read a UTF-8 text file from your private scratch directory. Paths are relative to the scratch root.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path relative to the scratch root." }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+    )
+}
+
+fn scratch_list_schema() -> ToolSchema {
+    ToolSchema::new(
+        "scratch_list",
+        "List files and directories in your private scratch directory. Paths are relative to the scratch root; the default is the root itself.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Relative directory path. Defaults to the scratch root." }
+            },
+            "additionalProperties": false
+        }),
+    )
 }
