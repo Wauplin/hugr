@@ -25,9 +25,9 @@ use hugr_host::capabilities::{
 };
 use hugr_host::policy::{AllowAll, AutoApprove};
 use hugr_host::{
-    Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector, McpServerConfig,
-    Policy, Schedule, SkillBundle, SpendReport, StdoutFrontend, Trace, TriggerTarget,
-    estimate_text_tokens, spend_report,
+    AgentDefaults, Capability, CheckpointCadence, CronExpr, Engine, EngineBuilder, Inspector,
+    McpServerConfig, Policy, Schedule, SkillBundle, SpendReport, StdoutFrontend, Trace,
+    TriggerTarget, estimate_text_tokens, spend_report,
 };
 use hugr_providers::TierModelConfigSet;
 use serde::Deserialize;
@@ -593,7 +593,7 @@ fn base_builder(models: TierModelConfigSet, policy: Arc<dyn Policy>) -> Result<E
     for (selector, adapter) in models.adapters_from_env()? {
         builder = builder.model(selector, Arc::new(adapter));
     }
-    Ok(builder
+    builder = builder
         .capability(Arc::new(Shell))
         .capability(Arc::new(FsRead))
         .capability(Arc::new(FsWrite))
@@ -610,13 +610,15 @@ fn base_builder(models: TierModelConfigSet, policy: Arc<dyn Policy>) -> Result<E
         // A `task` sub-agent tool (Phase 6): the model can delegate a self-
         // contained unit of work to a child agent seeded with the full context.
         // The child reuses this host's tools (optionally narrowed via `tools`).
-        .agent(task_agent_schema(), AgentSeed::ForkFull)
-        .agent(coding_agent_schema("explorer"), AgentSeed::ForkFull)
-        .agent(coding_agent_schema("implementer"), AgentSeed::ForkFull)
-        .agent(coding_agent_schema("reviewer"), AgentSeed::ForkFull)
-        .agent(coding_agent_schema("test_fixer"), AgentSeed::ForkFull)
-        .system_prompt(SYSTEM_PROMPT)
-        .policy(policy))
+        .agent(task_agent_schema(), AgentSeed::ForkFull);
+    // The named coding sub-agents: their model tier + constrained tool
+    // allowlist are **registration** data (passed as `AgentDefaults` here),
+    // never hardcoded in the generic host runner.
+    for kind in ["explorer", "implementer", "reviewer", "test_fixer"] {
+        let (schema, defaults) = coding_agent(kind);
+        builder = builder.agent_with_defaults(schema, AgentSeed::ForkFull, defaults);
+    }
+    Ok(builder.system_prompt(SYSTEM_PROMPT).policy(policy))
 }
 
 /// The schema advertised for the built-in `task` sub-agent tool.
@@ -642,8 +644,12 @@ fn task_agent_schema() -> ToolSchema {
     )
 }
 
-fn coding_agent_schema(kind: &'static str) -> ToolSchema {
-    let (description, tools, tier, depth) = match kind {
+/// One named coding sub-agent kind: the schema advertised to the model plus
+/// the registration-time defaults (model tier + constrained tool allowlist)
+/// the host runner consumes. Declared here — at the registration site — so the
+/// generic runner in `hugr-host` carries no agent-kind knowledge.
+fn coding_agent(kind: &'static str) -> (ToolSchema, AgentDefaults) {
+    let (description, tools, tier) = match kind {
         "explorer" => (
             "Inspect repo structure and return findings with file references. Default tools: repo_files, repo_search, repo_read, git_status, git_log, package_metadata.",
             vec![
@@ -655,7 +661,6 @@ fn coding_agent_schema(kind: &'static str) -> ToolSchema {
                 "package_metadata",
             ],
             "small",
-            1,
         ),
         "implementer" => (
             "Make a focused implementation attempt and return a concise diff summary. Default tools include repo_read, repo_search, fs_read, fs_write, patch_apply, cargo_verify, git_diff, git_status.",
@@ -670,7 +675,6 @@ fn coding_agent_schema(kind: &'static str) -> ToolSchema {
                 "git_status",
             ],
             "big",
-            1,
         ),
         "reviewer" => (
             "Review the final diff and return findings with file references. Default tools: repo_read, repo_search, git_diff, git_status, cargo_verify.",
@@ -682,7 +686,6 @@ fn coding_agent_schema(kind: &'static str) -> ToolSchema {
                 "cargo_verify",
             ],
             "big",
-            1,
         ),
         "test_fixer" => (
             "Investigate failing verification output, patch the likely cause, and return what changed. Default tools include repo_read, repo_search, fs_read, fs_write, patch_apply, cargo_verify, git_diff.",
@@ -696,11 +699,10 @@ fn coding_agent_schema(kind: &'static str) -> ToolSchema {
                 "git_diff",
             ],
             "big",
-            1,
         ),
-        _ => ("Run a named coding subagent.", vec![], "medium", 1),
+        _ => ("Run a named coding subagent.", vec![], "medium"),
     };
-    ToolSchema::new(
+    let schema = ToolSchema::new(
         kind,
         description,
         serde_json::json!({
@@ -717,16 +719,15 @@ fn coding_agent_schema(kind: &'static str) -> ToolSchema {
                     "type": "string",
                     "default": tier,
                     "description": "Optional tier override. Omit to use this subagent's default tier."
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "default": depth,
-                    "description": "Maximum nested subagent depth for this sub-task."
                 }
             },
             "required": ["prompt"]
         }),
-    )
+    );
+    let defaults = AgentDefaults::new()
+        .with_model(ModelSelector::named(tier))
+        .with_tools(tools);
+    (schema, defaults)
 }
 
 /// Run the session: a one-shot turn if `prompt` is non-empty, otherwise an
@@ -1573,7 +1574,7 @@ mod tests {
 
     #[test]
     fn coding_agent_schema_declares_defaults() {
-        let reviewer = coding_agent_schema("reviewer");
+        let (reviewer, defaults) = coding_agent("reviewer");
         assert_eq!(reviewer.name, "reviewer");
         assert_eq!(
             reviewer.parameters["properties"]["model"]["default"],
@@ -1586,5 +1587,12 @@ mod tests {
                 .iter()
                 .any(|tool| tool == "git_diff")
         );
+        // The registration-time defaults mirror the schema's advertised
+        // defaults — the host runner consumes only these.
+        assert_eq!(defaults.model, Some(ModelSelector::named("big")));
+        let tools = defaults.tools.expect("reviewer default tools");
+        assert!(tools.iter().any(|tool| tool == "git_diff"));
+        assert!(tools.iter().any(|tool| tool == "cargo_verify"));
+        assert!(!tools.iter().any(|tool| tool == "fs_write"));
     }
 }

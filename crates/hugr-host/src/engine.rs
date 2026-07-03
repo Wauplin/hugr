@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
-    AgentSeed, Brain, Command, ContextPlan, Event, HookPhase, ModelSelector, OpId, RoutingPolicy,
-    SamplingParams, SkillDescriptor, StaticPolicy, SteerMode, Timestamp, TodoItem, ToolSchema,
-    Value,
+    AgentSeed, Brain, Command, ContextPlan, Event, HookPhase, ModelRequest, ModelSelector, OpId,
+    RoutingPolicy, SamplingParams, SkillDescriptor, StaticPolicy, SteerMode, Timestamp, TodoItem,
+    ToolSchema, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -189,6 +189,47 @@ impl Recorder {
 /// events so the brain itself never reads a clock (ARCHITECTURE §6.1).
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
+/// The default maximum nested sub-agent depth (ARCHITECTURE §13): the root
+/// engine's children run at depth 1; a depth-1 child may not spawn a depth-2
+/// grandchild unless [`EngineBuilder::max_agent_depth`] raises the cap. This
+/// matches the previous implicit behavior (child policies register no agent
+/// tools, so recursion never happened) — now enforced explicitly.
+pub const DEFAULT_MAX_AGENT_DEPTH: usize = 1;
+
+/// Registration-time defaults for a sub-agent kind (ARCHITECTURE §13.1):
+/// the model tier and tool allowlist a child of this kind uses when its
+/// tool-call args don't override them. These belong to **registration** (the
+/// embedder declaring the agent), not to the generic runner — the runner only
+/// consumes whatever was registered. `#[non_exhaustive]`, so build with
+/// [`AgentDefaults::new`] + the `with_*` methods (ARCHITECTURE §2.4).
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct AgentDefaults {
+    /// The logical model the child calls when its config names none.
+    pub model: Option<ModelSelector>,
+    /// The tool allowlist (a subset of the parent's capabilities) the child
+    /// gets when its config passes no `tools`. `None` inherits every tool.
+    pub tools: Option<Vec<String>>,
+}
+
+impl AgentDefaults {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the default model tier for this agent kind.
+    pub fn with_model(mut self, selector: ModelSelector) -> Self {
+        self.model = Some(selector);
+        self
+    }
+
+    /// Set the default tool allowlist for this agent kind.
+    pub fn with_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.tools = Some(tools.into_iter().map(Into::into).collect());
+        self
+    }
+}
+
 /// A handle for injecting [`Event`]s into a running [`Engine`] from outside a
 /// turn (see [`Engine::event_sender`]). Cloneable and `Send`, so it can live in
 /// a signal handler or another task. The classic use is `UserAbort`.
@@ -258,6 +299,12 @@ pub struct Engine {
     /// The logical model a sub-agent uses when its config doesn't name one
     /// (ARCHITECTURE §13.1); the child reuses the host's model registry.
     default_model: ModelSelector,
+    /// Registration-time defaults per agent kind (model tier + tool allowlist),
+    /// consumed by the sub-agent runner (ARCHITECTURE §13.1).
+    agent_defaults: Arc<HashMap<String, AgentDefaults>>,
+    /// Maximum nested sub-agent depth (ARCHITECTURE §13); exceeding it is a
+    /// semantic error routed back to the model as the tool result.
+    max_agent_depth: usize,
     session_started: bool,
 }
 
@@ -678,6 +725,20 @@ impl Engine {
         }
     }
 
+    /// The shared context a sub-agent run needs from this host (registries,
+    /// permission policy, defaults, depth cap) — cheap `Arc` clones.
+    fn agent_host(&self) -> crate::agent::AgentHost {
+        crate::agent::AgentHost {
+            models: self.models.clone(),
+            caps: self.caps.clone(),
+            policy: self.policy.clone(),
+            default_model: self.default_model.clone(),
+            clock: self.clock.clone(),
+            defaults: self.agent_defaults.clone(),
+            max_depth: self.max_agent_depth,
+        }
+    }
+
     /// Perform a single command from the brain.
     async fn perform(&mut self, command: Command) {
         // Every command except `Emit` may render a front-end line (model/tool
@@ -691,33 +752,11 @@ impl Engine {
             Command::StartModelCall { op, model, request } => match self.models.get(&model) {
                 Some(adapter) => {
                     self.frontend.on_model_start(op, &model);
-                    let tx = self.tx.clone();
-                    let handle = tokio::spawn(async move {
-                        let sink = ModelSink::new(op, tx.clone());
-                        let event = match adapter.call(request, &sink).await {
-                            Ok((output, usage)) => {
-                                let est_tokens = model_output_est_tokens(&output, &usage);
-                                Event::ModelDone {
-                                    op,
-                                    output,
-                                    usage,
-                                    est_tokens,
-                                }
-                            }
-                            Err(error) => Event::ModelError {
-                                op,
-                                error: json!({ "message": error.to_string() }),
-                            },
-                        };
-                        let _ = tx.send(event);
-                    });
+                    let handle = tokio::spawn(run_model_op(adapter, op, request, self.tx.clone()));
                     self.tasks.insert(op, handle);
                 }
                 None => {
-                    let _ = self.tx.send(Event::ModelError {
-                        op,
-                        error: json!({ "message": format!("no adapter for model {model:?}") }),
-                    });
+                    let _ = self.tx.send(missing_model_event(op, &model));
                 }
             },
 
@@ -730,42 +769,12 @@ impl Engine {
                     );
                     self.frontend.on_tool_start(op, &name, &args);
                     self.op_labels.insert(op, name.clone());
-                    let tx = self.tx.clone();
-                    let handle = tokio::spawn(async move {
-                        let sink = ChunkSink::new(op, tx.clone());
-                        let event = match capability.invoke(args, &sink).await {
-                            Ok(result) => {
-                                let version = capability.result_version(&result);
-                                Event::CapabilityDone {
-                                    op,
-                                    est_tokens: estimate_value_tokens(&result),
-                                    result,
-                                    version,
-                                }
-                            }
-                            Err(error) => {
-                                let conflict = capability.conflict_version(&error);
-                                Event::CapabilityError {
-                                    op,
-                                    est_tokens: estimate_value_tokens(&error),
-                                    error,
-                                    conflict,
-                                }
-                            }
-                        };
-                        let _ = tx.send(event);
-                    });
+                    let handle =
+                        tokio::spawn(run_capability_op(capability, op, args, self.tx.clone()));
                     self.tasks.insert(op, handle);
                 }
                 None => {
-                    let _ = self.tx.send(Event::CapabilityError {
-                        op,
-                        est_tokens: estimate_value_tokens(&json!({
-                            "error": format!("unknown capability: {name}")
-                        })),
-                        error: json!({ "error": format!("unknown capability: {name}") }),
-                        conflict: None,
-                    });
+                    let _ = self.tx.send(unknown_capability_event(op, &name));
                 }
             },
 
@@ -774,13 +783,18 @@ impl Engine {
             // registries; its progress streams back as events keyed by `op` and
             // its digest returns as `AgentDone`. Tracked in `tasks` so a `Cancel`
             // aborts the whole subtree.
-            Command::StartAgent { op, config, seed } => {
+            Command::StartAgent {
+                op,
+                agent,
+                config,
+                seed,
+            } => {
                 // A sub-agent spawn is tool-shaped: fire the same PreTool hook
                 // a capability start does (its completion fires PostTool via
                 // `tool_shaped_completion`). Skill activations, by contrast,
                 // happen entirely inside the brain with no host event, so no
                 // Pre/PostTool hook can fire for them — a known limitation.
-                let label = agent_label(&config);
+                let label = format!("agent:{agent}");
                 self.fire_hook(
                     HookPhase::PreTool,
                     "builtin_pre_tool",
@@ -788,15 +802,15 @@ impl Engine {
                 );
                 self.frontend.on_tool_start(op, &label, &config);
                 self.op_labels.insert(op, label);
+                // Root-spawned children run at depth 1 (ARCHITECTURE §13); the
+                // runner enforces `max_agent_depth`.
                 let handle = tokio::spawn(crate::agent::run_agent(
                     op,
+                    agent,
                     config,
                     seed,
-                    self.models.clone(),
-                    self.caps.clone(),
-                    self.policy.clone(),
-                    self.default_model.clone(),
-                    self.clock.clone(),
+                    1,
+                    self.agent_host(),
                     self.tx.clone(),
                 ));
                 self.tasks.insert(op, handle);
@@ -900,6 +914,91 @@ fn system_clock() -> u64 {
         .unwrap_or(0)
 }
 
+/// Run one model op to completion, streaming deltas via the [`ModelSink`] and
+/// sending the terminal [`Event::ModelDone`]/[`Event::ModelError`] into `tx`.
+/// Shared by [`Engine::perform`] and the child runner
+/// ([`crate::agent`]) so the terminal-event construction exists exactly once
+/// (the two dispatch paths can never diverge).
+pub(crate) async fn run_model_op(
+    adapter: Arc<dyn crate::ModelAdapter>,
+    op: OpId,
+    request: ModelRequest,
+    tx: UnboundedSender<Event>,
+) {
+    let sink = ModelSink::new(op, tx.clone());
+    let event = match adapter.call(request, &sink).await {
+        Ok((output, usage)) => {
+            let est_tokens = model_output_est_tokens(&output, &usage);
+            Event::ModelDone {
+                op,
+                output,
+                usage,
+                est_tokens,
+            }
+        }
+        Err(error) => Event::ModelError {
+            op,
+            error: json!({ "message": error.to_string() }),
+        },
+    };
+    let _ = tx.send(event);
+}
+
+/// The error event for a model selector with no registered adapter (shared by
+/// the engine and the child runner).
+pub(crate) fn missing_model_event(op: OpId, model: &ModelSelector) -> Event {
+    Event::ModelError {
+        op,
+        error: json!({ "message": format!("no adapter for model {model:?}") }),
+    }
+}
+
+/// Run one capability op to completion, streaming chunks via the [`ChunkSink`]
+/// and sending the terminal [`Event::CapabilityDone`]/[`Event::CapabilityError`]
+/// (including `result_version`/`conflict_version` and token estimates) into
+/// `tx`. Shared by [`Engine::perform`] and the child runner ([`crate::agent`]).
+pub(crate) async fn run_capability_op(
+    capability: Arc<dyn crate::Capability>,
+    op: OpId,
+    args: Value,
+    tx: UnboundedSender<Event>,
+) {
+    let sink = ChunkSink::new(op, tx.clone());
+    let event = match capability.invoke(args, &sink).await {
+        Ok(result) => {
+            let version = capability.result_version(&result);
+            Event::CapabilityDone {
+                op,
+                est_tokens: estimate_value_tokens(&result),
+                result,
+                version,
+            }
+        }
+        Err(error) => {
+            let conflict = capability.conflict_version(&error);
+            Event::CapabilityError {
+                op,
+                est_tokens: estimate_value_tokens(&error),
+                error,
+                conflict,
+            }
+        }
+    };
+    let _ = tx.send(event);
+}
+
+/// The error event for a capability name with no registration (shared by the
+/// engine and the child runner).
+pub(crate) fn unknown_capability_event(op: OpId, name: &str) -> Event {
+    let error = json!({ "error": format!("unknown capability: {name}") });
+    Event::CapabilityError {
+        op,
+        est_tokens: estimate_value_tokens(&error),
+        error,
+        conflict: None,
+    }
+}
+
 /// Rough token estimate for a piece of text (~4 bytes per token, min 1).
 /// Public so embedders (e.g. the CLI) can size opaque payloads consistently
 /// with the host's own estimates.
@@ -970,8 +1069,11 @@ pub struct EngineBuilder {
     system_prompt: Option<String>,
     sampling: SamplingParams,
     /// Capabilities that spawn sub-agents (ARCHITECTURE §13): each advertises a
-    /// tool schema to the model and carries a fork seed strategy (§14).
-    agents: Vec<(ToolSchema, AgentSeed)>,
+    /// tool schema to the model and carries a fork seed strategy (§14) plus
+    /// registration-time defaults (model tier / tool allowlist).
+    agents: Vec<(ToolSchema, AgentSeed, AgentDefaults)>,
+    /// Maximum nested sub-agent depth (default [`DEFAULT_MAX_AGENT_DEPTH`]).
+    max_agent_depth: usize,
     skills: Vec<SkillDescriptor>,
     record: bool,
     checkpoint_path: Option<PathBuf>,
@@ -997,6 +1099,7 @@ impl Default for EngineBuilder {
             system_prompt: None,
             sampling: SamplingParams::default(),
             agents: Vec::new(),
+            max_agent_depth: DEFAULT_MAX_AGENT_DEPTH,
             skills: Vec::new(),
             record: false,
             checkpoint_path: None,
@@ -1043,8 +1146,28 @@ impl EngineBuilder {
     /// `seed`, §14) which the host runs on its own task and whose digest returns
     /// as the tool's result. The child reuses this host's model + capability
     /// registries (optionally narrowed by a `tools` allowlist in its args).
-    pub fn agent(mut self, schema: ToolSchema, seed: AgentSeed) -> Self {
-        self.agents.push((schema, seed));
+    pub fn agent(self, schema: ToolSchema, seed: AgentSeed) -> Self {
+        self.agent_with_defaults(schema, seed, AgentDefaults::new())
+    }
+
+    /// Register a sub-agent tool together with its registration-time
+    /// [`AgentDefaults`] (model tier + tool allowlist): agent-kind knowledge
+    /// lives here at the registration site, never inside the generic runner.
+    pub fn agent_with_defaults(
+        mut self,
+        schema: ToolSchema,
+        seed: AgentSeed,
+        defaults: AgentDefaults,
+    ) -> Self {
+        self.agents.push((schema, seed, defaults));
+        self
+    }
+
+    /// Cap how deep sub-agents may nest (default [`DEFAULT_MAX_AGENT_DEPTH`]).
+    /// A spawn beyond the cap fails with a semantic error routed back to the
+    /// calling model as the tool result (never a host crash).
+    pub fn max_agent_depth(mut self, depth: usize) -> Self {
+        self.max_agent_depth = depth;
         self
     }
 
@@ -1179,7 +1302,7 @@ impl EngineBuilder {
                 // Advertise both capability tools and sub-agent tools to the
                 // model; the brain routes agent-named calls to `StartAgent`.
                 let mut tools = self.caps.schemas();
-                tools.extend(self.agents.iter().map(|(schema, _)| schema.clone()));
+                tools.extend(self.agents.iter().map(|(schema, ..)| schema.clone()));
                 let mut base_policy = StaticPolicy::default()
                     .with_model(default_model.clone())
                     .with_tools(tools)
@@ -1187,7 +1310,7 @@ impl EngineBuilder {
                     .with_background(self.caps.background_names())
                     .with_skills(self.skills)
                     .with_params(self.sampling);
-                for (schema, seed) in &self.agents {
+                for (schema, seed, _) in &self.agents {
                     base_policy = base_policy.with_agent(schema.name.clone(), *seed);
                 }
                 if let Some(system) = self.system_prompt {
@@ -1204,6 +1327,14 @@ impl EngineBuilder {
                 (brain, self.record.then(Recorder::default), policy_config)
             }
         };
+
+        // Registration-time agent defaults, keyed by tool name, for the runner.
+        let agent_defaults: Arc<HashMap<String, AgentDefaults>> = Arc::new(
+            self.agents
+                .iter()
+                .map(|(schema, _, defaults)| (schema.name.clone(), defaults.clone()))
+                .collect(),
+        );
 
         let (tx, rx) = mpsc::unbounded_channel();
         let (ckpt_done_tx, ckpt_done_rx) = mpsc::unbounded_channel();
@@ -1233,6 +1364,8 @@ impl EngineBuilder {
             compaction: self.compaction,
             policy_config,
             default_model,
+            agent_defaults,
+            max_agent_depth: self.max_agent_depth,
             session_started: false,
         }
     }
@@ -1282,7 +1415,7 @@ fn reconcile_crashed_ops(
 /// diverge. Skill activations are *not* here: they happen entirely inside the
 /// brain (no host event crosses this boundary), so no Pre/PostTool hook fires
 /// for them — a known limitation.
-fn tool_shaped_completion(event: &Event) -> Option<(OpId, &Value, bool)> {
+pub(crate) fn tool_shaped_completion(event: &Event) -> Option<(OpId, &Value, bool)> {
     match event {
         Event::CapabilityDone { op, result, .. } | Event::AgentDone { op, result, .. } => {
             Some((*op, result, false))
@@ -1291,24 +1424,5 @@ fn tool_shaped_completion(event: &Event) -> Option<(OpId, &Value, bool)> {
             Some((*op, error, true))
         }
         _ => None,
-    }
-}
-
-/// A display label for a sub-agent op — its config's `name` if given, else the
-/// prompt's opening words, else just `"agent"`. Cosmetic (front-end only).
-fn agent_label(config: &Value) -> String {
-    if let Some(name) = config.get("name").and_then(|v| v.as_str()) {
-        return format!("agent:{name}");
-    }
-    match config.get("prompt").and_then(|v| v.as_str()) {
-        Some(prompt) => {
-            let head: String = prompt
-                .split_whitespace()
-                .take(4)
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("agent:{head}")
-        }
-        None => "agent".to_string(),
     }
 }

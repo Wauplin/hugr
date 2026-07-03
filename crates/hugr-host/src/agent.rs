@@ -4,13 +4,18 @@
 //! [`hugr_core::Brain`]* the host drives to completion on its own task, exactly
 //! like the top-level [`Engine`](crate::Engine) drives the root brain. Because
 //! the core is tiny, pure and runtime-free, spawning one is cheap, and an
-//! arbitrarily deep tree of agents is just a tree of brains.
+//! arbitrarily deep tree of agents is just a tree of brains (bounded by the
+//! host's [`max_agent_depth`](crate::EngineBuilder::max_agent_depth)).
 //!
 //! This module implements the **in-process** isolation mode (§13.2): the child
 //! runs on a spawned tokio task, reusing (a subset of) the parent's model and
 //! capability registries. Its progress streams back to the parent as ordinary
 //! [`Event`]s keyed by the parent's op, and its final digest returns as
 //! [`Event::AgentDone`] (§13.1) — the parent folds it like any other op result.
+//!
+//! The runner is **generic**: which model tier and tool allowlist an agent kind
+//! defaults to is registration data ([`AgentDefaults`], declared where the
+//! agent tool is registered — e.g. by the CLI), never hardcoded here.
 //!
 //! Cancellation is clean: the child's own ops live in a [`JoinSet`] that aborts
 //! them all when the child future is dropped, so aborting the parent's agent task
@@ -22,52 +27,60 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use hugr_core::{
-    Brain, Command, Event, LogEntry, ModelSelector, OpId, OutputEvent, Record, StaticPolicy,
-    SteerMode, Timestamp, Value,
+    Brain, Command, Event, HookPhase, LogEntry, ModelSelector, OpId, OutputEvent, Record,
+    StaticPolicy, SteerMode, Timestamp, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::{AbortHandle, JoinSet};
 
-use crate::capability::{CapabilityRegistry, ChunkSink};
+use crate::capability::CapabilityRegistry;
 use crate::engine::{
-    Clock, estimate_text_tokens, estimate_value_tokens, model_output_est_tokens,
-    permission_decision_est_tokens,
+    AgentDefaults, Clock, estimate_text_tokens, estimate_value_tokens, missing_model_event,
+    run_capability_op, run_model_op, tool_shaped_completion, unknown_capability_event,
 };
-use crate::model::{ModelRegistry, ModelSink};
+use crate::model::ModelRegistry;
 use crate::policy::Policy;
 
-/// Run a sub-agent to completion and report its result to the parent.
+/// Everything a sub-agent run borrows from its host: the shared registries,
+/// permission policy, per-kind registration defaults, and the nesting cap.
+/// Cheap to clone (`Arc`s all the way down), so a child hands the same host
+/// context to its own grandchildren.
+#[derive(Clone)]
+pub(crate) struct AgentHost {
+    pub models: ModelRegistry,
+    pub caps: CapabilityRegistry,
+    pub policy: Arc<dyn Policy>,
+    /// The logical model a child uses when neither its config nor its kind's
+    /// registered defaults name one.
+    pub default_model: ModelSelector,
+    pub clock: Clock,
+    /// Registration-time defaults per agent kind (ARCHITECTURE §13.1): the
+    /// runner only *consumes* these; declaring them belongs to the embedder.
+    pub defaults: Arc<HashMap<String, AgentDefaults>>,
+    /// Maximum nested sub-agent depth. A spawn beyond the cap fails with a
+    /// semantic error routed back to the calling model as the tool result.
+    pub max_depth: usize,
+}
+
+/// Run a sub-agent to completion and report its result to the parent. `agent`
+/// is the typed agent name from [`Command::StartAgent`]; `depth` is this
+/// child's nesting depth (the root engine's children run at 1).
 ///
 /// Returns a **boxed** future so a sub-agent can itself spawn sub-agents: a bare
 /// `async fn` that spawned `run_agent` would have an infinitely recursive future
 /// type. Boxing erases the type at the recursion point.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_agent(
     op: OpId,
+    agent: String,
     config: Value,
     seed: Vec<LogEntry>,
-    models: ModelRegistry,
-    caps: CapabilityRegistry,
-    policy: Arc<dyn Policy>,
-    default_model: ModelSelector,
-    clock: Clock,
+    depth: usize,
+    host: AgentHost,
     parent_tx: UnboundedSender<Event>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
-        let event = match drive_agent(
-            op,
-            config,
-            seed,
-            models,
-            caps,
-            policy,
-            default_model,
-            clock,
-            &parent_tx,
-        )
-        .await
-        {
+        let event = match drive_agent(op, agent, config, seed, depth, host, &parent_tx).await {
             Ok(result) => Event::AgentDone {
                 op,
                 est_tokens: estimate_value_tokens(&result),
@@ -87,33 +100,43 @@ pub(crate) fn run_agent(
 
 /// The child's runtime context, cloned into each spawned op task.
 struct ChildCtx {
-    models: ModelRegistry,
-    caps: CapabilityRegistry,
-    policy: Arc<dyn Policy>,
-    default_model: ModelSelector,
-    clock: Clock,
+    host: AgentHost,
     /// The child brain's inbox (op tasks feed their result events here).
     tx: UnboundedSender<Event>,
     /// The parent brain's inbox — where the child forwards cosmetic progress.
     parent_tx: UnboundedSender<Event>,
     /// This agent's op id **in the parent**, used to tag forwarded progress.
     agent_op: OpId,
+    /// This child's nesting depth; a grandchild spawns at `depth + 1`.
+    depth: usize,
 }
 
 /// Build the child brain from its config + seed, drive it to idle, and return
-/// its digest (`Ok`) or a semantic error (`Err`, surfaced as `AgentError`).
-#[allow(clippy::too_many_arguments)]
+/// its digest (`Ok`) or a semantic error (`Err`, surfaced as `AgentError` — it
+/// folds back into the parent as an error tool result the model can react to).
 async fn drive_agent(
     agent_op: OpId,
+    agent: String,
     config: Value,
     seed: Vec<LogEntry>,
-    models: ModelRegistry,
-    caps: CapabilityRegistry,
-    policy: Arc<dyn Policy>,
-    default_model: ModelSelector,
-    clock: Clock,
+    depth: usize,
+    host: AgentHost,
     parent_tx: &UnboundedSender<Event>,
 ) -> Result<Value, Value> {
+    // --- explicit depth enforcement (ARCHITECTURE §13) ------------------------
+    // Exceeding the cap is a *semantic* error: it routes back to the calling
+    // model as the tool result (transport stays healthy; the model can adapt).
+    if depth > host.max_depth {
+        return Err(json!({
+            "error": "agent_depth_exceeded",
+            "message": format!(
+                "sub-agent nesting depth {depth} exceeds the host cap of {}",
+                host.max_depth
+            ),
+            "max_depth": host.max_depth,
+        }));
+    }
+
     // --- interpret the opaque config (the model's tool-call args, §13.1) ------
     let prompt = config
         .get("prompt")
@@ -122,17 +145,19 @@ async fn drive_agent(
             json!({ "error": "agent_config", "message": "sub-agent config needs a string `prompt`" })
         })?
         .to_string();
-    let agent_kind = config
-        .get("agent")
-        .and_then(|v| v.as_str())
-        .unwrap_or("task");
+    // Registration-time defaults for this agent kind (declared where the agent
+    // tool was registered). An unregistered kind gets the neutral fallback —
+    // the host default model and every parent tool — matching what an agent
+    // with no declared defaults always got.
+    let defaults = host.defaults.get(&agent).cloned().unwrap_or_default();
     let selector = config
         .get("model")
         .and_then(|v| v.as_str())
         .map(ModelSelector::named)
-        .or_else(|| default_model_for_agent(agent_kind).map(ModelSelector::named))
-        .unwrap_or(default_model.clone());
-    // Optional tool allowlist: the subset of the parent's tools the child may use.
+        .or(defaults.model)
+        .unwrap_or_else(|| host.default_model.clone());
+    // Optional tool allowlist: the subset of the parent's tools the child may
+    // use — the config's `tools` wins, then the kind's registered default.
     let allow: Option<HashSet<String>> = config
         .get("tools")
         .and_then(|v| v.as_array())
@@ -141,10 +166,24 @@ async fn drive_agent(
                 .filter_map(|x| x.as_str().map(String::from))
                 .collect()
         })
-        .or_else(|| default_tools_for_agent(agent_kind));
-    let caps = caps.subset(allow.as_ref());
+        .or_else(|| defaults.tools.map(|tools| tools.into_iter().collect()));
+    let caps = host.caps.subset(allow.as_ref());
+    // An allowlist that intersects the parent's registry to *zero* tools is a
+    // semantic error, not a silently tool-less child (which would burn a whole
+    // child turn producing nothing actionable).
+    if allow.is_some() && caps.schemas().is_empty() {
+        return Err(json!({
+            "error": "agent_tools_empty",
+            "message": "the sub-agent's `tools` allowlist matches none of the host's capabilities",
+        }));
+    }
 
     // --- assemble the child's policy from its (subset) tools ------------------
+    // Depth handling: the child's policy registers **no agent tools** (there is
+    // no `with_agent` here), so a child cannot spawn grandchildren today. That
+    // is intentional but incidental — the explicit `depth > max_depth` check
+    // above is the enforced invariant, so a future policy that *does* advertise
+    // nested agents still cannot recurse past the host's cap.
     let mut child_policy = StaticPolicy::default()
         .with_model(selector)
         .with_tools(caps.schemas())
@@ -158,15 +197,13 @@ async fn drive_agent(
     let mut brain = Brain::from_log(Box::new(child_policy), seed);
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+    let clock = host.clock.clone();
     let ctx = ChildCtx {
-        models,
-        caps,
-        policy,
-        default_model,
-        clock: clock.clone(),
+        host,
         tx: tx.clone(),
         parent_tx: parent_tx.clone(),
         agent_op,
+        depth,
     };
     // Child ops live here; dropping the set aborts them all (clean subtree
     // teardown when this future is aborted by the parent's `Cancel`).
@@ -185,7 +222,9 @@ async fn drive_agent(
     );
 
     // The child driver loop — the same shape as the top-level engine loop, but
-    // headless (no front-end / recorder) and feeding its own inbox.
+    // headless (no front-end / recorder — child ops are not recorded into the
+    // parent trace) and feeding its own inbox. The engine's builtin
+    // PreTool/PostTool hooks fire here too, folded into the *child's* log.
     loop {
         loop {
             let commands = brain.poll();
@@ -193,6 +232,17 @@ async fn drive_agent(
                 break;
             }
             for command in commands {
+                // Mirror the engine: every tool-shaped start fires the builtin
+                // PreTool hook before dispatch.
+                if let Some(payload) = pre_tool_payload(&command) {
+                    child_fire_hook(
+                        &mut brain,
+                        &clock,
+                        HookPhase::PreTool,
+                        "builtin_pre_tool",
+                        payload,
+                    );
+                }
                 perform_child(&ctx, command, &mut join, &mut handles);
             }
         }
@@ -200,7 +250,28 @@ async fn drive_agent(
             break;
         }
         match rx.recv().await {
-            Some(event) => child_submit(&mut brain, &clock, event),
+            Some(event) => {
+                // Mirror the engine: every tool-shaped completion fires the
+                // builtin PostTool hook, off the same shared classification
+                // (`tool_shaped_completion`) so the two can never diverge.
+                let post_tool = tool_shaped_completion(&event).map(|(op, payload, is_error)| {
+                    if is_error {
+                        json!({ "op": op.0, "ok": false, "error": payload })
+                    } else {
+                        json!({ "op": op.0, "ok": true, "result": payload })
+                    }
+                });
+                child_submit(&mut brain, &clock, event);
+                if let Some(payload) = post_tool {
+                    child_fire_hook(
+                        &mut brain,
+                        &clock,
+                        HookPhase::PostTool,
+                        "builtin_post_tool",
+                        payload,
+                    );
+                }
+            }
             None => break,
         }
     }
@@ -234,58 +305,43 @@ fn child_submit(brain: &mut Brain, clock: &Clock, event: Event) {
     brain.submit(event);
 }
 
-fn default_model_for_agent(agent: &str) -> Option<&'static str> {
-    match agent {
-        "explorer" => Some("small"),
-        "implementer" | "reviewer" | "test_fixer" => Some("big"),
+/// Fire one of the engine's builtin lifecycle hooks into the *child* brain
+/// (mirroring `Engine::fire_hook`, minus the recorder/front-end the headless
+/// child doesn't have).
+fn child_fire_hook(brain: &mut Brain, clock: &Clock, phase: HookPhase, name: &str, result: Value) {
+    let est_tokens = estimate_value_tokens(&result);
+    child_submit(
+        brain,
+        clock,
+        Event::HookFired {
+            phase,
+            name: name.to_string(),
+            result,
+            est_tokens,
+        },
+    );
+}
+
+/// The builtin PreTool hook payload for a tool-shaped command (capability or
+/// sub-agent start), mirroring the engine's payloads. `None` for everything
+/// else.
+fn pre_tool_payload(command: &Command) -> Option<Value> {
+    match command {
+        Command::StartCapability { op, name, args } => {
+            Some(json!({ "op": op.0, "capability": name, "args": args }))
+        }
+        Command::StartAgent {
+            op, agent, config, ..
+        } => Some(json!({ "op": op.0, "capability": format!("agent:{agent}"), "args": config })),
         _ => None,
     }
 }
 
-fn default_tools_for_agent(agent: &str) -> Option<HashSet<String>> {
-    let tools = match agent {
-        "explorer" => &[
-            "repo_files",
-            "repo_search",
-            "repo_read",
-            "git_status",
-            "git_log",
-            "package_metadata",
-        ][..],
-        "implementer" => &[
-            "repo_read",
-            "repo_search",
-            "fs_read",
-            "fs_write",
-            "patch_apply",
-            "cargo_verify",
-            "git_diff",
-            "git_status",
-        ][..],
-        "reviewer" => &[
-            "repo_read",
-            "repo_search",
-            "git_diff",
-            "git_status",
-            "cargo_verify",
-        ][..],
-        "test_fixer" => &[
-            "repo_read",
-            "repo_search",
-            "fs_read",
-            "fs_write",
-            "patch_apply",
-            "cargo_verify",
-            "git_diff",
-        ][..],
-        _ => return None,
-    };
-    Some(tools.iter().map(|tool| (*tool).to_string()).collect())
-}
-
 /// Perform one child command by spawning the appropriate op task (or forwarding
 /// cosmetic output). Synchronous: every effect is a spawned task feeding the
-/// child inbox, so the drain loop never blocks.
+/// child inbox, so the drain loop never blocks. Model and capability dispatch
+/// reuse the engine's shared op runners (`run_model_op`/`run_capability_op`),
+/// so the terminal-event construction exists exactly once.
 fn perform_child(
     ctx: &ChildCtx,
     command: Command,
@@ -293,94 +349,42 @@ fn perform_child(
     handles: &mut HashMap<OpId, AbortHandle>,
 ) {
     match command {
-        Command::StartModelCall { op, model, request } => {
-            let tx = ctx.tx.clone();
-            match ctx.models.get(&model) {
-                Some(adapter) => {
-                    let handle = join.spawn(async move {
-                        let sink = ModelSink::new(op, tx.clone());
-                        let event = match adapter.call(request, &sink).await {
-                            Ok((output, usage)) => {
-                                let est_tokens = model_output_est_tokens(&output, &usage);
-                                Event::ModelDone {
-                                    op,
-                                    output,
-                                    usage,
-                                    est_tokens,
-                                }
-                            }
-                            Err(error) => Event::ModelError {
-                                op,
-                                error: json!({ "message": error.to_string() }),
-                            },
-                        };
-                        let _ = tx.send(event);
-                    });
-                    handles.insert(op, handle);
-                }
-                None => {
-                    let _ = tx.send(Event::ModelError {
-                        op,
-                        error: json!({ "message": format!("no adapter for model {model:?}") }),
-                    });
-                }
+        Command::StartModelCall { op, model, request } => match ctx.host.models.get(&model) {
+            Some(adapter) => {
+                let handle = join.spawn(run_model_op(adapter, op, request, ctx.tx.clone()));
+                handles.insert(op, handle);
             }
-        }
-
-        Command::StartCapability { op, name, args } => {
-            let tx = ctx.tx.clone();
-            match ctx.caps.get(&name) {
-                Some(capability) => {
-                    let handle = join.spawn(async move {
-                        let sink = ChunkSink::new(op, tx.clone());
-                        let event = match capability.invoke(args, &sink).await {
-                            Ok(result) => {
-                                let version = capability.result_version(&result);
-                                Event::CapabilityDone {
-                                    op,
-                                    est_tokens: estimate_value_tokens(&result),
-                                    result,
-                                    version,
-                                }
-                            }
-                            Err(error) => {
-                                let conflict = capability.conflict_version(&error);
-                                Event::CapabilityError {
-                                    op,
-                                    est_tokens: estimate_value_tokens(&error),
-                                    error,
-                                    conflict,
-                                }
-                            }
-                        };
-                        let _ = tx.send(event);
-                    });
-                    handles.insert(op, handle);
-                }
-                None => {
-                    let error = json!({ "error": format!("unknown capability: {name}") });
-                    let _ = tx.send(Event::CapabilityError {
-                        op,
-                        est_tokens: estimate_value_tokens(&error),
-                        error,
-                        conflict: None,
-                    });
-                }
+            None => {
+                let _ = ctx.tx.send(missing_model_event(op, &model));
             }
-        }
+        },
 
-        // A grandchild: recurse. It feeds *this* child's inbox and reports back
-        // via `AgentDone` keyed by its op — nesting works with no special case.
-        Command::StartAgent { op, config, seed } => {
+        Command::StartCapability { op, name, args } => match ctx.host.caps.get(&name) {
+            Some(capability) => {
+                let handle = join.spawn(run_capability_op(capability, op, args, ctx.tx.clone()));
+                handles.insert(op, handle);
+            }
+            None => {
+                let _ = ctx.tx.send(unknown_capability_event(op, &name));
+            }
+        },
+
+        // A grandchild: recurse at `depth + 1`. It feeds *this* child's inbox
+        // and reports back via `AgentDone` keyed by its op — nesting works with
+        // no special case, and the depth cap is enforced inside `drive_agent`.
+        Command::StartAgent {
+            op,
+            agent,
+            config,
+            seed,
+        } => {
             let handle = join.spawn(run_agent(
                 op,
+                agent,
                 config,
                 seed,
-                ctx.models.clone(),
-                ctx.caps.clone(),
-                ctx.policy.clone(),
-                ctx.default_model.clone(),
-                ctx.clock.clone(),
+                ctx.depth + 1,
+                ctx.host.clone(),
                 ctx.tx.clone(),
             ));
             handles.insert(op, handle);
@@ -388,10 +392,10 @@ fn perform_child(
 
         Command::RequestPermission { op, request } => {
             let tx = ctx.tx.clone();
-            let policy = ctx.policy.clone();
+            let policy = ctx.host.policy.clone();
             join.spawn(async move {
                 let decision = policy.decide(&request).await;
-                let est_tokens = permission_decision_est_tokens(&decision);
+                let est_tokens = crate::engine::permission_decision_est_tokens(&decision);
                 let _ = tx.send(Event::PermissionDecision {
                     op,
                     decision,
@@ -443,22 +447,4 @@ fn aggregate_usage(log: &[LogEntry]) -> (u64, u64) {
         }
         (input, output)
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn coding_agent_defaults_constrain_tools_and_tiers() {
-        assert_eq!(default_model_for_agent("explorer"), Some("small"));
-        assert_eq!(default_model_for_agent("reviewer"), Some("big"));
-        let reviewer = default_tools_for_agent("reviewer").expect("reviewer tools");
-        assert!(reviewer.contains("git_diff"));
-        assert!(reviewer.contains("cargo_verify"));
-        assert!(!reviewer.contains("fs_write"));
-        let implementer = default_tools_for_agent("implementer").expect("implementer tools");
-        assert!(implementer.contains("patch_apply"));
-        assert!(implementer.contains("fs_write"));
-    }
 }

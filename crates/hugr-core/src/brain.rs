@@ -776,25 +776,21 @@ impl Brain {
         // The brain owns the log, so resolving the fork is a pure operation here.
         if let Some(seed) = self.policy.agent_seed(&call.name) {
             let seed_log = self.resolve_seed(seed);
-            let mut config = call.args;
-            if let Some(object) = config.as_object_mut() {
-                object
-                    .entry("agent")
-                    .or_insert_with(|| Value::String(call.name.clone()));
-                object
-                    .entry("max_depth")
-                    .or_insert_with(|| Value::Number(1_u64.into()));
-            }
+            // The agent *name* is typed on the command (the host branches on
+            // which agent to run); the model's args pass through **untouched**
+            // as the opaque config — the brain never edits opaque payloads
+            // (ARCHITECTURE §2.4).
             self.state.mark(
                 op,
                 OpKind::Agent {
-                    name: call.name,
+                    name: call.name.clone(),
                     call_id: call.id,
                 },
             );
             self.state.push_command(Command::StartAgent {
                 op,
-                config,
+                agent: call.name,
+                config: call.args,
                 seed: seed_log,
             });
             return;

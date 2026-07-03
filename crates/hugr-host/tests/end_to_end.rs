@@ -1698,6 +1698,120 @@ async fn parent_fans_out_to_sub_agents_and_replays() {
     assert_eq!(start_agents, 2, "the parent spawned two sub-agents");
 }
 
+/// Sub-agent depth is enforced explicitly: with `max_agent_depth(0)` even the
+/// root's direct children exceed the cap, and each spawn fails with a
+/// **semantic** error (`agent_depth_exceeded`) routed back to the parent model
+/// as an error tool result — the turn continues, nothing crashes.
+#[tokio::test]
+async fn agent_depth_cap_returns_semantic_error_tool_result() {
+    use hugr_core::AgentSeed;
+
+    let task_schema = ToolSchema::new(
+        "task",
+        "Delegate a unit of work to a sub-agent.",
+        json!({ "type": "object", "properties": { "prompt": { "type": "string" } } }),
+    );
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(RoutingModel))
+        .agent(task_schema, AgentSeed::ForkFull)
+        .max_agent_depth(0)
+        .frontend(Box::new(Capture::default()))
+        .clock(deterministic_clock())
+        .build();
+
+    engine.user_turn("fan out to two workers".into()).await;
+    engine.session_end();
+
+    let tool_results = count_tool_results(engine.brain().state().log());
+    assert_eq!(tool_results.len(), 2, "both spawns produced tool results");
+    assert!(
+        tool_results
+            .iter()
+            .all(|(_, r)| r["error"] == json!("agent_depth_exceeded")),
+        "each result is the depth-cap semantic error: {tool_results:#?}"
+    );
+    // The agent ops ended with an error outcome, and the parent model still got
+    // a final turn (RoutingModel answers once tool results are in context).
+    let errored_ops = engine
+        .brain()
+        .state()
+        .log()
+        .iter()
+        .filter(|e| {
+            matches!(
+                &e.record,
+                Record::OpEnded {
+                    outcome: OpOutcome::Error(_),
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(errored_ops, 2);
+}
+
+/// A model that asks for a `task` child restricted to a tool the host does not
+/// have, then reacts to the resulting error.
+struct EmptyToolsModel;
+
+#[async_trait]
+impl ModelAdapter for EmptyToolsModel {
+    async fn call(
+        &self,
+        request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        let has_tool_result = request.blocks.iter().any(|b| {
+            b.content
+                .iter()
+                .any(|p| matches!(p, ContentPart::ToolResult { .. }))
+        });
+        let output = if has_tool_result {
+            ModelOutput::text("No tools matched.")
+        } else {
+            ModelOutput::tool_calls(vec![ToolCall::new(
+                "a",
+                "task",
+                json!({ "prompt": "work", "tools": ["no_such_tool"] }),
+            )])
+        };
+        if !output.text.is_empty() {
+            sink.text(output.text.clone());
+        }
+        Ok((output, Usage::new(1, 1)))
+    }
+}
+
+/// A `tools` allowlist that intersects the host's capabilities to zero tools is
+/// surfaced as a semantic error (`agent_tools_empty`), never a silently
+/// tool-less child.
+#[tokio::test]
+async fn agent_empty_tool_intersection_is_a_semantic_error() {
+    use hugr_core::AgentSeed;
+
+    let task_schema = ToolSchema::new(
+        "task",
+        "Delegate a unit of work to a sub-agent.",
+        json!({ "type": "object", "properties": { "prompt": { "type": "string" } } }),
+    );
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(EmptyToolsModel))
+        .capability(Arc::new(Shell))
+        .agent(task_schema, AgentSeed::Fresh)
+        .frontend(Box::new(Capture::default()))
+        .clock(deterministic_clock())
+        .build();
+
+    engine
+        .user_turn("delegate with a bogus allowlist".into())
+        .await;
+    engine.session_end();
+
+    let tool_results = count_tool_results(engine.brain().state().log());
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].1["error"], json!("agent_tools_empty"));
+}
+
 /// Regression: an **explicit** `.default_model(named("medium"))` must survive
 /// later registrations — with tiers registered `[small, medium, big]` (as the
 /// CLI does), the first-registered fallback must not steal an explicit default

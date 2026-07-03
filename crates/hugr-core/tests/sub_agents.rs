@@ -82,19 +82,18 @@ fn model_delegates_to_sub_agent_and_folds_result() {
         "unexpected command sequence: {effectful:#?}"
     );
 
-    // The child's opaque config keeps the model's args and records agent
-    // metadata for host-side defaults / trace-visible usage.
-    let config = commands
+    // The agent *name* is typed on the command (the host branches on which
+    // agent to run), and the model's args pass through **untouched** as the
+    // opaque config — the brain never edits opaque payloads (ARCHITECTURE §2.4).
+    let (agent, config) = commands
         .iter()
         .find_map(|c| match c {
-            Command::StartAgent { config, .. } => Some(config.clone()),
+            Command::StartAgent { agent, config, .. } => Some((agent.clone(), config.clone())),
             _ => None,
         })
         .unwrap();
-    assert_eq!(
-        config,
-        json!({ "prompt": "do the thing", "agent": "task", "max_depth": 1 })
-    );
+    assert_eq!(agent, "task");
+    assert_eq!(config, json!({ "prompt": "do the thing" }));
 
     // The child's digest was folded into the parent log as a tool result,
     // correlated to the originating `tool_call` id (`call-1`, not the op id).
@@ -185,6 +184,126 @@ fn fresh_seeds_an_empty_child() {
     assert!(
         start_agent_seed(&commands).is_empty(),
         "Fresh seeds an isolated (empty) child"
+    );
+}
+
+/// A failed sub-agent ([`Event::AgentError`]) folds back as an **error**
+/// tool result (the semantic-error philosophy: the parent model sees the
+/// failure and reacts), and the turn resumes exactly like a successful digest.
+#[test]
+fn agent_error_folds_as_error_tool_result_and_resumes() {
+    use hugr_core::OpOutcome;
+
+    let mut brain = agent_brain(AgentSeed::Fresh);
+
+    let commands = run_script(
+        &mut brain,
+        vec![
+            user("delegate the work"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("call-1", "task", json!({ "prompt": "doomed" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            // The child fails with a semantic error (e.g. depth exceeded).
+            Event::AgentError {
+                op: OpId(1),
+                error: json!({ "error": "agent_depth_exceeded", "max_depth": 1 }),
+                est_tokens: 1,
+            },
+            // The parent model reacts to the error and finishes the turn.
+            Event::ModelDone {
+                op: OpId(2),
+                output: text_output("The sub-agent failed; giving up."),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ],
+    );
+
+    // Pin the command sequence: the error resumes the turn (a fresh model call),
+    // then the session ends normally.
+    let effectful = effectful(&commands);
+    assert!(
+        matches!(
+            effectful.as_slice(),
+            [
+                Command::StartModelCall { op: OpId(0), .. },
+                Command::StartAgent { op: OpId(1), .. },
+                Command::StartModelCall { op: OpId(2), .. },
+                Command::Checkpoint,
+                Command::Done {
+                    reason: DoneReason::EndTurn
+                },
+            ]
+        ),
+        "unexpected command sequence: {effectful:#?}"
+    );
+
+    // The error folds as a tool result correlated to the originating call id,
+    // and the op ended with an error outcome.
+    let tool_result = brain.state().log().iter().find_map(|e| match &e.record {
+        Record::ToolResult {
+            name,
+            call_id,
+            result,
+            ..
+        } if name == "task" => Some((call_id.clone(), result.clone())),
+        _ => None,
+    });
+    let (call_id, result) = tool_result.expect("the agent error should fold as a tool result");
+    assert_eq!(call_id, "call-1");
+    assert_eq!(result["error"], json!("agent_depth_exceeded"));
+    let errored = brain.state().log().iter().any(|e| {
+        matches!(
+            &e.record,
+            Record::OpEnded {
+                op: OpId(1),
+                outcome: OpOutcome::Error(_),
+                ..
+            }
+        )
+    });
+    assert!(errored, "the agent op must end with an error outcome");
+}
+
+/// Determinism for the `AgentError` path (ARCHITECTURE §6.3): re-feeding the
+/// same event stream reproduces identical commands and an identical log.
+#[test]
+fn agent_error_path_replays_deterministically() {
+    let script = || {
+        vec![
+            user("delegate the work"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("call-1", "task", json!({ "prompt": "doomed" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::AgentError {
+                op: OpId(1),
+                error: json!({ "error": "agent_tools_empty" }),
+                est_tokens: 1,
+            },
+            Event::ModelDone {
+                op: OpId(2),
+                output: text_output("Recovered."),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ]
+    };
+
+    let mut brain = agent_brain(AgentSeed::ForkFull);
+    let commands = run_script(&mut brain, script());
+    let mut replay = agent_brain(AgentSeed::ForkFull);
+    let replay_commands = run_script(&mut replay, script());
+    assert_eq!(commands, replay_commands, "commands must be deterministic");
+    assert_eq!(
+        brain.state().log(),
+        replay.state().log(),
+        "the folded log must be deterministic"
     );
 }
 

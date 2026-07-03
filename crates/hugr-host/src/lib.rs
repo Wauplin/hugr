@@ -45,8 +45,8 @@ mod test_support;
 
 pub use capability::{Capability, CapabilityRegistry, ChunkSink};
 pub use engine::{
-    CheckpointCadence, Clock, CrashResumePolicy, Engine, EngineBuilder, EventSender,
-    TraceCompaction, estimate_text_tokens,
+    AgentDefaults, CheckpointCadence, Clock, CrashResumePolicy, DEFAULT_MAX_AGENT_DEPTH, Engine,
+    EngineBuilder, EventSender, TraceCompaction, estimate_text_tokens,
 };
 pub use frontend::{Frontend, Metrics, StdoutFrontend};
 pub use mcp::{McpError, McpServerConfig, McpToolCapability};
