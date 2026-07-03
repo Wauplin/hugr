@@ -24,7 +24,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use hugr_core::{
     Brain, Command, Event, HookPhase, LogEntry, ModelSelector, OpId, OutputEvent, Record,
@@ -34,13 +34,24 @@ use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::{AbortHandle, JoinSet};
 
+use hugr_replay::{ChildTrace, Trace};
+
 use crate::capability::CapabilityRegistry;
 use crate::engine::{
-    AgentDefaults, Clock, estimate_text_tokens, estimate_value_tokens, missing_model_event,
-    run_capability_op, run_model_op, tool_shaped_completion, unknown_capability_event,
+    AgentDefaults, Clock, Recorder, estimate_text_tokens, estimate_value_tokens,
+    missing_model_event, run_capability_op, run_model_op, tool_shaped_completion,
+    unknown_capability_event,
 };
 use crate::model::ModelRegistry;
 use crate::policy::Policy;
+
+/// Where a completed sub-agent run deposits its recorded session
+/// ([`ChildTrace`], ARCHITECTURE §13.3) for its parent to attach to the parent
+/// trace. Shared by the engine (which drains it in `Engine::trace`) and each
+/// child (which hands a fresh sink to its own grandchildren). `None` (see
+/// [`run_agent`]) means the session is not recording — children then run
+/// unrecorded, zero-overhead.
+pub(crate) type ChildTraceSink = Arc<Mutex<Vec<ChildTrace>>>;
 
 /// Everything a sub-agent run borrows from its host: the shared registries,
 /// permission policy, per-kind registration defaults, and the nesting cap.
@@ -70,6 +81,7 @@ pub(crate) struct AgentHost {
 /// Returns a **boxed** future so a sub-agent can itself spawn sub-agents: a bare
 /// `async fn` that spawned `run_agent` would have an infinitely recursive future
 /// type. Boxing erases the type at the recursion point.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_agent(
     op: OpId,
     agent: String,
@@ -78,20 +90,22 @@ pub(crate) fn run_agent(
     depth: usize,
     host: AgentHost,
     parent_tx: UnboundedSender<Event>,
+    trace_sink: Option<ChildTraceSink>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
-        let event = match drive_agent(op, agent, config, seed, depth, host, &parent_tx).await {
-            Ok(result) => Event::AgentDone {
-                op,
-                est_tokens: estimate_value_tokens(&result),
-                result,
-            },
-            Err(error) => Event::AgentError {
-                op,
-                est_tokens: estimate_value_tokens(&error),
-                error,
-            },
-        };
+        let event =
+            match drive_agent(op, agent, config, seed, depth, host, &parent_tx, trace_sink).await {
+                Ok(result) => Event::AgentDone {
+                    op,
+                    est_tokens: estimate_value_tokens(&result),
+                    result,
+                },
+                Err(error) => Event::AgentError {
+                    op,
+                    est_tokens: estimate_value_tokens(&error),
+                    error,
+                },
+            };
         // If the parent has gone away (its receiver dropped), there is nothing to
         // report to — the whole subtree is being torn down anyway.
         let _ = parent_tx.send(event);
@@ -109,11 +123,16 @@ struct ChildCtx {
     agent_op: OpId,
     /// This child's nesting depth; a grandchild spawns at `depth + 1`.
     depth: usize,
+    /// Where this child's own grandchildren deposit *their* recorded sessions
+    /// (§13.3); drained into this child's own [`ChildTrace`] on completion.
+    /// `None` when the session is not recording.
+    grandchildren: Option<ChildTraceSink>,
 }
 
 /// Build the child brain from its config + seed, drive it to idle, and return
 /// its digest (`Ok`) or a semantic error (`Err`, surfaced as `AgentError` — it
 /// folds back into the parent as an error tool result the model can react to).
+#[allow(clippy::too_many_arguments)]
 async fn drive_agent(
     agent_op: OpId,
     agent: String,
@@ -122,6 +141,7 @@ async fn drive_agent(
     depth: usize,
     host: AgentHost,
     parent_tx: &UnboundedSender<Event>,
+    trace_sink: Option<ChildTraceSink>,
 ) -> Result<Value, Value> {
     // --- explicit depth enforcement (ARCHITECTURE §13) ------------------------
     // Exceeding the cap is a *semantic* error: it routes back to the calling
@@ -193,6 +213,20 @@ async fn drive_agent(
         child_policy = child_policy.with_system_prompt(system);
     }
 
+    // When recording, capture everything needed to nest this child session
+    // into the parent trace (§13.3): the policy config (so verification
+    // branches identically), the seed prefix (so verification re-seeds
+    // `Brain::from_log` exactly as we do below), a recorder for the child's
+    // event/command streams, and a fresh sink for its own grandchildren.
+    let policy_config = trace_sink
+        .as_ref()
+        .and_then(|_| serde_json::to_value(&child_policy).ok());
+    let seed_for_trace = trace_sink.as_ref().map(|_| seed.clone());
+    let mut recorder = trace_sink.as_ref().map(|_| Recorder::default());
+    let grandchildren: Option<ChildTraceSink> = trace_sink
+        .as_ref()
+        .map(|_| Arc::new(Mutex::new(Vec::new())));
+
     // Seed the child brain from the forked log prefix (empty for `Fresh`).
     let mut brain = Brain::from_log(Box::new(child_policy), seed);
 
@@ -204,6 +238,7 @@ async fn drive_agent(
         parent_tx: parent_tx.clone(),
         agent_op,
         depth,
+        grandchildren: grandchildren.clone(),
     };
     // Child ops live here; dropping the set aborts them all (clean subtree
     // teardown when this future is aborted by the parent's `Cancel`).
@@ -214,6 +249,7 @@ async fn drive_agent(
     child_submit(
         &mut brain,
         &clock,
+        &mut recorder,
         Event::UserInput {
             content: json!(prompt),
             mode: SteerMode::Queue,
@@ -222,14 +258,22 @@ async fn drive_agent(
     );
 
     // The child driver loop — the same shape as the top-level engine loop, but
-    // headless (no front-end / recorder — child ops are not recorded into the
-    // parent trace) and feeding its own inbox. The engine's builtin
+    // headless (no front-end) and feeding its own inbox. When the parent is
+    // recording, the child's events and commands are captured exactly like the
+    // engine's recorder does, so the child session nests into the parent trace
+    // as a verifiable `ChildTrace` (§13.3). The engine's builtin
     // PreTool/PostTool hooks fire here too, folded into the *child's* log.
     loop {
         loop {
             let commands = brain.poll();
             if commands.is_empty() {
                 break;
+            }
+            // Record the drained commands (in order) before performing them,
+            // mirroring the engine, so the child trace's command sequence
+            // matches what a replay of its events re-emits (§6.3).
+            if let Some(rec) = recorder.as_mut() {
+                rec.record_commands(&commands);
             }
             for command in commands {
                 // Mirror the engine: every tool-shaped start fires the builtin
@@ -238,6 +282,7 @@ async fn drive_agent(
                     child_fire_hook(
                         &mut brain,
                         &clock,
+                        &mut recorder,
                         HookPhase::PreTool,
                         "builtin_pre_tool",
                         payload,
@@ -261,11 +306,12 @@ async fn drive_agent(
                         json!({ "op": op.0, "ok": true, "result": payload })
                     }
                 });
-                child_submit(&mut brain, &clock, event);
+                child_submit(&mut brain, &clock, &mut recorder, event);
                 if let Some(payload) = post_tool {
                     child_fire_hook(
                         &mut brain,
                         &clock,
+                        &mut recorder,
                         HookPhase::PostTool,
                         "builtin_post_tool",
                         payload,
@@ -290,6 +336,32 @@ async fn drive_agent(
         })
         .unwrap_or_default();
     let (input_tokens, output_tokens) = aggregate_usage(brain.state().log());
+
+    // Hand the recorded child session to the parent (§13.3) *before* the
+    // terminal `AgentDone` is sent (the caller sends it after we return), so by
+    // the time the parent folds the digest, the child trace is already
+    // attached. This makes the child visible to the parent trace, replay, and
+    // verification instead of discarding everything but the digest.
+    if let (Some(sink), Some(rec)) = (&trace_sink, recorder) {
+        let mut trace = Trace::new(rec.events, brain.state().log().to_vec(), rec.created_at)
+            .with_commands(rec.commands);
+        if let Some(policy) = policy_config {
+            trace = trace.with_policy(policy);
+        }
+        if let Some(nested) = &grandchildren {
+            let nested = std::mem::take(&mut *nested.lock().unwrap());
+            if !nested.is_empty() {
+                trace = trace.with_children(nested);
+            }
+        }
+        sink.lock().unwrap().push(ChildTrace::new(
+            agent_op,
+            agent,
+            seed_for_trace.unwrap_or_default(),
+            trace,
+        ));
+    }
+
     Ok(json!({
         "text": text,
         "usage": { "input_tokens": input_tokens, "output_tokens": output_tokens },
@@ -297,22 +369,37 @@ async fn drive_agent(
 }
 
 /// Inject a `Tick` (host clock) then the event — mirroring the engine so the
-/// child's log entries are timestamped and the core stays clock-free.
-fn child_submit(brain: &mut Brain, clock: &Clock, event: Event) {
-    brain.submit(Event::Tick {
+/// child's log entries are timestamped and the core stays clock-free. When the
+/// child is recorded, both go through the recorder in submission order (the
+/// same chokepoint property `Engine::submit` has, §6.2).
+fn child_submit(brain: &mut Brain, clock: &Clock, recorder: &mut Option<Recorder>, event: Event) {
+    let tick = Event::Tick {
         now: Timestamp((clock)()),
-    });
+    };
+    if let Some(rec) = recorder.as_mut() {
+        rec.record(&tick);
+        rec.record(&event);
+    }
+    brain.submit(tick);
     brain.submit(event);
 }
 
 /// Fire one of the engine's builtin lifecycle hooks into the *child* brain
-/// (mirroring `Engine::fire_hook`, minus the recorder/front-end the headless
-/// child doesn't have).
-fn child_fire_hook(brain: &mut Brain, clock: &Clock, phase: HookPhase, name: &str, result: Value) {
+/// (mirroring `Engine::fire_hook`, minus the front-end the headless child
+/// doesn't have).
+fn child_fire_hook(
+    brain: &mut Brain,
+    clock: &Clock,
+    recorder: &mut Option<Recorder>,
+    phase: HookPhase,
+    name: &str,
+    result: Value,
+) {
     let est_tokens = estimate_value_tokens(&result);
     child_submit(
         brain,
         clock,
+        recorder,
         Event::HookFired {
             phase,
             name: name.to_string(),
@@ -386,6 +473,9 @@ fn perform_child(
                 ctx.depth + 1,
                 ctx.host.clone(),
                 ctx.tx.clone(),
+                // The grandchild's recorded session nests into *this* child's
+                // trace (§13.3); `None` when the session is not recording.
+                ctx.grandchildren.clone(),
             ));
             handles.insert(op, handle);
         }

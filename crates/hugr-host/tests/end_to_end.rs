@@ -1989,3 +1989,107 @@ async fn engine_without_recording_has_no_trace() {
             .is_err()
     );
 }
+
+/// Sub-agent child sessions are **recorded**, not headless (ARCHITECTURE
+/// §13.3, the nested view): a recording parent captures each child's own event
+/// stream, drained command sequence, log, seed prefix, and policy as a
+/// `ChildTrace` tied to the parent op that spawned it. The trace round-trips
+/// through disk, `verify()` recursively verifies the children, and corrupting
+/// a child's recorded commands fails the whole verification naming its op.
+#[tokio::test]
+async fn sub_agent_child_sessions_are_recorded_and_verified() {
+    use hugr_core::{AgentSeed, Command, Event};
+    use hugr_host::TraceError;
+
+    let task_schema = ToolSchema::new(
+        "task",
+        "Delegate a unit of work to a sub-agent.",
+        json!({ "type": "object", "properties": { "prompt": { "type": "string" } } }),
+    );
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(RoutingModel))
+        .agent(task_schema, AgentSeed::ForkFull)
+        .frontend(Box::new(Capture::default()))
+        .clock(deterministic_clock())
+        .record(true)
+        .build();
+
+    engine.user_turn("fan out to two workers".into()).await;
+    engine.session_end();
+
+    let trace = engine.trace().expect("recording was enabled");
+
+    // Two children, each tied to the parent `StartAgent` op that spawned it.
+    assert_eq!(trace.children.len(), 2, "both child sessions were recorded");
+    let start_ops: std::collections::HashSet<u64> = trace
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::StartAgent { op, .. } => Some(op.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(start_ops.len(), 2);
+    for child in &trace.children {
+        assert!(
+            start_ops.contains(&child.op.0),
+            "child op {} must be one of the parent's StartAgent ops",
+            child.op.0
+        );
+        assert_eq!(child.agent, "task");
+        assert!(
+            !child.seed.is_empty(),
+            "ForkFull children inherit the parent's log prefix"
+        );
+        // The child's own session is fully captured: its injected user turn,
+        // its drained commands, its consolidated log, and its policy.
+        assert!(
+            child
+                .trace
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::UserInput { .. })),
+            "the child's injected prompt is in its recorded events"
+        );
+        assert!(!child.trace.commands.is_empty());
+        assert!(!child.trace.log.is_empty());
+        assert!(child.trace.policy.is_some());
+        assert!(
+            child.trace.log.iter().any(|e| matches!(
+                &e.record,
+                Record::ModelOutput { output, .. } if output.text.ends_with("done")
+            )),
+            "the child's own model answer is in its recorded log"
+        );
+    }
+
+    // The nested children survive a save/load round-trip byte-for-byte.
+    let dir = std::env::temp_dir().join(format!("hugr-host-child-traces-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("session.trace.json");
+    trace.save(&path).expect("save the trace");
+    let reloaded = hugr_host::Trace::load(&path).expect("reload the trace");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(reloaded, trace);
+
+    // verify() passes, including the recursive per-child re-seed + re-feed.
+    hugr_host::hugr_replay::verify(&reloaded).expect("parent and children replay bit-for-bit");
+
+    // Corrupting one child's recorded command sequence fails the whole verify
+    // with an error naming the op that spawned it.
+    let mut corrupted = trace.clone();
+    corrupted.children[0]
+        .trace
+        .commands
+        .pop()
+        .expect("the child recorded commands");
+    let err = hugr_host::hugr_replay::verify(&corrupted)
+        .expect_err("a corrupted child command sequence must fail verification");
+    match err {
+        TraceError::ChildMismatch { op, agent, .. } => {
+            assert_eq!(op, corrupted.children[0].op.0);
+            assert_eq!(agent, "task");
+        }
+        other => panic!("expected ChildMismatch, got: {other:?}"),
+    }
+}

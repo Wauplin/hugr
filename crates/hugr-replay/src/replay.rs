@@ -23,7 +23,7 @@
 
 use hugr_core::{Brain, Command, Event, LogEntry, RoutingPolicy, TurnPolicy, decode_policy};
 
-use crate::{Trace, TraceError};
+use crate::{ChildTrace, Trace, TraceError};
 
 /// The result of replaying a trace's event stream through a fresh brain.
 ///
@@ -114,6 +114,11 @@ pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay 
 /// log-only, exactly as before. Any non-empty `commands` is compared bit-for-bit.
 /// Either mismatch means the fold is no longer deterministic for this trace —
 /// exactly the regression replay exists to catch.
+///
+/// After the parent checks pass, every recorded **child session**
+/// ([`ChildTrace`], §13.3) is verified recursively the same way (re-seeded from
+/// its recorded fork prefix, under its own recorded policy); a failing child
+/// fails the whole verify with [`TraceError::ChildMismatch`] naming its op.
 pub fn verify(trace: &Trace) -> Result<Replay, TraceError> {
     verify_with_policy(trace, policy_from_trace(trace))
 }
@@ -124,11 +129,23 @@ pub fn verify_with_policy(
     policy: Box<dyn TurnPolicy>,
 ) -> Result<Replay, TraceError> {
     let replay = replay_with_policy(trace, policy);
-    // Compare the recorded command sequence bit-for-bit, in order — but only
-    // when the trace actually captured one. An empty `commands` means the trace
-    // predates command recording (serde default), so we fall back to the
-    // log-only check to keep verifying old traces (§6.3). Every `Command` is
-    // serde-serializable, so there is no non-recordable command to special-case.
+    check_replay(trace, &replay)?;
+    // Recursively verify every recorded child session (ARCHITECTURE §13.3):
+    // each child is its own brain, so each child trace must independently
+    // replay bit-for-bit too. A failing child fails the whole verify, naming
+    // the parent op that spawned it.
+    verify_children(trace)?;
+    Ok(replay)
+}
+
+/// Assert a reconstruction matches a trace's recorded commands and log.
+///
+/// Compares the recorded command sequence bit-for-bit, in order — but only
+/// when the trace actually captured one. An empty `commands` means the trace
+/// predates command recording (serde default), so we fall back to the
+/// log-only check to keep verifying old traces (§6.3). Every `Command` is
+/// serde-serializable, so there is no non-recordable command to special-case.
+fn check_replay(trace: &Trace, replay: &Replay) -> Result<(), TraceError> {
     if !trace.commands.is_empty() && replay.commands != trace.commands {
         let index = first_divergence(&trace.commands, &replay.commands);
         return Err(TraceError::CommandMismatch {
@@ -143,7 +160,38 @@ pub fn verify_with_policy(
             reconstructed: replay.log.len(),
         });
     }
-    Ok(replay)
+    Ok(())
+}
+
+/// Verify every recorded child session of `trace`, recursively. An old trace
+/// (or one without sub-agents) has no children (serde default) and passes
+/// trivially — back-compat is preserved.
+fn verify_children(trace: &Trace) -> Result<(), TraceError> {
+    for child in &trace.children {
+        verify_child(child).map_err(|source| TraceError::ChildMismatch {
+            op: child.op.0,
+            agent: child.agent.clone(),
+            source: Box::new(source),
+        })?;
+    }
+    Ok(())
+}
+
+/// Verify one recorded child session: re-seed a fresh brain with the child's
+/// recorded seed prefix (`Brain::from_log`, the fork primitive §14) under the
+/// child's recorded policy (same fallback rules as the parent —
+/// [`policy_from_trace`]), re-feed its events, and assert the reconstructed
+/// commands + log equal the recorded ones — then recurse into grandchildren.
+fn verify_child(child: &ChildTrace) -> Result<(), TraceError> {
+    let policy = policy_from_trace(&child.trace);
+    let mut brain = Brain::from_log(policy, child.seed.clone());
+    let commands = drive(&mut brain, &child.trace.events);
+    let replay = Replay {
+        commands,
+        log: brain.state().log().to_vec(),
+    };
+    check_replay(&child.trace, &replay)?;
+    verify_children(&child.trace)
 }
 
 /// Index of the first position where two command slices differ (or the length

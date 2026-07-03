@@ -597,6 +597,7 @@ pub struct Trace {
     log: Vec<LogEntry>,       // the ordered, seq-stamped CONSOLIDATED record stream (the truth)
     commands: Vec<Command>,   // the ordered commands the driver drained (serde-default; old traces load without it)
     blobs: BlobManifest,      // refs to content-addressed payloads (not inlined)
+    children: Vec<ChildTrace>, // recorded sub-agent sessions, each a nested Trace tied to its parent op (§13.3; serde-default, old traces load without it)
     // NOTE: BrainState is NOT stored — it is always rederivable by folding the log.
 }
 ```
@@ -613,7 +614,7 @@ The brain emits `Command::Checkpoint`; the host serializes the current trace (ap
 
 ### 12.3 Loading / replay / portability
 
-- **Replay** (§6) folds the events into a fresh brain → identical commands. `verify()` asserts the reconstructed durable log **and** the reconstructed command sequence equal the recorded ones, bit-for-bit and in order (a pre-commands trace falls back to log-only comparison).
+- **Replay** (§6) folds the events into a fresh brain → identical commands. `verify()` asserts the reconstructed durable log **and** the reconstructed command sequence equal the recorded ones, bit-for-bit and in order (a pre-commands trace falls back to log-only comparison). It then recursively verifies every recorded **child session** (`children`, §13.3) the same way — re-seeding a fresh brain from the child's recorded fork prefix under the child's recorded policy — and a failing child fails the whole verify with an error naming the op that spawned it.
 - A trace is **portable**: record on a server, replay in the browser, because neither the brain nor the trace depends on the environment. (Caveat: replaying *live* — re-issuing real model/tool calls — needs those capabilities present; pure replay of the recorded run needs nothing.)
 - Traces double as the substrate for **resume** (§15), **debugging**, **test fixtures** (§Roadmap cross-cutting), and **sharing reproductions**.
 
@@ -621,7 +622,7 @@ The brain emits `Command::Checkpoint`; the host serializes the current trace (ap
 
 A sub-agent is **not a special subsystem** — it is *another `hugr-core` instance*. Because the core is tiny, pure, and runtime-free, spawning one is cheap, and an arbitrarily deep tree of agents is just a tree of brains.
 
-Implemented (Phase 6): `Command::StartAgent { op, agent, config, seed }` is emitted (instead of `StartCapability`) when the pluggable `TurnPolicy::agent_seed(capability)` designates a tool as a sub-agent spawner — *strategy* in the policy, not hardcoded in the reducer. `agent` is the typed agent-kind name (the capability name; serde-default for old traces); `config` is the model's opaque tool-call args passed through **untouched** (the brain never injects keys into them, §2.4); `seed` is the forked log prefix (§14). Nesting depth is a host concern: `EngineBuilder::max_agent_depth` (default 1) caps it, and exceeding the cap routes back to the model as an `agent_depth_exceeded` semantic tool result. Per-kind defaults (model tier, tool allowlist) are host registration data (`AgentDefaults` via `EngineBuilder::agent_with_defaults`), not reducer knowledge. The child runs **in-process** as a spawned host task (`hugr_host::agent::run_agent`) reusing a subset of the parent's model + capability registries; its ops live in a `JoinSet` so a parent `Cancel` tears down the subtree. Its digest returns as `Event::AgentDone { op, result }` (a text answer + aggregated usage), folded back like any tool result. Nested agents work with no special case. Replay is flattened (§13.3): the parent trace records each child's `AgentDone`, so re-feeding it reconstructs the parent bit-for-bit without re-running children.
+Implemented (Phase 6): `Command::StartAgent { op, agent, config, seed }` is emitted (instead of `StartCapability`) when the pluggable `TurnPolicy::agent_seed(capability)` designates a tool as a sub-agent spawner — *strategy* in the policy, not hardcoded in the reducer. `agent` is the typed agent-kind name (the capability name; serde-default for old traces); `config` is the model's opaque tool-call args passed through **untouched** (the brain never injects keys into them, §2.4); `seed` is the forked log prefix (§14). Nesting depth is a host concern: `EngineBuilder::max_agent_depth` (default 1) caps it, and exceeding the cap routes back to the model as an `agent_depth_exceeded` semantic tool result. Per-kind defaults (model tier, tool allowlist) are host registration data (`AgentDefaults` via `EngineBuilder::agent_with_defaults`), not reducer knowledge. The child runs **in-process** as a spawned host task (`hugr_host::agent::run_agent`) reusing a subset of the parent's model + capability registries; its ops live in a `JoinSet` so a parent `Cancel` tears down the subtree. Its digest returns as `Event::AgentDone { op, result }` (a text answer + aggregated usage), folded back like any tool result. Nested agents work with no special case. Replay of the parent stays flattened (§13.3): the parent trace records each child's `AgentDone`, so re-feeding it reconstructs the parent bit-for-bit without re-running children — and a recording host additionally nests each child's **own** recorded session into the parent trace (`Trace::children`, a `ChildTrace` per completed child), so children are visible to the trace, replay, and verification too.
 
 ### 13.1 A sub-agent is an op
 
@@ -654,12 +655,10 @@ Crucially, the brain ↔ host contract (§2) is identical in all three — a rem
 
 ### 13.3 Determinism with sub-agents
 
-The whole tree replays from one trace because the parent's event stream already records everything the children sent back (the child's own events can be nested or flattened with a parent-op tag). Pick one and stick to it:
+The whole tree replays from one trace because the parent's event stream already records everything the children sent back. Hugr implements **both** views, with the flattened one canonical:
 
-- **Flattened:** child events appear in the parent trace tagged with the parent `op` (simplest; one trace replays the tree).
-- **Nested:** each child has its own sub-trace referenced by the parent (better for inspecting a single child in isolation).
-
-Recommendation: flattened parent trace as the canonical record, with optional per-child sub-trace extraction for debugging.
+- **Flattened (canonical):** the parent's event stream records each child's digest (`AgentDone`/`AgentError`) keyed by the parent `op`, so re-feeding the parent trace reconstructs the parent bit-for-bit without re-running any child.
+- **Nested (implemented too):** a *recording* host also captures each completed child session as a `ChildTrace { op, agent, seed, trace }` in the parent trace's `children` — the child's own event stream (in submission order, `Tick`s included), drained command sequence, consolidated log, captured policy, and the fork prefix (§14) it was seeded with. The nesting is recursive: a grandchild's `ChildTrace` lives inside its parent child's trace. `verify()` recursively verifies every child by re-seeding a fresh brain from the recorded seed (`Brain::from_log`) under the child's recorded policy and re-feeding its events; any mismatch fails the whole verification with an error naming the child's op. Both `children` and `seed` are serde-defaulted and skipped when empty, so pre-children traces load unchanged and childless traces stay byte-identical to the old format. Non-recording hosts skip all of this (children run unrecorded, zero overhead).
 
 ## 14. Forks
 

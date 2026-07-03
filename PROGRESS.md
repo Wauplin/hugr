@@ -2,6 +2,19 @@
 
 Running log of what's implemented, phase by phase (see `docs/ROADMAP.md`).
 
+## Recorded sub-agent child sessions ✅
+
+Sub-agent child sessions are no longer headless: previously a child brain's events/commands/log were discarded except its final digest, making children invisible to the parent trace, replay, and verification. A recording host now captures each completed child session and nests it into the parent trace (ARCHITECTURE §12.1/§13.3). `hugr-core` is untouched — this is entirely a host + replay concern; the narrow waist knows nothing about child traces.
+
+Done:
+
+- `hugr-replay` — `Trace` gained `children: Vec<ChildTrace>` (`#[serde(default, skip_serializing_if = Vec::is_empty)]`, so pre-children traces load unchanged and childless traces serialize byte-identically to the old format) plus `Trace::with_children`. `ChildTrace { op, agent, seed, trace }` (`#[non_exhaustive]`, `ChildTrace::new`) ties each child session to the parent `StartAgent` op that spawned it, carries the agent-kind name, the fork prefix (§14) the child brain was seeded with (serde-default, skipped when empty), and the child's full nested `Trace` — recursive, so grandchildren nest inside their parent child's trace (the recursion is through `Vec`, so serde handles arbitrary depth).
+- `hugr-replay::verify` — after the parent's command/log checks, every recorded child is verified recursively: a fresh brain is re-seeded from the child's recorded seed (`Brain::from_log`) under the child's recorded policy (same `policy_from_trace` fallback rules as the parent), its events are re-fed, and the reconstructed commands + log must equal the recorded ones bit-for-bit. A failing child fails the whole verify with the new `TraceError::ChildMismatch { op, agent, source }` naming the op (nested for grandchildren).
+- `hugr-host` — the engine's private `Recorder` is now shared with the sub-agent runner (`agent.rs`), which records the child's events in submission order (injected `Tick`s included) and its commands in drained order, exactly like the engine loop. On completion the runner serializes the child's `StaticPolicy`, drains its own grandchildren sink, and pushes the assembled `ChildTrace` into the parent's sink **before** sending `AgentDone` (a side channel keyed by op — `Option<Arc<Mutex<Vec<ChildTrace>>>>` — so no event can be reordered). `Engine::trace()` attaches the collected children, checkpoints carry them automatically, `EngineBuilder::resume` carries a resumed trace's children forward, and a non-recording engine passes `None` so children stay zero-overhead. Semantic pre-spawn failures (depth cap, bad config, empty tool intersection) produce no child session and record nothing.
+- The in-process host still cannot spawn grandchildren live (child policies advertise no agent tools), so depth-2 recursion is pinned at the serde + verify level rather than end-to-end.
+
+Tests: `hugr-host/tests/end_to_end.rs::sub_agent_child_sessions_are_recorded_and_verified` — a real fan-out records two `ChildTrace`s tied to the right ops (events/commands/log/policy/seed all captured), the trace save/load round-trips byte-for-byte, `verify()` passes including the recursive child checks, and a corrupted child command sequence fails verification with `ChildMismatch` naming the op. `hugr-replay/tests/roundtrip.rs::traces_without_children_stay_byte_stable_and_old_json_loads` (back-compat both ways) and `::nested_child_traces_round_trip_and_verify_recursively` (depth-2 parent → child → grandchild round-trips, verifies recursively, and a corrupted grandchild fails with nested `ChildMismatch`s naming both levels).
+
 ## Docs retrieval showcase — `hugr-docs` ✅
 
 Done:

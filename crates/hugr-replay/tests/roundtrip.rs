@@ -274,3 +274,96 @@ fn rejects_unsupported_future_version() {
         "expected UnsupportedVersion, got {err:?}"
     );
 }
+
+/// A tiny but *real* recorded session: a fresh brain under the default
+/// `StaticPolicy` folds a `Tick` + `UserInput`, with the drained commands and
+/// resulting log captured — exactly what a recording host produces. Used to
+/// build valid nested child traces without a live host.
+fn tiny_session_trace(prompt: &str) -> Trace {
+    use hugr_core::{Brain, StaticPolicy};
+
+    let policy = StaticPolicy::default();
+    let policy_json = serde_json::to_value(&policy).unwrap();
+    let mut brain = Brain::new(Box::new(policy));
+    let events = vec![
+        Event::Tick { now: Timestamp(1) },
+        Event::UserInput {
+            content: json!(prompt),
+            mode: SteerMode::Queue,
+            est_tokens: 1,
+        },
+    ];
+    let mut commands = Vec::new();
+    for event in &events {
+        brain.submit(event.clone());
+        commands.extend(brain.poll());
+    }
+    Trace::new(events, brain.state().log().to_vec(), Some(1))
+        .with_commands(commands)
+        .with_policy(policy_json)
+}
+
+/// Back-compat both ways: a trace without children serializes with **no**
+/// `children` key (byte-stable with the pre-`children` format), and old trace
+/// JSON lacking the field still loads (serde default) and verifies.
+#[test]
+fn traces_without_children_stay_byte_stable_and_old_json_loads() {
+    let trace = tiny_session_trace("hello");
+    let json = String::from_utf8(trace.to_json().unwrap()).unwrap();
+    assert!(
+        !json.contains("\"children\""),
+        "an empty children list must be skipped from the serialized JSON"
+    );
+
+    // Round-trip: the parsed trace has (empty) children and equals the original.
+    let reparsed = Trace::from_json(json.as_bytes()).unwrap();
+    assert!(reparsed.children.is_empty());
+    assert_eq!(reparsed, trace);
+    hugr_replay::verify(&reparsed).expect("a childless trace verifies as before");
+}
+
+/// The nesting is recursive — children can have children (grandchildren, depth
+/// 2). The in-process host cannot spawn grandchildren today (child policies
+/// advertise no agent tools), so the recursion is pinned here at the
+/// serde + verify level: a hand-assembled parent → child → grandchild tree
+/// round-trips through JSON and disk, `verify()` recurses through both levels,
+/// and corrupting the *grandchild* fails verification with a nested
+/// `ChildMismatch` naming each level's op.
+#[test]
+fn nested_child_traces_round_trip_and_verify_recursively() {
+    use hugr_core::OpId;
+    use hugr_replay::{ChildTrace, TraceError, test_support::TempDir};
+
+    let grandchild = ChildTrace::new(OpId(7), "task", Vec::new(), tiny_session_trace("leaf"));
+    let child_trace = tiny_session_trace("middle").with_children(vec![grandchild]);
+    let child = ChildTrace::new(OpId(3), "task", Vec::new(), child_trace);
+    let parent = tiny_session_trace("root").with_children(vec![child]);
+
+    // Serde handles the recursion: JSON and disk round-trips are lossless.
+    let reparsed = Trace::from_json(&parent.to_json().unwrap()).unwrap();
+    assert_eq!(reparsed, parent);
+    let dir = TempDir::new("nested-children");
+    let path = dir.path().join("nested.trace.json");
+    parent.save(&path).unwrap();
+    let reloaded = Trace::load(&path).unwrap();
+    assert_eq!(reloaded, parent);
+    assert_eq!(reloaded.children[0].trace.children[0].op, OpId(7));
+
+    // verify() recurses through both levels.
+    hugr_replay::verify(&reloaded).expect("the depth-2 tree verifies recursively");
+
+    // Corrupting the grandchild's recorded log fails the whole verification,
+    // and the error names both levels: child op 3 wrapping grandchild op 7.
+    let mut corrupted = parent.clone();
+    corrupted.children[0].trace.children[0].trace.log.pop();
+    let err = hugr_replay::verify(&corrupted).expect_err("a corrupted grandchild must fail");
+    match err {
+        TraceError::ChildMismatch { op: 3, source, .. } => match *source {
+            TraceError::ChildMismatch { op: 7, source, .. } => {
+                assert!(matches!(*source, TraceError::ReplayMismatch { .. }));
+            }
+            other => panic!("expected nested ChildMismatch for op 7, got: {other:?}"),
+        },
+        other => panic!("expected ChildMismatch for op 3, got: {other:?}"),
+    }
+}

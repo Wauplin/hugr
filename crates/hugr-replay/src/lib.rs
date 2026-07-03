@@ -28,7 +28,8 @@
 //! ├── events:   Vec<Event>      // the ordered host→brain stream (the replay input)
 //! ├── commands: Vec<Command>    // the ordered brain→host commands the host emitted (the replay *output*)
 //! ├── log:      Vec<LogEntry>   // the consolidated, seq-stamped durable log (the truth)
-//! └── blobs:    BlobManifest    // refs to content-addressed payloads (BlobStore; not inlined)
+//! ├── blobs:    BlobManifest    // refs to content-addressed payloads (BlobStore; not inlined)
+//! └── children: Vec<ChildTrace> // recorded sub-agent sessions, each a nested Trace tied to its parent op (§13.3)
 //! ```
 //!
 //! Three complementary views are stored deliberately:
@@ -63,7 +64,7 @@
 
 use std::path::Path;
 
-use hugr_core::{Command, Event, LogEntry};
+use hugr_core::{Command, Event, LogEntry, OpId};
 use serde::{Deserialize, Serialize};
 
 mod blob;
@@ -122,6 +123,55 @@ pub struct Trace {
     /// (replay then falls back to the default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<serde_json::Value>,
+    /// The **recorded sub-agent sessions** this session spawned (ARCHITECTURE
+    /// §13.3, the nested view): one [`ChildTrace`] per completed child brain,
+    /// tied to the parent op that spawned it. Children can themselves have
+    /// children (the recursion is through `Vec`, so serde handles arbitrary
+    /// depth), and [`verify`](crate::verify) recursively verifies each one. A
+    /// **new** field (serde default), so older traces without it still
+    /// deserialize; skipped from serialized JSON when empty so traces with no
+    /// children stay byte-identical to the pre-`children` format.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<ChildTrace>,
+}
+
+/// A recorded **sub-agent session** nested inside its parent's [`Trace`]
+/// (ARCHITECTURE §13.3): the child's full trace (events, commands, log, policy)
+/// plus the parent-side identity — the [`OpId`] of the `StartAgent` op that
+/// spawned it, the agent-kind name, and the forked log prefix (§14) the child
+/// brain was seeded with. The parent trace stays the flattened canonical record
+/// (the child's `AgentDone` digest drives the parent fold); the nested child
+/// trace makes the child's own session inspectable and verifiable in isolation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ChildTrace {
+    /// The parent op ([`Command::StartAgent`]'s `op`) this child belongs to.
+    pub op: OpId,
+    /// The typed agent-kind name (the tool name the model invoked).
+    pub agent: String,
+    /// The log prefix the child brain was seeded with (`AgentSeed`, §14) —
+    /// empty for `Fresh`. Verification re-seeds a fresh brain with it
+    /// (`Brain::from_log`) before re-feeding the child's events, exactly as the
+    /// live host did. Skipped from JSON when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seed: Vec<LogEntry>,
+    /// The child session's own trace. Recursive: this trace may carry its own
+    /// `children` (grandchildren).
+    pub trace: Trace,
+}
+
+impl ChildTrace {
+    /// A recorded child session: the parent op that spawned it, the agent-kind
+    /// name, the seed log prefix the child brain started from (empty for a
+    /// `Fresh` child), and the child's own trace.
+    pub fn new(op: OpId, agent: impl Into<String>, seed: Vec<LogEntry>, trace: Trace) -> Self {
+        Self {
+            op,
+            agent: agent.into(),
+            seed,
+            trace,
+        }
+    }
 }
 
 /// Trace container metadata. Versioned for forward-compat.
@@ -214,6 +264,7 @@ impl Trace {
             log,
             blobs: BlobManifest::new(),
             policy: None,
+            children: Vec::new(),
         }
     }
 
@@ -232,6 +283,7 @@ impl Trace {
             log,
             blobs,
             policy: None,
+            children: Vec::new(),
         }
     }
 
@@ -248,6 +300,14 @@ impl Trace {
     /// so replay reproduces the brain's pure decisions bit-for-bit (§6.3).
     pub fn with_policy(mut self, policy: serde_json::Value) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Attach the recorded sub-agent sessions this session spawned
+    /// (ARCHITECTURE §13.3). [`verify`](crate::verify) recursively verifies
+    /// each child after the parent.
+    pub fn with_children(mut self, children: Vec<ChildTrace>) -> Self {
+        self.children = children;
         self
     }
 
@@ -352,5 +412,18 @@ pub enum TraceError {
         index: usize,
         recorded: usize,
         reconstructed: usize,
+    },
+
+    /// A recorded **child session** ([`ChildTrace`]) failed verification: re-
+    /// seeding a fresh brain with the child's recorded seed and re-feeding its
+    /// events did not reproduce its recorded commands/log (or one of *its*
+    /// children failed, recursively). `op` names the parent op that spawned the
+    /// failing child; `source` is the underlying mismatch.
+    #[error("child trace for agent `{agent}` (op {op}) failed verification: {source}")]
+    ChildMismatch {
+        op: u64,
+        agent: String,
+        #[source]
+        source: Box<TraceError>,
     },
 }

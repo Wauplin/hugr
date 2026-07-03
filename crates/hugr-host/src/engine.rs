@@ -139,20 +139,23 @@ pub enum TraceCompaction {
 ///
 /// Recording is opt-in (`Engine::builder().record()`); a non-recording engine
 /// pays nothing.
+/// Shared with the sub-agent runner ([`crate::agent`]), which records each
+/// child session the same way and nests it into the parent trace as a
+/// [`hugr_replay::ChildTrace`] (ARCHITECTURE §13.3).
 #[derive(Clone, Debug, Default)]
-struct Recorder {
-    events: Vec<Event>,
+pub(crate) struct Recorder {
+    pub(crate) events: Vec<Event>,
     /// The brain→host commands, in the order the driver drained them from
     /// `brain.poll()` (the replay *output* verified against replay, §6.3).
-    commands: Vec<Command>,
+    pub(crate) commands: Vec<Command>,
     /// The first injected timestamp, used as the trace's `created_at` (the
     /// `seq 0` tick — never a syscall in the core).
-    created_at: Option<u64>,
+    pub(crate) created_at: Option<u64>,
 }
 
 impl Recorder {
     /// Record one event in submission order. The first `Tick` seeds `created_at`.
-    fn record(&mut self, event: &Event) {
+    pub(crate) fn record(&mut self, event: &Event) {
         if self.created_at.is_none() {
             if let Event::Tick { now } = event {
                 self.created_at = Some(now.0);
@@ -163,7 +166,7 @@ impl Recorder {
 
     /// Record commands in the order the driver drained them from the brain, so
     /// the trace's command sequence matches what replay re-emits (§6.3).
-    fn record_commands(&mut self, commands: &[Command]) {
+    pub(crate) fn record_commands(&mut self, commands: &[Command]) {
         self.commands.extend_from_slice(commands);
     }
 
@@ -274,6 +277,11 @@ pub struct Engine {
     /// When recording is enabled, the captured event stream for the trace
     /// (ARCHITECTURE §12). `None` when recording is off (zero overhead).
     recorder: Option<Recorder>,
+    /// When recording is enabled, completed sub-agent runs push their recorded
+    /// child sessions here ([`hugr_replay::ChildTrace`], ARCHITECTURE §13.3);
+    /// [`Engine::trace`] attaches them to the parent trace. `None` when
+    /// recording is off — children then run unrecorded, exactly as before.
+    child_traces: Option<crate::agent::ChildTraceSink>,
     /// Optional durable checkpoint target. When set, the engine writes the
     /// current trace atomically according to `checkpoint_cadence`.
     checkpoint_path: Option<PathBuf>,
@@ -461,6 +469,15 @@ impl Engine {
         // background branching bit-for-bit (§6.3).
         if let Some(policy) = self.policy_config.clone() {
             trace = trace.with_policy(policy);
+        }
+        // Attach the recorded child sessions completed so far, so sub-agent
+        // runs are visible to the trace, replay, and verification (§13.3).
+        // Checkpoints call `trace()` too, so they naturally carry them.
+        if let Some(sink) = &self.child_traces {
+            let children = sink.lock().unwrap().clone();
+            if !children.is_empty() {
+                trace = trace.with_children(children);
+            }
         }
         Some(trace)
     }
@@ -812,6 +829,9 @@ impl Engine {
                     1,
                     self.agent_host(),
                     self.tx.clone(),
+                    // A recording engine also records its children (§13.3);
+                    // `None` keeps non-recording children zero-overhead.
+                    self.child_traces.clone(),
                 ));
                 self.tasks.insert(op, handle);
             }
@@ -1249,7 +1269,7 @@ impl EngineBuilder {
         // branches identically and re-verifies) and rebuilds the brain from the
         // trace; a fresh session assembles the policy from the registered
         // capabilities (§2.4).
-        let (brain, recorder, policy_config) = match self.resume {
+        let (brain, recorder, policy_config, resumed_children) = match self.resume {
             Some(trace) => {
                 // The brain runs under the trace's policy; carry the captured
                 // value through verbatim so re-saving round-trips it bit-for-bit.
@@ -1271,7 +1291,9 @@ impl EngineBuilder {
                 // old + new (ARCHITECTURE §6.3).
                 let mut recorder = Recorder::seed(events, resume_commands, trace.meta.created_at);
                 reconcile_crashed_ops(&mut brain, &mut recorder, self.crash_resume, &clock);
-                (brain, Some(recorder), trace.policy)
+                // Carry the trace's recorded child sessions forward, so a
+                // resumed session re-saves them (and any new children append).
+                (brain, Some(recorder), trace.policy, trace.children)
             }
             None => {
                 // Advertise both capability tools and sub-agent tools to the
@@ -1299,9 +1321,20 @@ impl EngineBuilder {
                     .then(|| serde_json::to_value(&policy).ok())
                     .flatten();
                 let brain = Brain::new(Box::new(policy));
-                (brain, self.record.then(Recorder::default), policy_config)
+                (
+                    brain,
+                    self.record.then(Recorder::default),
+                    policy_config,
+                    Vec::new(),
+                )
             }
         };
+        // Recording engines also collect their sub-agents' recorded sessions
+        // (ARCHITECTURE §13.3); non-recording engines pass `None` so children
+        // stay zero-overhead.
+        let child_traces = recorder
+            .as_ref()
+            .map(|_| Arc::new(Mutex::new(resumed_children)));
 
         // Registration-time agent defaults, keyed by tool name, for the runner.
         let agent_defaults: Arc<HashMap<String, AgentDefaults>> = Arc::new(
@@ -1328,6 +1361,7 @@ impl EngineBuilder {
             op_labels: HashMap::new(),
             coalescer: Coalescer::new(),
             recorder,
+            child_traces,
             checkpoint_path: self.checkpoint_path,
             checkpoint_cadence: self.checkpoint_cadence,
             events_since_checkpoint: 0,
