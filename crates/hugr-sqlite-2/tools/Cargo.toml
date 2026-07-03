@@ -1,0 +1,18 @@
+# The custom-tool crate for the hugr-sqlite agent. Referenced by
+# `[tools.rust.sqlite] crate = "./tools"` in ../hugr.toml; `hugr build`
+# adds it as a dependency of the generated shim crate.
+#
+# NOTE: illustrative — not a workspace member, not expected to compile.
+
+[package]
+name = "hugr-sqlite-tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The ONLY Hugr dependency a custom tool needs: the Capability trait and its
+# supporting types (ToolSchema, ChunkSink, CapResult). Tools never touch
+# hugr-core — they are ordinary host capabilities (ARCHITECTURE §7.1).
+hugr-host = { path = "../../hugr-host" }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }

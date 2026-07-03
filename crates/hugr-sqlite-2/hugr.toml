@@ -1,0 +1,62 @@
+# hugr-sqlite-2 — a read-only SQLite subagent WITH a custom Rust tool.
+#
+# Same authoring model as hugr-docs-2, plus the third extension path from
+# ARCHITECTURE §20.3: a native tool crate that lives inside the definition
+# folder and is compiled into the artifact. Because native code cannot be
+# loaded dynamically, a definition containing `[tools.rust.*]` grants is
+# always run through the build path (`hugr dev` / `hugr build`) — the
+# interpret-only `hugr run` would reject it with a pointer to `hugr dev`.
+#
+# Status: illustrative example of the target format (ROADMAP T1/T2). Nothing
+# here compiles or runs today.
+
+[agent]
+name = "hugr-sqlite"
+version = "0.1.0"
+description = "Answers questions about a single SQLite database file. Read-only: it can inspect the schema and run SELECT queries, and nothing else."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGR_SQLITE_API_KEY"
+
+[models.medium]
+model = "google/gemma-4-31B-it:cerebras"
+temperature = 0.0
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
+
+# ---------------------------------------------------------------------------
+# The custom Rust tool. `crate` points at a cargo crate inside this folder;
+# `hugr build` generates the artifact's shim crate with a dependency on it
+# and calls its exported constructor (see tools/src/lib.rs) with the [config]
+# table below. The tool advertises its own schema + privilege class; the
+# manifest stays the audit surface because the *scope* (which file, writable
+# or not) is declared here, not hardcoded in the Rust.
+# ---------------------------------------------------------------------------
+
+[tools.rust.sqlite]
+crate = "./tools"              # local cargo crate, compiled into the artifact
+[tools.rust.sqlite.config]     # opaque to the toolkit; handed to the tool's constructor
+db = "${db_path}"              # bound at ask time (CLI arg / Python kwarg / env)
+read_only = true               # the constructor refuses to open otherwise
+max_rows = 200                 # result-size guard; larger results are truncated with a notice
+
+[tools.scratchpad]
+# The agent's memory across follow-ups in one conversation: it is instructed
+# (SYSTEM.md) to persist the explored schema — tables, columns, quirks — so a
+# resumed or forked ask doesn't re-discover the database from scratch.
+
+# Deliberately NOT granted: shell, fs_read, fs_write, http_fetch.
+# The only file this agent can touch is the database, read-only, through the
+# tool above; the only network egress is the model endpoint.
+
+[limits]
+max_model_calls = 24
+max_cost_micro_usd = 50_000
+timeout_s = 120
+
+[traces]
+store = "~/.local/share/hugr-sqlite/traces"
+
+[answer.extra_schema]
+queries = { type = "array", items = "string", description = "The SQL queries the answer is based on." }
