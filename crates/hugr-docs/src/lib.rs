@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use hugr_agent::{Agent, AgentLimits, Ask, Pricing, TraceId, TraceStore};
 use hugr_core::{ModelSelector, OpMeta, OpOutcome, Record, SamplingParams, ToolSchema, Value};
-use hugr_host::{Capability, ChunkSink, Engine, Frontend, estimate_text_tokens, policy::AllowAll};
+use hugr_host::{Capability, ChunkSink, estimate_text_tokens, policy::AllowAll};
 use hugr_providers::OpenAiAdapter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -17,6 +18,7 @@ mod python;
 
 pub const DEFAULT_MODEL: &str = "google/gemma-4-31B-it:cerebras";
 pub const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
+pub const DEFAULT_TRACE_DIR: &str = ".hugr-docs-traces";
 pub const DEFAULT_INPUT_USD_PER_M_TOKENS: f64 = 1.0;
 pub const DEFAULT_OUTPUT_USD_PER_M_TOKENS: f64 = 1.5;
 
@@ -43,6 +45,8 @@ You are a documentation retrieval agent. Answer the user's question using only t
 #[derive(Clone, Debug)]
 pub struct DocsConfig {
     pub root: PathBuf,
+    pub trace_dir: PathBuf,
+    pub trace_id: Option<String>,
     pub model: String,
     pub base_url: String,
     pub api_key: String,
@@ -57,6 +61,8 @@ pub struct DocsConfigOptions {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub trace_id: Option<String>,
+    pub trace_dir: Option<PathBuf>,
     pub input_usd_per_m_tokens: Option<f64>,
     pub output_usd_per_m_tokens: Option<f64>,
 }
@@ -78,6 +84,16 @@ impl DocsConfigOptions {
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    pub fn with_trace_dir(mut self, trace_dir: impl Into<PathBuf>) -> Self {
+        self.trace_dir = Some(trace_dir.into());
         self
     }
 
@@ -116,6 +132,10 @@ impl DocsConfig {
             .base_url
             .or_else(|| std::env::var("HUGR_DOCS_BASE_URL").ok())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        let trace_dir = options
+            .trace_dir
+            .or_else(|| std::env::var_os("HUGR_DOCS_TRACE_DIR").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_TRACE_DIR));
         let input_usd_per_m_tokens = options.input_usd_per_m_tokens.map_or_else(
             || {
                 parse_env_f64(
@@ -137,6 +157,10 @@ impl DocsConfig {
         let sampling = SamplingParams::new().with_temperature(0.0);
         Ok(Self {
             root,
+            trace_dir,
+            trace_id: options
+                .trace_id
+                .or_else(|| std::env::var("HUGR_DOCS_TRACE_ID").ok()),
             model,
             base_url,
             api_key,
@@ -192,23 +216,48 @@ async fn answer_question_inner(
         .with_base_url(config.base_url.clone())
         .with_default_params(config.sampling.clone());
 
-    let mut builder = Engine::builder()
+    let store = TraceStore::new(&config.trace_dir);
+    let mut builder = Agent::builder("hugr-docs", env!("CARGO_PKG_VERSION"), store.clone())
+        .description("Answers questions from a read-only documentation folder.")
         .model(selector.clone(), Arc::new(adapter))
         .default_model(selector)
         .system_prompt(SYSTEM_PROMPT)
         .sampling(config.sampling.clone())
         .policy(Arc::new(AllowAll))
-        .frontend(Box::new(JsonFrontend));
+        .pricing(Pricing::new().with_tier(
+            "docs",
+            config.input_usd_per_m_tokens,
+            config.output_usd_per_m_tokens,
+        ))
+        .limits(AgentLimits::new());
     for capability in docs.capabilities() {
         builder = builder.capability(capability);
     }
+    let agent = builder.build();
 
-    let mut engine = builder.build();
-    engine.user_turn(user_prompt(question)).await;
-    engine.session_end();
+    let mut ask = Ask::new(user_prompt(question));
+    if let Some(trace_id) = &config.trace_id {
+        ask = ask.with_trace_id(TraceId::new(trace_id.clone()));
+    }
+    let agent_answer = agent.ask(ask).await?;
+    let trace = store.get(&agent_answer.trace_id)?;
 
-    build_answer(engine.brain().state().log(), config, started.elapsed())
+    let mut docs_answer = build_answer(trace.log.as_slice(), config, started.elapsed())
         .context("building JSON answer from Hugr session")
+        .map(|mut answer| {
+            answer.trace_id = Some(agent_answer.trace_id.to_string());
+            answer.metadata.tokens_in = agent_answer.metadata.tokens_in;
+            answer.metadata.tokens_out = agent_answer.metadata.tokens_out;
+            answer.metadata.estimated_cost_micro_usd = agent_answer.metadata.cost_micro_usd;
+            answer.metadata.model_calls = agent_answer.metadata.model_calls as usize;
+            answer.metadata.tool_calls = agent_answer.metadata.tool_calls as usize;
+            answer
+        })?;
+    if agent_answer.status == hugr_agent::AnswerStatus::Error {
+        docs_answer.status = DocsStatus::Error;
+        docs_answer.message = agent_answer.message;
+    }
+    Ok(docs_answer)
 }
 
 /// Build a docs answer from raw inputs, swallowing every error into a
@@ -1117,11 +1166,6 @@ fn search_impl(root: &DocsRoot, args: Value) -> Result<Value> {
     }))
 }
 
-#[derive(Default)]
-pub struct JsonFrontend;
-
-impl Frontend for JsonFrontend {}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnswerPayload {
     pub answer: String,
@@ -1195,6 +1239,8 @@ pub struct DocsAnswer {
     /// The answer on success; the [`NOT_FOUND_MESSAGE`] phrasing when the docs
     /// lacked evidence; the error message/stacktrace when an error stopped the run.
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
     pub related_documents: Vec<String>,
     pub metadata: RunMetadata,
 }
@@ -1283,6 +1329,7 @@ fn build_answer_with_reads(
         return Ok(DocsAnswer {
             status: DocsStatus::Error,
             message: missing_final_answer_message(log),
+            trace_id: None,
             related_documents: sanitize_related_documents(Vec::new(), &read.documents),
             metadata,
         });
@@ -1298,6 +1345,7 @@ fn build_answer_with_reads(
     Ok(DocsAnswer {
         status,
         message: payload.answer,
+        trace_id: None,
         related_documents,
         metadata,
     })
@@ -1316,6 +1364,7 @@ fn failure_answer(model: &str, endpoint: &str, elapsed: Duration, message: Strin
     DocsAnswer {
         status: DocsStatus::Error,
         message,
+        trace_id: None,
         related_documents: Vec::new(),
         metadata: RunMetadata {
             model: model.to_string(),
@@ -1602,6 +1651,8 @@ mod tests {
     fn test_config() -> DocsConfig {
         DocsConfig {
             root: PathBuf::from("/docs"),
+            trace_dir: PathBuf::from(".hugr-docs-traces"),
+            trace_id: None,
             model: "provider/model".to_string(),
             base_url: "https://example.test/v1".to_string(),
             api_key: "key".to_string(),
@@ -1724,6 +1775,32 @@ mod tests {
             serde_json::from_str::<DocsStatus>("\"off_topic\"").unwrap(),
             DocsStatus::OffTopic
         );
+    }
+
+    #[test]
+    fn docs_answer_serializes_trace_id_when_present() {
+        let answer = DocsAnswer {
+            status: DocsStatus::Success,
+            message: "A".to_string(),
+            trace_id: Some("trace-1".to_string()),
+            related_documents: Vec::new(),
+            metadata: RunMetadata {
+                model: "provider/model".to_string(),
+                endpoint: "https://example.test/v1".to_string(),
+                elapsed_ms: 1,
+                tokens_in: 2,
+                tokens_out: 3,
+                estimated_cost_micro_usd: 4,
+                input_usd_per_m_tokens: 1.0,
+                output_usd_per_m_tokens: 1.5,
+                model_calls: 1,
+                tool_calls: 0,
+                read_documents: 0,
+                read_indexes: 0,
+            },
+        };
+        let value = serde_json::to_value(answer).unwrap();
+        assert_eq!(value["trace_id"], "trace-1");
     }
 
     #[test]

@@ -21,6 +21,14 @@ struct Cli {
     #[arg(short = 'm', long = "model")]
     model: Option<String>,
 
+    /// Resume/fork from a previously returned trace id.
+    #[arg(long = "trace")]
+    trace_id: Option<String>,
+
+    /// Directory for persisted traces. Defaults to HUGR_DOCS_TRACE_DIR, then .hugr-docs-traces.
+    #[arg(long = "trace-dir")]
+    trace_dir: Option<PathBuf>,
+
     /// Pretty-print JSON output.
     #[arg(long = "pretty")]
     pretty: bool,
@@ -33,6 +41,12 @@ async fn main() -> Result<()> {
     let mut options = DocsConfigOptions::new();
     if let Some(model) = cli.model.clone() {
         options = options.with_model(model);
+    }
+    if let Some(trace_id) = cli.trace_id.clone() {
+        options = options.with_trace_id(trace_id);
+    }
+    if let Some(trace_dir) = cli.trace_dir.clone() {
+        options = options.with_trace_dir(trace_dir);
     }
     // `answer_with_options` swallows every failure (bad API key, missing docs
     // root, model produced no final answer, …) into a `"status": "error"` JSON

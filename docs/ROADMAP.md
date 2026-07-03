@@ -153,7 +153,6 @@ Two tasks with disjoint tag sets can proceed in parallel.
 
 ## Immediate next slice
 
-1. **T0.1 + T0.2** — pin the `Ask`/`Answer` contract and the `trace_id`/`depends_on` trace store. The one-way doors; design-review these before writing surfaces.
-2. **T0.3** — resume & fork end-to-end with determinism tests.
-3. **T0.8** — port `hugr-docs`; the layer is validated only when the port deletes code.
-4. **T1.1 + T1.2 in parallel** — manifest + tool library; then **T1.3** (`hugr run`) makes the pivot demoable without any packaging.
+1. **T1.1 + T1.2 in parallel** — manifest + tool library; then **T1.3** (`hugr run`) makes the pivot demoable without any packaging.
+2. **T1.6** — redefine `hugr-docs` as a definition folder once the manifest runner exists; this is the second proof that the shared layers delete crate-specific runtime wiring.
+3. **T1.7** — trace tooling over the agent trace store so fork trees are inspectable from the toolkit CLI.

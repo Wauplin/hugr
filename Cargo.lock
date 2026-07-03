@@ -445,6 +445,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "hugr-agent",
  "hugr-core",
  "hugr-host",
  "hugr-providers",

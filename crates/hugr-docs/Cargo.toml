@@ -21,6 +21,7 @@ python = ["dep:pyo3"]
 
 [dependencies]
 hugr-core = { workspace = true }
+hugr-agent = { workspace = true }
 hugr-host = { workspace = true }
 hugr-providers = { workspace = true }
 tokio = { workspace = true }

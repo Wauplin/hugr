@@ -13,6 +13,8 @@ use crate::{DocsConfigOptions, answer_with_options};
     api_key=None,
     base_url=None,
     model=None,
+    trace_id=None,
+    trace_dir=None,
     input_usd_per_m_tokens=None,
     output_usd_per_m_tokens=None
 ))]
@@ -23,6 +25,8 @@ fn answer(
     api_key: Option<&str>,
     base_url: Option<&str>,
     model: Option<&str>,
+    trace_id: Option<&str>,
+    trace_dir: Option<&str>,
     input_usd_per_m_tokens: Option<f64>,
     output_usd_per_m_tokens: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
@@ -36,6 +40,8 @@ fn answer(
         api_key: api_key.map(str::to_string),
         base_url: base_url.map(str::to_string),
         model: model.map(str::to_string),
+        trace_id: trace_id.map(str::to_string),
+        trace_dir: trace_dir.map(PathBuf::from),
         input_usd_per_m_tokens,
         output_usd_per_m_tokens,
     };
