@@ -911,27 +911,28 @@ fn context_plan_explains_dispositions_and_renders_request() {
 #[test]
 fn summary_records_round_trip_and_evict_covered_span_to_refs() {
     let log = vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "first long turn".to_string(),
                 est_tokens: 40,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: text_output("first long answer"),
                 est_tokens: 60,
             },
-        },
-        LogEntry {
-            seq: Seq(2),
-            at: Timestamp(0),
-            record: Record::Summary {
+        ),
+        LogEntry::new(
+            Seq(2),
+            Timestamp(0),
+            Record::Summary {
                 op: OpId(1),
                 text: "The first turn established the task.".to_string(),
                 summary_of: SeqRange::new(Seq(0), Seq(1)),
@@ -940,7 +941,7 @@ fn summary_records_round_trip_and_evict_covered_span_to_refs() {
                 est_tokens_in: 100,
                 est_tokens_out: 8,
             },
-        },
+        ),
     ];
 
     let json = serde_json::to_string(&log).expect("summary log serializes");
@@ -984,23 +985,24 @@ fn summary_records_round_trip_and_evict_covered_span_to_refs() {
 #[test]
 fn automatic_compaction_summarizes_then_reprojects_and_replays() {
     let prior_log = vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "old user turn with many details".to_string(),
                 est_tokens: 10,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: text_output("old assistant answer with many details"),
                 est_tokens: 10,
             },
-        },
+        ),
     ];
     let script = vec![
         Event::UserInput {
@@ -1097,23 +1099,24 @@ fn automatic_compaction_summarizes_then_reprojects_and_replays() {
 #[test]
 fn manual_compaction_event_runs_one_pass_without_starting_turn() {
     let prior_log = vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "old user turn with many details".to_string(),
                 est_tokens: 10,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: text_output("old assistant answer with many details"),
                 est_tokens: 10,
             },
-        },
+        ),
     ];
     let script = vec![
         Event::CompactContext,
@@ -1472,23 +1475,24 @@ fn model_error_replay_is_deterministic() {
 /// and one assistant answer (the shape reused by the A3/A4 compaction tests).
 fn compaction_prior_log() -> Vec<LogEntry> {
     vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "old user turn with many details".to_string(),
                 est_tokens: 10,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: text_output("old assistant answer with many details"),
                 est_tokens: 10,
             },
-        },
+        ),
     ]
 }
 
@@ -1546,27 +1550,28 @@ fn unmatched_tool_results(request: &hugr_core::ModelRequest) -> Vec<String> {
 #[test]
 fn compaction_span_never_splits_a_tool_use_result_group() {
     let log = vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "please run ls".to_string(),
                 est_tokens: 10,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: tool_output("call-1", "shell", json!({ "cmd": "ls" })),
                 est_tokens: 10,
             },
-        },
-        LogEntry {
-            seq: Seq(2),
-            at: Timestamp(0),
-            record: Record::ToolResult {
+        ),
+        LogEntry::new(
+            Seq(2),
+            Timestamp(0),
+            Record::ToolResult {
                 op: OpId(0),
                 name: "shell".to_string(),
                 call_id: "call-1".to_string(),
@@ -1574,16 +1579,16 @@ fn compaction_span_never_splits_a_tool_use_result_group() {
                 version: None,
                 est_tokens: 10,
             },
-        },
-        LogEntry {
-            seq: Seq(3),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(3),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(1),
                 output: text_output("done"),
                 est_tokens: 10,
             },
-        },
+        ),
     ];
     let policy = StaticPolicy::default();
     let plan = policy.project_context(&log, TokenBudget::new(20));
@@ -1596,18 +1601,20 @@ fn compaction_span_never_splits_a_tool_use_result_group() {
     assert_eq!(target.est_tokens_in, 30);
 
     // Projecting with a summary that covers the whole group yields no orphan.
-    let summary = |range: SeqRange| LogEntry {
-        seq: Seq(4),
-        at: Timestamp(0),
-        record: Record::Summary {
-            op: OpId(2),
-            text: "summary".to_string(),
-            summary_of: range,
-            coverage: SummaryCoverage::Complete,
-            tier: ModelSelector::named("medium"),
-            est_tokens_in: 30,
-            est_tokens_out: 3,
-        },
+    let summary = |range: SeqRange| {
+        LogEntry::new(
+            Seq(4),
+            Timestamp(0),
+            Record::Summary {
+                op: OpId(2),
+                text: "summary".to_string(),
+                summary_of: range,
+                coverage: SummaryCoverage::Complete,
+                tier: ModelSelector::named("medium"),
+                est_tokens_in: 30,
+                est_tokens_out: 3,
+            },
+        )
     };
     let mut whole = log.clone();
     whole.push(summary(target.summary_of));
@@ -1745,27 +1752,28 @@ fn routing_policy_compaction_uses_small_but_static_falls_back() {
 fn default_compaction_request_is_byte_identical() {
     let policy = StaticPolicy::default();
     let log = vec![
-        LogEntry {
-            seq: Seq(0),
-            at: Timestamp(0),
-            record: Record::UserMessage {
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            Record::UserMessage {
                 text: "hello".to_string(),
                 est_tokens: 1,
+                steer: hugr_core::SteerMode::Queue,
             },
-        },
-        LogEntry {
-            seq: Seq(1),
-            at: Timestamp(0),
-            record: Record::ModelOutput {
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::ModelOutput {
                 op: OpId(0),
                 output: text_output("did stuff"),
                 est_tokens: 1,
             },
-        },
-        LogEntry {
-            seq: Seq(2),
-            at: Timestamp(0),
-            record: Record::ToolResult {
+        ),
+        LogEntry::new(
+            Seq(2),
+            Timestamp(0),
+            Record::ToolResult {
                 op: OpId(0),
                 name: "shell".to_string(),
                 call_id: "call-1".to_string(),
@@ -1773,7 +1781,7 @@ fn default_compaction_request_is_byte_identical() {
                 version: None,
                 est_tokens: 1,
             },
-        },
+        ),
     ];
 
     let request = policy.compaction_request(&log, SeqRange::new(Seq(0), Seq(2)));
@@ -1895,4 +1903,177 @@ fn compaction_prompt_and_rendering_are_overridable() {
         "default system prompt missing: {}",
         text_of(Role::System)
     );
+}
+
+/// `Event::ModelOverride` is durable: it appends a `Record::ModelOverride`
+/// (plus a `Checkpoint`), and `Brain::from_log` re-derives the pending override
+/// from the log — the last override record not yet consumed by a subsequent
+/// main-turn `ModelOutput` (the log is the source of truth, ARCHITECTURE §3.1).
+#[test]
+fn model_override_is_logged_and_survives_resume() {
+    let mut brain = Brain::new(Box::new(RoutingPolicy::default()));
+    let commands = run_script(
+        &mut brain,
+        vec![Event::ModelOverride {
+            selector: Some(ModelSelector::named("big")),
+        }],
+    );
+    // Pinned command sequence: the durable record is checkpointed.
+    assert_eq!(effectful(&commands), vec![&Command::Checkpoint]);
+    assert!(matches!(
+        brain.state().log().last().map(|entry| &entry.record),
+        Some(Record::ModelOverride { selector: Some(s) }) if *s == ModelSelector::named("big")
+    ));
+
+    // Crash/resume before the override is consumed: the fold restores it.
+    let resumed = Brain::from_log(
+        Box::new(RoutingPolicy::default()),
+        brain.state().log().to_vec(),
+    );
+    assert_eq!(
+        resumed.state().next_model_override(),
+        Some(&ModelSelector::named("big")),
+        "a pending override must survive checkpoint/resume via the log"
+    );
+
+    // Consume it with a real turn: the next main-turn ModelOutput record marks
+    // the override consumed, so a later resume restores nothing.
+    run_script(
+        &mut brain,
+        vec![
+            user("ordinary request"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: text_output("Done."),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ],
+    );
+    assert!(brain.state().next_model_override().is_none());
+    let resumed = Brain::from_log(
+        Box::new(RoutingPolicy::default()),
+        brain.state().log().to_vec(),
+    );
+    assert!(
+        resumed.state().next_model_override().is_none(),
+        "a consumed override must not be resurrected by the fold"
+    );
+
+    // Clearing (`selector: None`) is durable too: it supersedes a pending one.
+    let mut cleared = Brain::new(Box::new(RoutingPolicy::default()));
+    run_script(
+        &mut cleared,
+        vec![
+            Event::ModelOverride {
+                selector: Some(ModelSelector::named("big")),
+            },
+            Event::ModelOverride { selector: None },
+        ],
+    );
+    let resumed = Brain::from_log(
+        Box::new(RoutingPolicy::default()),
+        cleared.state().log().to_vec(),
+    );
+    assert!(resumed.state().next_model_override().is_none());
+
+    // Determinism: the whole override path replays bit-for-bit.
+    assert_deterministic_replay(
+        || Brain::new(Box::new(RoutingPolicy::default())),
+        || {
+            vec![
+                Event::ModelOverride {
+                    selector: Some(ModelSelector::named("big")),
+                },
+                user("ordinary request"),
+                Event::ModelDone {
+                    op: OpId(0),
+                    output: text_output("Done."),
+                    usage: usage(),
+                    est_tokens: 1,
+                },
+            ]
+        },
+    );
+}
+
+/// A compaction pass does not consume a pending override: compaction logs a
+/// `Summary` record (never a `ModelOutput`), so the fold keeps the override
+/// pending for the real turn that resumes afterwards.
+#[test]
+fn model_override_survives_a_compaction_pass_in_the_fold() {
+    let log = vec![
+        LogEntry::new(
+            Seq(0),
+            Timestamp(0),
+            serde_json::from_value(json!({
+                "ModelOverride": { "selector": { "Named": "big" } }
+            }))
+            .unwrap(),
+        ),
+        LogEntry::new(
+            Seq(1),
+            Timestamp(0),
+            Record::Summary {
+                op: OpId(0),
+                text: "old span summary".to_string(),
+                summary_of: SeqRange::new(Seq(0), Seq(0)),
+                coverage: SummaryCoverage::Complete,
+                tier: ModelSelector::named("small"),
+                est_tokens_in: 10,
+                est_tokens_out: 2,
+            },
+        ),
+    ];
+    let brain = Brain::from_log(Box::new(RoutingPolicy::default()), log);
+    assert_eq!(
+        brain.state().next_model_override(),
+        Some(&ModelSelector::named("big")),
+        "a compaction summary must not consume the pending override"
+    );
+}
+
+/// Queue vs interrupt input write distinguishable `UserMessage` records: the
+/// fold is no longer lossy about how input steered the turn (log fidelity).
+#[test]
+fn user_message_records_carry_their_steer_mode() {
+    let mut brain = Brain::with_default_policy();
+    run_script(
+        &mut brain,
+        vec![
+            user("first"),          // idle → Queue
+            user_interrupt("stop"), // mid-turn interrupt
+            Event::OpCancelled { op: OpId(0) },
+        ],
+    );
+    let steers: Vec<_> = brain
+        .state()
+        .log()
+        .iter()
+        .filter_map(|entry| match &entry.record {
+            Record::UserMessage { steer, .. } => Some(*steer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        steers,
+        vec![hugr_core::SteerMode::Queue, hugr_core::SteerMode::Interrupt]
+    );
+}
+
+/// Serde back-compat: an old trace's `UserMessage` JSON (no `steer` key) still
+/// loads, defaulting to `Queue`.
+#[test]
+fn old_user_message_json_without_steer_defaults_to_queue() {
+    let record: Record = serde_json::from_value(json!({
+        "UserMessage": { "text": "hi", "est_tokens": 3 }
+    }))
+    .unwrap();
+    assert!(matches!(
+        record,
+        Record::UserMessage {
+            steer: hugr_core::SteerMode::Queue,
+            ..
+        }
+    ));
 }

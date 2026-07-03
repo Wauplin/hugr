@@ -790,3 +790,50 @@ fn interrupt_race_replay_is_deterministic() {
     };
     assert_deterministic_replay(Brain::with_default_policy, abort_after_interrupt);
 }
+
+/// Aborting with several ops in flight must fan out `Cancel` commands in a
+/// deterministic order (ascending op id): the in-flight table's iteration
+/// order leaks into the command stream, and replay/trace-verify compares
+/// command sequences bit-for-bit (ARCHITECTURE §6.2).
+#[test]
+fn abort_with_multiple_inflight_ops_cancels_in_op_id_order() {
+    use hugr_core::{ModelOutput, ToolCall};
+
+    let make_brain = || Brain::new(Box::new(background_shell_policy()));
+    let script = || {
+        vec![
+            user("run two long builds"),
+            // The model fans out two background shells (ops 1 and 2); nothing
+            // blocks the turn, so it resumes as a fresh model call (op 3).
+            Event::ModelDone {
+                op: OpId(0),
+                output: ModelOutput::tool_calls(vec![
+                    ToolCall::new("call-1", "shell", json!({ "cmd": "cargo build" })),
+                    ToolCall::new("call-2", "shell", json!({ "cmd": "cargo test" })),
+                ]),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            // Three ops in flight (two shells + the resumed model). Abort.
+            Event::UserAbort,
+        ]
+    };
+
+    let mut brain = make_brain();
+    let commands = run_script(&mut brain, script());
+    let cancelled: Vec<OpId> = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Cancel { op } => Some(*op),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cancelled,
+        vec![OpId(1), OpId(2), OpId(3)],
+        "Cancel fan-out must be in ascending op-id order, never hash order"
+    );
+
+    // And the whole path replays bit-for-bit across fresh brains.
+    assert_deterministic_replay(make_brain, script);
+}

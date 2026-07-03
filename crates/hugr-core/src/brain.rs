@@ -89,7 +89,17 @@ impl Brain {
             } => self.on_user_input(content, mode, est_tokens),
             Event::UserAbort => self.on_user_abort(),
             Event::CompactContext => self.on_compact_context(),
-            Event::ModelOverride { selector } => self.state.set_model_override(selector),
+            Event::ModelOverride { selector } => {
+                // Durable, not just in-memory: a pending override must survive
+                // checkpoint/resume, and `BrainState` must stay a pure fold
+                // over the log (ARCHITECTURE §3.1). `from_log` re-derives the
+                // pending override from this record (see `Record::ModelOverride`).
+                self.append(Record::ModelOverride {
+                    selector: selector.clone(),
+                });
+                self.state.set_model_override(selector);
+                self.checkpoint();
+            }
             Event::PlanAccepted { text, est_tokens } => {
                 self.append(Record::Plan { text, est_tokens });
                 self.checkpoint();
@@ -174,6 +184,7 @@ impl Brain {
         self.append(Record::UserMessage {
             text: stringify(&content),
             est_tokens,
+            steer: mode,
         });
 
         if !self.state.is_busy() {
@@ -214,7 +225,7 @@ impl Brain {
         // a cosmetic event. Never written to the log (ARCHITECTURE §4.5).
         let is_compaction = matches!(
             self.state.get_op(op).map(|entry| &entry.kind),
-            Some(OpKind::Compaction { .. } | OpKind::ManualCompaction { .. })
+            Some(OpKind::Compaction { .. })
         );
         match delta {
             ModelDelta::Text(t) => {
@@ -641,24 +652,17 @@ impl Brain {
         let routing = RoutingDecision::new(selector.clone(), reasons)
             .with_inputs(routing_inputs_snapshot(&inputs));
         let request = self.policy.compaction_request(self.state.log(), summary_of);
-        let kind = if resume_turn {
+        self.state.mark(
+            op,
             OpKind::Compaction {
                 selector: selector.clone(),
                 routing,
                 summary_of,
                 est_tokens_in,
+                resume_turn,
                 text_so_far: String::new(),
-            }
-        } else {
-            OpKind::ManualCompaction {
-                selector: selector.clone(),
-                routing,
-                summary_of,
-                est_tokens_in,
-                text_so_far: String::new(),
-            }
-        };
-        self.state.mark(op, kind);
+            },
+        );
         self.state.push_command(Command::StartModelCall {
             op,
             model: selector,
@@ -705,14 +709,9 @@ impl Brain {
                 selector,
                 summary_of,
                 est_tokens_in,
+                resume_turn,
                 ..
-            }) => Some((*summary_of, *est_tokens_in, selector.clone(), true)),
-            Some(OpKind::ManualCompaction {
-                selector,
-                summary_of,
-                est_tokens_in,
-                ..
-            }) => Some((*summary_of, *est_tokens_in, selector.clone(), false)),
+            }) => Some((*summary_of, *est_tokens_in, selector.clone(), *resume_turn)),
             _ => None,
         }
     }
@@ -1013,13 +1012,9 @@ impl Brain {
     /// Whatever a cancelled op produced so far (e.g. partial model text).
     fn partial_of(&self, op: OpId) -> Value {
         match self.state.get_op(op).map(|o| &o.kind) {
-            Some(OpKind::Model { text_so_far, .. }) if !text_so_far.is_empty() => {
-                Value::String(text_so_far.clone())
-            }
-            Some(OpKind::Compaction { text_so_far, .. }) if !text_so_far.is_empty() => {
-                Value::String(text_so_far.clone())
-            }
-            Some(OpKind::ManualCompaction { text_so_far, .. }) if !text_so_far.is_empty() => {
+            Some(OpKind::Model { text_so_far, .. } | OpKind::Compaction { text_so_far, .. })
+                if !text_so_far.is_empty() =>
+            {
                 Value::String(text_so_far.clone())
             }
             _ => Value::Null,

@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::event::VersionRef;
+use crate::event::{SteerMode, VersionRef};
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
@@ -62,7 +62,8 @@ pub enum SummaryCoverage {
     Partial { reason: String },
 }
 
-/// One ordered, timestamped entry in the append-only log.
+/// One ordered, timestamped entry in the append-only log. Prefer constructing
+/// via [`LogEntry::new`] (ARCHITECTURE §2.4).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LogEntry {
     /// Host-assigned global order (also the replay key).
@@ -70,6 +71,12 @@ pub struct LogEntry {
     /// From the latest injected [`Tick`](crate::Event::Tick), never a syscall.
     pub at: Timestamp,
     pub record: Record,
+}
+
+impl LogEntry {
+    pub fn new(seq: Seq, at: Timestamp, record: Record) -> Self {
+        Self { seq, at, record }
+    }
 }
 
 /// The persisted forms of state-changing facts.
@@ -83,7 +90,22 @@ pub enum Record {
         /// value but never tokenizes content itself (ARCHITECTURE §3.5).
         #[serde(default)]
         est_tokens: u32,
+        /// How the input steered the turn when it arrived (queue vs interrupt,
+        /// ARCHITECTURE §4.6). Recorded so the fold is not lossy for
+        /// audit/replay tooling. `#[serde(default)]` (= `Queue`) keeps old
+        /// traces loading unchanged.
+        #[serde(default)]
+        steer: SteerMode,
     },
+
+    /// A one-shot model-selector override arrived ([`Event::ModelOverride`]
+    /// (crate::Event::ModelOverride)); `None` cleared a pending one. Durable so
+    /// a pending override survives checkpoint/resume: `BrainState::from_log`
+    /// re-derives it as the last `ModelOverride` record not followed by a
+    /// main-turn [`ModelOutput`](Record::ModelOutput) record (compaction passes
+    /// log a [`Summary`](Record::Summary), never a `ModelOutput`, so they don't
+    /// consume it).
+    ModelOverride { selector: Option<ModelSelector> },
 
     /// A consolidated model output (the authoritative result of a model call).
     /// Phase 0 stores it inline; later phases may store a [`Value`] blob ref.
@@ -196,6 +218,7 @@ impl Record {
             | Record::Summary { op, .. }
             | Record::OpEnded { op, .. } => Some(*op),
             Record::UserMessage { .. }
+            | Record::ModelOverride { .. }
             | Record::SkillActivated { .. }
             | Record::Plan { .. }
             | Record::TodoList { .. }
@@ -215,7 +238,7 @@ impl Record {
             | Record::Plan { est_tokens, .. }
             | Record::TodoList { est_tokens, .. }
             | Record::Hook { est_tokens, .. } => Some(*est_tokens),
-            Record::OpEnded { .. } => None,
+            Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
         }
     }
 }

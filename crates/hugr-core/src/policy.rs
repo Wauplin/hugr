@@ -768,7 +768,9 @@ impl TurnPolicy for StaticPolicy {
                 continue;
             }
             match &entry.record {
-                Record::UserMessage { text, est_tokens } => {
+                Record::UserMessage {
+                    text, est_tokens, ..
+                } => {
                     let disposition = ContextDisposition::included(ContextBlock::new(
                         Role::User,
                         vec![ContentPart::Text(text.clone())],
@@ -1021,6 +1023,17 @@ impl TurnPolicy for StaticPolicy {
                         0,
                         disposition,
                         "operation metadata is not model context",
+                    ));
+                }
+                // A model-override record is turn-control bookkeeping (which
+                // selector the next turn uses), never model-visible context.
+                Record::ModelOverride { .. } => {
+                    let disposition = ContextDisposition::omitted();
+                    entries.push(ContextPlanEntry::new(
+                        ContextSource::log_entry(entry.seq),
+                        0,
+                        disposition,
+                        "model override is turn control, not model context",
                     ));
                 }
             }
@@ -1378,7 +1391,8 @@ fn default_render_summary_record(seq: Seq, record: &Record) -> Option<String> {
             "log:{} hook {:?}/{}: {}",
             seq.0, phase, name, result
         )),
-        Record::OpEnded { .. } => None,
+        // Turn-control / bookkeeping records contribute nothing to a summary.
+        Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
     }
 }
 
