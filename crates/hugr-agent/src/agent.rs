@@ -30,7 +30,9 @@ use std::time::Instant;
 use hugr_core::{LogEntry, ModelSelector, Record, SamplingParams};
 use hugr_host::policy::AllowAll;
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter, Policy};
+use hugr_replay::BlobStore;
 
+use crate::blobs::{self, BlobError};
 use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use crate::scratch::{ScratchDir, copy_tree};
 use crate::store::{StoreError, TraceHeader, TraceStore};
@@ -44,6 +46,12 @@ const DEFAULT_SCRATCH_DIRNAME: &str = ".scratch";
 /// scratch root until the ask's trace is persisted and the copy is finalized to
 /// its own `<trace_id>` subtree.
 const PENDING_DIRNAME: &str = ".pending";
+
+/// Default name of the content-addressed blob store directory, placed next to
+/// the trace files inside the store root (ROADMAP T0.5). Hidden and
+/// non-`.json`, so `TraceStore::list` skips it — a store dir carries its
+/// agents' outbound blobs alongside their traces.
+const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
 
 /// A configured subagent: ask it questions, get [`Answer`]s, resume or fork
 /// any stored trace. Build one with [`Agent::builder`].
@@ -64,6 +72,8 @@ pub struct Agent {
     clock: Option<Clock>,
     /// Root of the per-lineage scratchpad subtree (ARCHITECTURE §19.3).
     scratch_root: PathBuf,
+    /// Content-addressed store outbound blobs land in (ARCHITECTURE §18.3).
+    blob_store: BlobStore,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -90,12 +100,20 @@ impl Agent {
             sampling: None,
             clock: None,
             scratch_root: None,
+            blob_store: None,
         }
     }
 
     /// The trace store this agent persists into.
     pub fn store(&self) -> &TraceStore {
         &self.store
+    }
+
+    /// The content-addressed blob store this agent's outbound blobs land in
+    /// (ARCHITECTURE §18.3). An orchestrator resolves an [`Answer`] blob's
+    /// `sha256` ref through here.
+    pub fn blob_store(&self) -> &BlobStore {
+        &self.blob_store
     }
 
     /// Run one ask to completion (ARCHITECTURE §18.1/§19.2). See the module
@@ -144,6 +162,11 @@ impl Agent {
             builder = builder.capability(capability);
         }
 
+        // Materialize inbound blobs into the working scratch dir *before* the
+        // turn, with declared perms, so tools see plain files in the jail
+        // (§18.3). Malformed hand-ins are infra errors (AskError), not answers.
+        blobs::materialize_inbound(&working_dir, &ask.blobs, &self.blob_store)?;
+
         let mut engine = builder.build();
 
         // Accounting baseline: on resume the brain's log already holds the
@@ -173,12 +196,18 @@ impl Agent {
         }
         let trace_id = self.store.put(trace, header)?;
 
+        // Sweep produced files (the `out/` scratch subtree) into the
+        // content-addressed store and return them as outbound blobs (§18.3).
+        // Done before finalize while the working subtree is still in place;
+        // dedup by hash lives in the store.
+        let out_blobs = blobs::sweep_outbound(&working_dir, &self.blob_store)?;
+
         // Finalize the working subtree under the new trace's id so a later
         // resume/fork of *this* trace can seed from it (§19.3). Scratch is
         // never recorded, so this move happens after the trace is persisted.
         self.finalize_scratch(&working_dir, &trace_id)?;
 
-        Ok(Answer::new(status, message, trace_id, metadata))
+        Ok(Answer::new(status, message, trace_id, metadata).with_blobs(out_blobs))
     }
 
     /// Create this ask's working scratch directory (a fresh `.pending/<n>`
@@ -241,6 +270,7 @@ pub struct AgentBuilder {
     sampling: Option<SamplingParams>,
     clock: Option<Clock>,
     scratch_root: Option<PathBuf>,
+    blob_store: Option<BlobStore>,
 }
 
 impl AgentBuilder {
@@ -300,10 +330,22 @@ impl AgentBuilder {
         self
     }
 
+    /// Override the content-addressed blob store outbound blobs land in
+    /// (ARCHITECTURE §18.3). Defaults to a hidden `.blobs` subtree inside the
+    /// trace store root, so a store dir carries its agents' blobs alongside the
+    /// traces.
+    pub fn blob_store(mut self, store: BlobStore) -> Self {
+        self.blob_store = Some(store);
+        self
+    }
+
     pub fn build(self) -> Agent {
         let scratch_root = self
             .scratch_root
             .unwrap_or_else(|| self.store.root().join(DEFAULT_SCRATCH_DIRNAME));
+        let blob_store = self
+            .blob_store
+            .unwrap_or_else(|| BlobStore::new(self.store.root().join(DEFAULT_BLOBS_DIRNAME)));
         Agent {
             name: self.name,
             version: self.version,
@@ -316,6 +358,7 @@ impl AgentBuilder {
             sampling: self.sampling,
             clock: self.clock,
             scratch_root,
+            blob_store,
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -335,6 +378,11 @@ pub enum AskError {
     /// seeded, or finalized on disk.
     #[error("scratchpad IO error: {0}")]
     Scratch(#[from] std::io::Error),
+
+    /// An inbound blob could not be materialized, or an outbound blob could not
+    /// be swept into the content-addressed store (§18.3).
+    #[error("blob exchange error: {0}")]
+    Blob(#[from] BlobError),
 }
 
 /// The parent id an [`AskError::Store`] not-found refers to, if any — a small

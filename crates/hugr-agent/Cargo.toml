@@ -27,6 +27,9 @@ async-trait = { workspace = true }
 # trace_id generation: content hash of the serialized trace — deterministic,
 # no RNG and no clock (see store.rs).
 sha2 = { workspace = true }
+# Blob exchange (ROADMAP T0.5): inbound `Bytes` blobs arrive base64-encoded on
+# the Ask; decoded and materialized into the scratchpad before the turn.
+base64 = { workspace = true }
 
 [dev-dependencies]
 # The resume/fork tests (T0.3) drive the real tokio engine with a scripted

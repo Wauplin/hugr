@@ -17,12 +17,19 @@
 //!   contract can grow without breaking hosts or surfaces.
 
 mod agent;
+mod blobs;
 mod contract;
 mod scratch;
 mod store;
 
 pub use agent::{Agent, AgentBuilder, AskError};
+pub use blobs::BlobError;
 pub use contract::{
     Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,
 };
 pub use store::{StoreError, TraceHead, TraceHeader, TraceStore};
+
+/// The content-addressed blob store outbound blobs land in (ARCHITECTURE
+/// §18.3), re-exported from `hugr-replay` so orchestrators can resolve an
+/// [`Answer`] blob's `sha256` ref via [`Agent::blob_store`].
+pub use hugr_replay::BlobStore;

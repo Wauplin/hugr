@@ -405,6 +405,7 @@ version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "hugr-core",
  "hugr-host",
  "hugr-replay",
