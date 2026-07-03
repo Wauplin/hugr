@@ -22,15 +22,16 @@
 //! (an unknown parent id, a store write error) return [`AskError`]; surfaces
 //! convert those to error answers at their own boundary (T0.8).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use hugr_core::{LogEntry, ModelSelector, Record, SamplingParams};
+use hugr_core::{LogEntry, ModelSelector, OpId, Record, SamplingParams};
 use hugr_host::policy::AllowAll;
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter, Policy};
-use hugr_replay::BlobStore;
+use hugr_replay::{BlobStore, Trace};
 
 use crate::blobs::{self, BlobError};
 use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
@@ -74,6 +75,9 @@ pub struct Agent {
     scratch_root: PathBuf,
     /// Content-addressed store outbound blobs land in (ARCHITECTURE §18.3).
     blob_store: BlobStore,
+    /// Per-tier pricing used to derive `AnswerMeta.cost_micro_usd` from
+    /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
+    pricing: Pricing,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -101,6 +105,7 @@ impl Agent {
             clock: None,
             scratch_root: None,
             blob_store: None,
+            pricing: Pricing::default(),
         }
     }
 
@@ -178,13 +183,17 @@ impl Agent {
 
         let log = engine.brain().state().log();
         let (status, message) = final_answer(log);
-        let metadata = meta_from_log(&log[baseline..], started.elapsed().as_millis() as u64);
-
         // Persist old + new as one NEW immutable trace; the parent file is
         // never mutated — lineage lives in `depends_on` (§19.2).
         let trace = engine
             .trace()
             .expect("recording is always enabled on an agent engine");
+        let metadata = meta_from_trace(
+            &trace,
+            baseline,
+            started.elapsed().as_millis() as u64,
+            &self.pricing,
+        );
         let mut header = TraceHeader::new(
             &self.name,
             &self.version,
@@ -271,6 +280,7 @@ pub struct AgentBuilder {
     clock: Option<Clock>,
     scratch_root: Option<PathBuf>,
     blob_store: Option<BlobStore>,
+    pricing: Pricing,
 }
 
 impl AgentBuilder {
@@ -339,6 +349,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Set per-tier pricing for cost accounting (ARCHITECTURE §18.4). The
+    /// trace records selector + token usage; this host-side table turns those
+    /// durable facts into `AnswerMeta.cost_micro_usd`.
+    pub fn pricing(mut self, pricing: Pricing) -> Self {
+        self.pricing = pricing;
+        self
+    }
+
     pub fn build(self) -> Agent {
         let scratch_root = self
             .scratch_root
@@ -359,7 +377,65 @@ impl AgentBuilder {
             clock: self.clock,
             scratch_root,
             blob_store,
+            pricing: self.pricing,
             next_scratch: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// Per-tier token prices used by [`Agent`] cost accounting (ROADMAP T0.6).
+/// Values are USD per million tokens, matching provider price sheets. The
+/// computed answer cost is rounded to the nearest micro-USD.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct Pricing {
+    tiers: BTreeMap<String, TierPrice>,
+}
+
+impl Pricing {
+    /// No configured prices. Tokens and calls are still reported; cost is zero.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add or replace one selector's pricing.
+    pub fn with_tier(
+        mut self,
+        selector: impl Into<String>,
+        input_usd_per_m_tokens: f64,
+        output_usd_per_m_tokens: f64,
+    ) -> Self {
+        self.tiers.insert(
+            selector.into(),
+            TierPrice::new(input_usd_per_m_tokens, output_usd_per_m_tokens),
+        );
+        self
+    }
+
+    fn cost_micro_usd(&self, selector: &str, input_tokens: u64, output_tokens: u64) -> u64 {
+        let Some(price) = self.tiers.get(selector) else {
+            return 0;
+        };
+        let cost = (input_tokens as f64 * price.input_usd_per_m_tokens)
+            + (output_tokens as f64 * price.output_usd_per_m_tokens);
+        cost.round().max(0.0) as u64
+    }
+}
+
+/// One tier's input/output prices in USD per million tokens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct TierPrice {
+    pub input_usd_per_m_tokens: f64,
+    pub output_usd_per_m_tokens: f64,
+}
+
+impl TierPrice {
+    /// Construct one tier price line.
+    pub fn new(input_usd_per_m_tokens: f64, output_usd_per_m_tokens: f64) -> Self {
+        Self {
+            input_usd_per_m_tokens,
+            output_usd_per_m_tokens,
         }
     }
 }
@@ -431,33 +507,139 @@ fn missing_final_answer_message(log: &[LogEntry]) -> String {
     }
 }
 
-/// Minimal accounting for this ask, folded from the *new* slice of the log
-/// (a resumed ask never re-bills its ancestry). Cost stays 0 until per-tier
-/// pricing lands (T0.6).
-fn meta_from_log(new_entries: &[LogEntry], duration_ms: u64) -> AnswerMeta {
-    let mut tokens_in = 0u64;
-    let mut tokens_out = 0u64;
-    let mut model_calls = 0u32;
+/// Accounting for this ask, folded from the *new* slice of the trace log (a
+/// resumed ask never re-bills its ancestry). Recorded child traces tied to new
+/// agent ops are folded recursively, so sub-agent cost rolls up when present.
+fn meta_from_trace(
+    trace: &Trace,
+    baseline: usize,
+    duration_ms: u64,
+    pricing: &Pricing,
+) -> AnswerMeta {
+    let new_entries = &trace.log[baseline..];
+    let mut aggregate = SpendAggregate::default();
+    aggregate_log(new_entries, pricing, &mut aggregate);
+
+    let child_ops: BTreeSet<OpId> = new_entries
+        .iter()
+        .filter_map(|entry| match &entry.record {
+            Record::OpEnded { op, meta, .. } if meta.model.is_none() && meta.usage.is_none() => {
+                Some(*op)
+            }
+            _ => None,
+        })
+        .collect();
+    for child in &trace.children {
+        if child_ops.contains(&child.op) {
+            let child_baseline = child.seed.len().min(child.trace.log.len());
+            aggregate_trace(&child.trace, child_baseline, pricing, &mut aggregate);
+        }
+    }
+
+    aggregate.into_meta(duration_ms)
+}
+
+fn aggregate_trace(
+    trace: &Trace,
+    baseline: usize,
+    pricing: &Pricing,
+    aggregate: &mut SpendAggregate,
+) {
+    let baseline = baseline.min(trace.log.len());
+    let new_entries = &trace.log[baseline..];
+    aggregate_log(new_entries, pricing, aggregate);
+
+    let child_ops: BTreeSet<OpId> = new_entries
+        .iter()
+        .filter_map(|entry| match &entry.record {
+            Record::OpEnded { op, meta, .. } if meta.model.is_none() && meta.usage.is_none() => {
+                Some(*op)
+            }
+            _ => None,
+        })
+        .collect();
+    for child in &trace.children {
+        if child_ops.contains(&child.op) {
+            let child_baseline = child.seed.len().min(child.trace.log.len());
+            aggregate_trace(&child.trace, child_baseline, pricing, aggregate);
+        }
+    }
+}
+
+fn aggregate_log(new_entries: &[LogEntry], pricing: &Pricing, aggregate: &mut SpendAggregate) {
     let mut tool_calls = 0u32;
     for entry in new_entries {
         let Record::OpEnded { meta, .. } = &entry.record else {
             continue;
         };
-        if let Some(usage) = &meta.usage {
-            tokens_in += usage.input_tokens;
-            tokens_out += usage.output_tokens;
-            model_calls += 1;
+        if let (Some(selector), Some(usage)) = (&meta.model, &meta.usage) {
+            let selector = selector_name(selector);
+            let tier = aggregate
+                .tiers
+                .entry(selector.clone())
+                .or_insert_with(|| TierAccumulator::new(selector));
+            tier.model_calls += 1;
+            tier.tokens_in += usage.input_tokens;
+            tier.tokens_out += usage.output_tokens;
+            tier.cost_micro_usd +=
+                pricing.cost_micro_usd(&tier.selector, usage.input_tokens, usage.output_tokens);
         } else if meta.model.is_none() {
             tool_calls += 1;
         }
     }
-    let mut meta = AnswerMeta::new()
-        .with_duration_ms(duration_ms)
-        .with_tool_calls(tool_calls);
-    meta.tokens_in = tokens_in;
-    meta.tokens_out = tokens_out;
-    meta.model_calls = model_calls;
-    meta
+    aggregate.tool_calls += tool_calls;
+}
+
+fn selector_name(selector: &ModelSelector) -> String {
+    match selector {
+        ModelSelector::Named(name) => name.clone(),
+        #[allow(unreachable_patterns)]
+        _ => format!("{selector:?}"),
+    }
+}
+
+#[derive(Default)]
+struct SpendAggregate {
+    tiers: BTreeMap<String, TierAccumulator>,
+    tool_calls: u32,
+}
+
+impl SpendAggregate {
+    fn into_meta(self, duration_ms: u64) -> AnswerMeta {
+        let mut meta = AnswerMeta::new()
+            .with_duration_ms(duration_ms)
+            .with_tool_calls(self.tool_calls);
+        for tier in self.tiers.into_values() {
+            meta = meta.with_tier(crate::contract::TierSpend::new(
+                tier.selector,
+                tier.model_calls,
+                tier.tokens_in,
+                tier.tokens_out,
+                tier.cost_micro_usd,
+            ));
+        }
+        meta
+    }
+}
+
+struct TierAccumulator {
+    selector: String,
+    model_calls: u32,
+    tokens_in: u64,
+    tokens_out: u64,
+    cost_micro_usd: u64,
+}
+
+impl TierAccumulator {
+    fn new(selector: String) -> Self {
+        Self {
+            selector,
+            model_calls: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            cost_micro_usd: 0,
+        }
+    }
 }
 
 /// The wire string of an [`AnswerStatus`] as stamped into trace headers —

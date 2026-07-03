@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, AnswerStatus, Ask, TraceId, TraceStore};
+use hugr_agent::{Agent, AnswerStatus, Ask, Pricing, TraceId, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 
@@ -62,6 +62,15 @@ fn agent(store: TraceStore, replies: Vec<&'static str>) -> Agent {
         .model(ModelSelector::named("medium"), MockModel::new(replies))
         .system_prompt("You answer tersely.")
         .clock(deterministic_clock())
+        .build()
+}
+
+fn priced_agent(store: TraceStore, replies: Vec<&'static str>) -> Agent {
+    Agent::builder("test-agent", "0.1.0", store)
+        .model(ModelSelector::named("medium"), MockModel::new(replies))
+        .system_prompt("You answer tersely.")
+        .clock(deterministic_clock())
+        .pricing(Pricing::new().with_tier("medium", 2.0, 5.0))
         .build()
 }
 
@@ -127,6 +136,35 @@ async fn follow_up_writes_a_child_and_leaves_the_parent_untouched() {
     );
 
     hugr_replay::verify(&store.get(&child.trace_id).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn pricing_cost_is_folded_from_only_the_new_trace_slice() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let agent = priced_agent(store.clone(), vec!["root", "child"]);
+
+    let root = agent.ask(Ask::new("root question")).await.unwrap();
+    let child = agent
+        .ask(Ask::new("child question").with_trace_id(root.trace_id.clone()))
+        .await
+        .unwrap();
+
+    // Mock usage is 7 input + 3 output tokens. At 2/5 USD per M tokens, the
+    // microUSD cost is 7*2 + 3*5 = 29. A resumed ask reports only its new turn.
+    for answer in [&root, &child] {
+        assert_eq!(answer.metadata.cost_micro_usd, 29);
+        assert_eq!(answer.metadata.tokens_in, 7);
+        assert_eq!(answer.metadata.tokens_out, 3);
+        assert_eq!(answer.metadata.model_calls, 1);
+        assert_eq!(answer.metadata.per_tier.len(), 1);
+        let tier = &answer.metadata.per_tier[0];
+        assert_eq!(tier.selector, "medium");
+        assert_eq!(tier.cost_micro_usd, 29);
+        assert_eq!(tier.model_calls, 1);
+        assert_eq!(tier.tokens_in, 7);
+        assert_eq!(tier.tokens_out, 3);
+    }
 }
 
 #[tokio::test]

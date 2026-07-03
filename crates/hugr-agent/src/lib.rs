@@ -22,7 +22,7 @@ mod contract;
 mod scratch;
 mod store;
 
-pub use agent::{Agent, AgentBuilder, AskError};
+pub use agent::{Agent, AgentBuilder, AskError, Pricing, TierPrice};
 pub use blobs::BlobError;
 pub use contract::{
     Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,
