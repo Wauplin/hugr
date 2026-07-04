@@ -37,6 +37,7 @@ use serde_json::{Value, json};
 
 use crate::blobs::{self, BlobError};
 use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
+use crate::limits::{LimitState, LimitedAdapter};
 use crate::scratch::{ScratchDir, copy_tree, scratch_tool_schemas};
 use crate::store::{StoreError, TraceHead, TraceHeader, TraceStore};
 
@@ -270,8 +271,23 @@ impl Agent {
             .record(true)
             .policy(self.policy.clone())
             .frontend(Box::new(SilentFrontend));
+        // Limits enforcement (§18/§20.1, ROADMAP T3.1): the counting/cost limits
+        // wrap each model adapter so a call over budget is refused (and folded
+        // as an ordinary `ModelError`); the wall-clock timeout wraps the turn
+        // below. Both surface as an error *answer* with a persisted trace.
+        let limit_state = LimitState::new(self.limits.clone(), self.pricing.clone());
+        let wrap = limit_state.needs_adapter_wrap();
         for (selector, adapter) in &self.models {
-            builder = builder.model(selector.clone(), adapter.clone());
+            let adapter: Arc<dyn ModelAdapter> = if wrap {
+                LimitedAdapter::new(
+                    selector_name(selector),
+                    adapter.clone(),
+                    limit_state.clone(),
+                )
+            } else {
+                adapter.clone()
+            };
+            builder = builder.model(selector.clone(), adapter);
         }
         if let Some(selector) = &self.default_model {
             builder = builder.default_model(selector.clone());
@@ -315,11 +331,38 @@ impl Agent {
         // parent's entries; this ask's meta must cover only the new turn.
         let baseline = engine.brain().state().log().len();
 
-        engine.user_turn(ask.question.clone()).await;
+        // Drive the turn, bounded by the wall-clock timeout when one is set. On
+        // elapse the turn future is dropped mid-flight; the recorded event
+        // prefix is self-consistent, so the persisted (partial) trace still
+        // replays. `session_end` then flushes the final checkpoint/render.
+        match self.limits.timeout_ms {
+            Some(ms) if ms > 0 => {
+                if tokio::time::timeout(
+                    std::time::Duration::from_millis(ms),
+                    engine.user_turn(ask.question.clone()),
+                )
+                .await
+                .is_err()
+                {
+                    limit_state.record_timeout(ms);
+                }
+            }
+            _ => engine.user_turn(ask.question.clone()).await,
+        }
         engine.session_end();
 
         let log = engine.brain().state().log();
-        let (status, message) = final_answer(log);
+        // A limit trip supersedes the log-derived answer: it is an error answer
+        // with a typed reason on `extra` (ROADMAP T3.1). Otherwise the final
+        // model output is the answer (§18.1).
+        let trip = limit_state.trip();
+        let (status, message, extra) = match &trip {
+            Some(trip) => (AnswerStatus::Error, trip.message(), trip.extra()),
+            None => {
+                let (status, message) = final_answer(log);
+                (status, message, Value::Null)
+            }
+        };
         // Persist old + new as one NEW immutable trace; the parent file is
         // never mutated — lineage lives in `depends_on` (§19.2).
         let trace = engine
@@ -353,7 +396,11 @@ impl Agent {
         // never recorded, so this move happens after the trace is persisted.
         self.finalize_scratch(&working_dir, &trace_id)?;
 
-        Ok(Answer::new(status, message, trace_id, metadata).with_blobs(out_blobs))
+        let mut answer = Answer::new(status, message, trace_id, metadata).with_blobs(out_blobs);
+        if !extra.is_null() {
+            answer = answer.with_extra(extra);
+        }
+        Ok(answer)
     }
 
     /// Create this ask's working scratch directory (a fresh `.pending/<n>`
@@ -524,8 +571,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Set declared limits for introspection. Enforcement lands in T3.1; T0.7
-    /// exposes the audit surface every generated surface will print.
+    /// Set the runtime limits enforced on every ask (ROADMAP T3.1): the
+    /// counting/cost bounds refuse an over-budget model call, and `timeout_ms`
+    /// bounds the wall-clock turn. Exceeding one yields an error answer with a
+    /// typed reason (never an `AskError`). Also part of the T0.7 audit surface.
     pub fn limits(mut self, limits: AgentLimits) -> Self {
         self.limits = limits;
         self
@@ -605,8 +654,8 @@ pub struct ModelTierCard {
     pub pricing: Option<TierPrice>,
 }
 
-/// Declared runtime limits. Enforcement is T3.1; this shape is part of the
-/// T0.7 introspection contract so surfaces can expose it consistently.
+/// Declared runtime limits, enforced host-side on every ask (ROADMAP T3.1) and
+/// exposed on the T0.7 introspection card. Each `None` field is unbounded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AgentLimits {
@@ -728,7 +777,12 @@ impl Pricing {
         self
     }
 
-    fn cost_micro_usd(&self, selector: &str, input_tokens: u64, output_tokens: u64) -> u64 {
+    pub(crate) fn cost_micro_usd(
+        &self,
+        selector: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> u64 {
         let Some(price) = self.tiers.get(selector) else {
             return 0;
         };

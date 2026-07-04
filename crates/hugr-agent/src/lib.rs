@@ -19,6 +19,7 @@
 mod agent;
 mod blobs;
 mod contract;
+mod limits;
 mod scratch;
 mod store;
 
@@ -26,6 +27,7 @@ pub use agent::{
     Agent, AgentBuilder, AgentCard, AgentConfig, AgentLimits, AskError, ConfigEntry,
     ConfigProvenance, ModelTierCard, Pricing, TierPrice, ToolCard, ToolPrivilege,
 };
+pub use limits::LimitKind;
 pub use blobs::BlobError;
 pub use contract::{
     Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,

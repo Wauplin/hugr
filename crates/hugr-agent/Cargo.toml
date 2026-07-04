@@ -30,6 +30,13 @@ sha2 = { workspace = true }
 # Blob exchange (ROADMAP T0.5): inbound `Bytes` blobs arrive base64-encoded on
 # the Ask; decoded and materialized into the scratchpad before the turn.
 base64 = { workspace = true }
+# Limits enforcement (ROADMAP T3.1): the wall-clock `timeout_ms` limit wraps the
+# turn in `tokio::time::timeout`; the counting/cost limits wrap each model
+# adapter in a `ModelAdapter` whose `call` returns `anyhow::Result`. hugr-agent
+# is a host-layer crate on the tokio engine, so these deps are consistent
+# (hugr-core stays sans-IO).
+tokio = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 # The resume/fork tests (T0.3) drive the real tokio engine with a scripted

@@ -197,7 +197,7 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
         }
     }
 
-    // Declared limits (enforcement: T3.1; recorded for the audit surface now).
+    // Declared limits, enforced host-side per ask by `hugr-agent` (T3.1).
     let mut limits = AgentLimits::new();
     if let Some(v) = def.limits.max_turns {
         limits = limits.with_max_turns(v);
