@@ -539,9 +539,15 @@ dependencies = [
 name = "hugr-toolkit"
 version = "0.0.2"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "hugr-core",
+ "hugr-host",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "toml",
 ]
 

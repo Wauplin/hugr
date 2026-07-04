@@ -13,6 +13,7 @@
 //! [manifest]: crate::manifest
 
 pub mod manifest;
+pub mod tools;
 
 pub use manifest::{
     AgentDefinition, AgentMeta, LimitsConfig, ManifestError, ModelsConfig, ScratchpadConfig, Span,

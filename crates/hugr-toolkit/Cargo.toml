@@ -10,6 +10,15 @@ rust-version.workspace = true
 [lib]
 name = "hugr_toolkit"
 
+[features]
+default = []
+# `sqlite_query` (ROADMAP T1.2) needs rusqlite's bundled SQLite. It is an opt-in
+# feature: enable it AND uncomment the `rusqlite` dependency below to build the
+# tool. It is off by default so the crate builds in environments that cannot
+# vendor the C dependency; there the `sqlite_query` grant reports as unavailable
+# rather than failing to compile. In production, build with `--features sqlite`.
+sqlite = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,3 +27,21 @@ thiserror = { workspace = true }
 # `Deserialize` path and byte-offset error spans (`toml::de::Error::span`),
 # which we surface as precise line/column diagnostics (ROADMAP T1.1).
 toml = "0.8"
+# The predefined tool library (ROADMAP T1.2) implements host `Capability`s, so
+# the toolkit stacks on hugr-host + hugr-core (as pure data). These are host
+# concerns; hugr-core stays sans-IO.
+hugr-core = { workspace = true }
+hugr-host = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+# http_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
+reqwest = { workspace = true }
+# sqlite_query (read-only, file-scoped) needs rusqlite. `bundled` compiles
+# SQLite in so agents need no system library; opened read-only, ATTACH is
+# rejected. Kept commented (with the matching `sqlite` feature declaring
+# `dep:rusqlite`) so the crate resolves where the C dependency cannot be
+# vendored; uncomment both to build the tool. See the [features] note above.
+# rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
