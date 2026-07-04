@@ -793,7 +793,7 @@ Design rules: `AnswerMeta` is never optional — an orchestrator can always acco
 
 ### 18.2 Introspection
 
-`Agent::describe() -> AgentCard` (name, version, description, tools with privilege classes and scopes, model tiers, pricing, limits), `Agent::config()` (effective configuration with per-key provenance — default/manifest/env/flag — and redacted secrets), `Agent::traces()` (stored trace lineage). Every surface exposes these verbatim (`--describe`/`--config`/`--traces`, Python methods, MCP server info). `AgentCard` is deliberately shaped so an A2A Agent Card can be generated from it later (§21.4).
+`Agent::describe() -> AgentCard` (name, version, description, tools with privilege classes and scopes, model tiers, pricing, limits), `Agent::config()` (effective configuration with per-key provenance — default/manifest/env/flag — and redacted secrets; the toolkit's `build_agent` supplies the provenance-annotated entries since it is the layer that knows each value's origin — ROADMAP T3.5, the provider key is resolved from its env var and **redacted**, the manifest only ever carries the var name), `Agent::traces()` (stored trace lineage). Every surface exposes these verbatim (`--describe`/`--config`/`--traces`, Python methods, MCP server info). `AgentCard` is deliberately shaped so an A2A Agent Card can be generated from it later (§21.4).
 
 ### 18.3 Blob exchange
 

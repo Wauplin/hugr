@@ -89,6 +89,11 @@ pub struct Agent {
     /// agent lifts the final JSON message into `extra` and validates it against
     /// this schema post-hoc — violations become `Answer.warnings`, never errors.
     answer_schema: Option<Value>,
+    /// Effective config with real provenance, supplied by the layer that knows
+    /// where values came from (the toolkit's `build_agent`: manifest/env/flag,
+    /// secrets redacted — ROADMAP T3.5). When `None`, [`Agent::config`] derives a
+    /// builder/default-tagged view from its own fields.
+    config_entries: Option<Vec<ConfigEntry>>,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -120,6 +125,7 @@ impl Agent {
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
             answer_schema: None,
+            config_entries: None,
         }
     }
 
@@ -180,6 +186,13 @@ impl Agent {
     /// stable provenance and redaction slots for future manifest/env/flag
     /// sources (ARCHITECTURE §18.2).
     pub fn config(&self) -> AgentConfig {
+        // The toolkit supplies provenance-annotated entries (manifest/env/flag,
+        // secrets redacted — T3.5). Absent that, derive a builder/default view.
+        if let Some(entries) = &self.config_entries {
+            return AgentConfig {
+                entries: entries.clone(),
+            };
+        }
         let mut entries = vec![
             ConfigEntry::visible("agent.name", self.name.clone(), ConfigProvenance::Builder),
             ConfigEntry::visible(
@@ -540,6 +553,7 @@ pub struct AgentBuilder {
     pricing: Pricing,
     limits: AgentLimits,
     answer_schema: Option<Value>,
+    config_entries: Option<Vec<ConfigEntry>>,
 }
 
 impl AgentBuilder {
@@ -641,6 +655,17 @@ impl AgentBuilder {
         self
     }
 
+    /// Supply the effective configuration with real provenance and redaction
+    /// (ROADMAP T3.5). The layer that assembled the agent (the toolkit's
+    /// `build_agent`) knows whether each value came from the manifest, an env
+    /// var, or a flag, and which are secrets — it builds this list and
+    /// [`Agent::config`] returns it verbatim. Absent this, `config()` derives a
+    /// builder/default-tagged view from the agent's own fields.
+    pub fn config_entries(mut self, entries: Vec<ConfigEntry>) -> Self {
+        self.config_entries = Some(entries);
+        self
+    }
+
     pub fn build(self) -> Agent {
         let scratch_root = self
             .scratch_root
@@ -665,6 +690,7 @@ impl AgentBuilder {
             pricing: self.pricing,
             limits: self.limits,
             answer_schema: self.answer_schema,
+            config_entries: self.config_entries,
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
     }
