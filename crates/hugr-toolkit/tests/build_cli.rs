@@ -202,6 +202,36 @@ fn real_crate_surface_compiles() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// End-to-end: generate the Python (PyO3) surface and `cargo check` it. Ignored
+/// — invokes cargo. Building an actual wheel needs maturin + a Python toolchain
+/// (a downstream `maturin build` step), so this proves the generated extension
+/// module compiles rather than installing it.
+#[test]
+#[ignore = "invokes cargo check; slow"]
+fn real_python_surface_compiles() {
+    use hugr_toolkit::build::{BuildOptions, build_python};
+
+    let (_, src) = scaffold_bundle("bcli-py", Template::Blank);
+    let def = AgentDefinition::load(&src).unwrap();
+    let out = std::env::temp_dir().join(format!("hugr-bcli-py-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+
+    let outcome = build_python(
+        &def,
+        &BuildOptions {
+            out_dir: out.clone(),
+            release: false,
+        },
+    )
+    .expect("python surface builds");
+    assert!(outcome.binary.is_none());
+    assert!(outcome.crate_dir.join("pyproject.toml").exists());
+    assert!(outcome.crate_dir.join("src/lib.rs").exists());
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 fn run_binary(bin: &Path, args: &[&str], home: &Path) -> String {
     let output = std::process::Command::new(bin)
         .args(args)

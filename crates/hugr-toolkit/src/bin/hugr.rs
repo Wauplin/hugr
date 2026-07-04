@@ -33,7 +33,7 @@ enum Command {
     Run(RunArgs),
     /// Scaffold a new definition folder from a template.
     New(NewArgs),
-    /// Compile a definition into a self-contained artifact (surface = cli).
+    /// Compile a definition into a self-contained artifact (cli/crate/python).
     Build(BuildArgs),
     /// List an agent's stored traces as a lineage tree.
     Traces(AgentArg),
@@ -72,7 +72,7 @@ struct ReplayArgs {
 struct BuildArgs {
     /// Path to the agent definition folder (containing hugr.toml).
     agent_dir: PathBuf,
-    /// Target surface. Only `cli` is implemented today (crate/python/mcp: T2.2+).
+    /// Target surface: cli | crate | python (mcp: T2.4).
     #[arg(long, default_value = "cli")]
     surface: String,
     /// Where to write the generated shim crate (built binary lands under its
@@ -272,10 +272,13 @@ fn build(args: BuildArgs) {
             }
             None => {
                 eprintln!("generated crate at {} ✓", outcome.crate_dir.display());
-                eprintln!(
-                    "depend on it: hugr-agent-crate = {{ path = \"{}\" }}, then call `ask`",
-                    outcome.crate_dir.display()
-                );
+                match surface {
+                    Surface::Python => eprintln!(
+                        "build a wheel: (cd {} && maturin build --release), then `pip install` it",
+                        outcome.crate_dir.display()
+                    ),
+                    _ => eprintln!("depend on it by path from your orchestrator, then call `ask`"),
+                }
             }
         },
         Err(err) => {

@@ -127,7 +127,7 @@ async fn run_ask(agent: &Agent, args: SurfaceArgs, started: Instant, pretty: boo
 
     let mut blobs = Vec::with_capacity(args.blobs.len());
     for path in &args.blobs {
-        match blob_from_path(path) {
+        match blob_handle_from_path(path) {
             Ok(handle) => blobs.push(handle),
             Err(err) => return print_answer(&error_answer(err, started), pretty),
         }
@@ -145,8 +145,9 @@ async fn run_ask(agent: &Agent, args: SurfaceArgs, started: Instant, pretty: boo
 }
 
 /// Build an inbound [`BlobHandle`] from a local path, guessing its media type
-/// from the extension. The name hint is the file's own name.
-fn blob_from_path(path: &Path) -> Result<BlobHandle, String> {
+/// from the extension. The name hint is the file's own name. Shared with the
+/// generated Python surface (T2.3).
+pub fn blob_handle_from_path(path: &Path) -> Result<BlobHandle, String> {
     let path_str = path
         .to_str()
         .ok_or_else(|| format!("blob path is not valid UTF-8: {}", path.display()))?;
