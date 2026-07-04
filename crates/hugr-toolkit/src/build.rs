@@ -34,6 +34,11 @@ pub enum Surface {
     Cli,
     Crate,
     Python,
+    /// The MCP stdio server. It is the same self-contained binary as `Cli`
+    /// (every cli binary supports `--mcp-serve`, ARCHITECTURE §21.4); the
+    /// distinct surface exists so `hugr build --surface mcp` documents intent
+    /// and can print the serve invocation.
+    Mcp,
 }
 
 impl Surface {
@@ -42,6 +47,7 @@ impl Surface {
             "cli" => Some(Surface::Cli),
             "crate" => Some(Surface::Crate),
             "python" => Some(Surface::Python),
+            "mcp" => Some(Surface::Mcp),
             _ => None,
         }
     }
@@ -92,7 +98,8 @@ pub fn build(
     opts: &BuildOptions,
 ) -> Result<BuildOutcome, BuildError> {
     match surface {
-        Surface::Cli => build_cli(def, opts),
+        // MCP is the cli binary run with `--mcp-serve`.
+        Surface::Cli | Surface::Mcp => build_cli(def, opts),
         Surface::Crate => build_crate(def, opts),
         Surface::Python => build_python(def, opts),
     }

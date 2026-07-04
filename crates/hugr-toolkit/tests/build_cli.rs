@@ -232,6 +232,76 @@ fn real_python_surface_compiles() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// End-to-end: build the cli binary and drive its `--mcp-serve` mode over real
+/// stdio, exercising initialize → tools/call(ask) with `trace_id` round-tripping
+/// across two calls (the T2.4 exit criterion). Ignored — invokes cargo build.
+#[test]
+#[ignore = "invokes cargo build; slow"]
+fn real_mcp_serve_round_trips_over_stdio() {
+    use hugr_toolkit::build::{BuildOptions, build_cli};
+    use std::io::{BufRead, BufReader, Write};
+
+    let (_, src) = scaffold_bundle("bcli-mcp", Template::Blank);
+    let def = AgentDefinition::load(&src).unwrap();
+    let out = std::env::temp_dir().join(format!("hugr-bcli-mcp-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    let binary = build_cli(
+        &def,
+        &BuildOptions {
+            out_dir: out.clone(),
+            release: false,
+        },
+    )
+    .expect("build")
+    .binary
+    .expect("cli binary");
+
+    let home = out.join("home");
+    let mut child = std::process::Command::new(&binary)
+        .arg("--mcp-serve")
+        .env("HUGR_AGENT_HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn --mcp-serve");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let mut send_recv = |line: &str| -> serde_json::Value {
+        stdin.write_all(line.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+        let mut resp = String::new();
+        stdout.read_line(&mut resp).unwrap();
+        serde_json::from_str(&resp).unwrap()
+    };
+
+    let init = send_recv(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    assert_eq!(init["result"]["serverInfo"]["name"], "bcli-mcp");
+
+    let ask = send_recv(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ask","arguments":{"question":"hi"}}}"#,
+    );
+    let trace_id = ask["result"]["structuredContent"]["trace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!trace_id.is_empty());
+
+    let resume = send_recv(&format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"ask","arguments":{{"question":"again","trace_id":"{trace_id}"}}}}}}"#
+    ));
+    let child_id = resume["result"]["structuredContent"]["trace_id"]
+        .as_str()
+        .unwrap();
+    assert_ne!(child_id, trace_id, "trace_id round-tripped and forked");
+
+    drop(stdin); // EOF → server exits cleanly
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 fn run_binary(bin: &Path, args: &[&str], home: &Path) -> String {
     let output = std::process::Command::new(bin)
         .args(args)

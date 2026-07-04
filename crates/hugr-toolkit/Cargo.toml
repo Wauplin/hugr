@@ -50,6 +50,9 @@ clap = { workspace = true }
 # Trace tooling (ROADMAP T1.7): list/replay/verify over the agent's trace store
 # reuse the versioned replay/inspect machinery.
 hugr-replay = { workspace = true }
+# The MCP serve surface (ROADMAP T2.4) reuses the newline-delimited JSON-RPC
+# framing helpers (`write_json_line`/`read_json_line`) from the plugin ABI.
+hugr-plugin-abi = { workspace = true }
 # sqlite_query (read-only, file-scoped) needs rusqlite. `bundled` compiles
 # SQLite in so agents need no system library; opened read-only, ATTACH is
 # rejected. Kept commented (with the matching `sqlite` feature declaring

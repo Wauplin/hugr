@@ -72,7 +72,7 @@ struct ReplayArgs {
 struct BuildArgs {
     /// Path to the agent definition folder (containing hugr.toml).
     agent_dir: PathBuf,
-    /// Target surface: cli | crate | python (mcp: T2.4).
+    /// Target surface: cli | crate | python | mcp.
     #[arg(long, default_value = "cli")]
     surface: String,
     /// Where to write the generated shim crate (built binary lands under its
@@ -265,10 +265,16 @@ fn build(args: BuildArgs) {
         Ok(outcome) => match outcome.binary {
             Some(binary) => {
                 eprintln!("built {} ✓", binary.display());
-                eprintln!(
-                    "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
-                    binary.display()
-                );
+                match surface {
+                    Surface::Mcp => eprintln!(
+                        "serve it: {} --mcp-serve  (register this stdio command in your MCP client)",
+                        binary.display()
+                    ),
+                    _ => eprintln!(
+                        "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
+                        binary.display()
+                    ),
+                }
             }
             None => {
                 eprintln!("generated crate at {} ✓", outcome.crate_dir.display());

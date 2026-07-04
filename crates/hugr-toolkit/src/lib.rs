@@ -15,6 +15,7 @@
 pub mod build;
 pub mod bundle;
 pub mod manifest;
+pub mod mcp_serve;
 pub mod runtime;
 pub mod scaffold;
 pub mod surface;

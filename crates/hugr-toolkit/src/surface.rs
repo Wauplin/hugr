@@ -57,6 +57,9 @@ struct SurfaceArgs {
     /// Print the stored traces (header-only, with lineage).
     #[arg(long)]
     traces: bool,
+    /// Run as a stdio MCP server exposing an `ask` tool (ARCHITECTURE §21.4).
+    #[arg(long = "mcp-serve")]
+    mcp_serve: bool,
 }
 
 /// Which audit view, if any, was requested.
@@ -97,6 +100,11 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
         }
         Err(err) => return audit_or_answer_error(mode, err.to_string(), started, pretty),
     };
+
+    // MCP serve mode is a long-lived runtime mode, not a one-shot audit/ask.
+    if args.mcp_serve {
+        return crate::mcp_serve::serve(&agent, &agent.describe()).await;
+    }
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
