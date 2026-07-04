@@ -39,7 +39,7 @@
 use std::path::{Path, PathBuf};
 
 use hugr_replay::{Trace, TraceError, TraceMeta};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::contract::TraceId;
@@ -47,7 +47,7 @@ use crate::contract::TraceId;
 /// The header of one stored trace (ARCHITECTURE §19.1): everything a lineage
 /// listing needs, readable without folding events. A projection of the stored
 /// trace's [`TraceMeta`] with the store-required fields made non-optional.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct TraceHead {
     /// The store key of this trace.

@@ -12,9 +12,12 @@
 //!
 //! [manifest]: crate::manifest
 
+pub mod build;
+pub mod bundle;
 pub mod manifest;
 pub mod runtime;
 pub mod scaffold;
+pub mod surface;
 pub mod tools;
 pub mod traces;
 

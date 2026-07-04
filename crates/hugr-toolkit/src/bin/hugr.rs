@@ -12,6 +12,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use hugr_toolkit::AgentDefinition;
+use hugr_toolkit::build::{BuildOptions, Surface, build_cli};
 use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
 use hugr_toolkit::traces::render_lineage;
@@ -32,6 +33,8 @@ enum Command {
     Run(RunArgs),
     /// Scaffold a new definition folder from a template.
     New(NewArgs),
+    /// Compile a definition into a self-contained artifact (surface = cli).
+    Build(BuildArgs),
     /// List an agent's stored traces as a lineage tree.
     Traces(AgentArg),
     /// Verify a stored trace replays bit-for-bit.
@@ -66,6 +69,22 @@ struct ReplayArgs {
 }
 
 #[derive(Parser)]
+struct BuildArgs {
+    /// Path to the agent definition folder (containing hugr.toml).
+    agent_dir: PathBuf,
+    /// Target surface. Only `cli` is implemented today (crate/python/mcp: T2.2+).
+    #[arg(long, default_value = "cli")]
+    surface: String,
+    /// Where to write the generated shim crate (built binary lands under its
+    /// `target/`). Defaults to `<agent-dir>/dist`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Build in release mode.
+    #[arg(long)]
+    release: bool,
+}
+
+#[derive(Parser)]
 struct NewArgs {
     /// Name of the agent (also the folder created under the current directory).
     name: String,
@@ -95,6 +114,7 @@ async fn main() {
     match cli.command {
         Command::Run(args) => run(args).await,
         Command::New(args) => new(args),
+        Command::Build(args) => build(args),
         Command::Traces(args) => traces(args),
         Command::Verify(args) => verify(args),
         Command::Replay(args) => replay(args),
@@ -209,6 +229,59 @@ fn new(args: NewArgs) {
         Err(err) => {
             eprintln!("error: {err}");
             std::process::exit(1);
+        }
+    }
+}
+
+/// `hugr build` is a developer command (like `new`): progress on stderr,
+/// non-zero exit on failure — not the ask/answer contract surface.
+fn build(args: BuildArgs) {
+    let Some(surface) = Surface::parse(&args.surface) else {
+        eprintln!(
+            "error: unknown surface `{}` (only `cli` is implemented today)",
+            args.surface
+        );
+        std::process::exit(2);
+    };
+    let def = match AgentDefinition::load(&args.agent_dir) {
+        Ok(def) => def,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    };
+    for warning in &def.warnings {
+        eprintln!("warning: {}", warning.message);
+    }
+
+    let out_dir = args.out.unwrap_or_else(|| args.agent_dir.join("dist"));
+    let opts = BuildOptions {
+        out_dir,
+        release: args.release,
+    };
+
+    match surface {
+        Surface::Cli => {
+            eprintln!("building `{}` (surface=cli)…", def.agent.name);
+            match build_cli(&def, &opts) {
+                Ok(outcome) => {
+                    eprintln!("built {} ✓", outcome.binary.display());
+                    eprintln!(
+                        "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
+                        outcome.binary.display()
+                    );
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        // `Surface` is #[non_exhaustive] (crate/python/mcp are T2.2+); `parse`
+        // only yields `Cli` today.
+        _ => {
+            eprintln!("error: surface `{}` is not implemented yet", args.surface);
+            std::process::exit(2);
         }
     }
 }
