@@ -14,6 +14,7 @@
 
 pub mod manifest;
 pub mod runtime;
+pub mod scaffold;
 pub mod tools;
 
 pub use manifest::{

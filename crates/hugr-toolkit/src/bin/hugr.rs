@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use hugr_toolkit::AgentDefinition;
 use hugr_toolkit::runtime::build_agent;
+use hugr_toolkit::scaffold::{Template, write_scaffold};
 
 #[derive(Parser)]
 #[command(
@@ -28,6 +29,17 @@ struct Cli {
 enum Command {
     /// Interpret a definition folder and answer one question.
     Run(RunArgs),
+    /// Scaffold a new definition folder from a template.
+    New(NewArgs),
+}
+
+#[derive(Parser)]
+struct NewArgs {
+    /// Name of the agent (also the folder created under the current directory).
+    name: String,
+    /// Starting template: docs | sqlite | blank.
+    #[arg(long, default_value = "docs")]
+    template: String,
 }
 
 #[derive(Parser)]
@@ -50,6 +62,32 @@ async fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
+        Command::New(args) => new(args),
+    }
+}
+
+/// `hugr new` writes to stderr and sets a non-zero exit on failure — it is a
+/// developer scaffolding command, not the ask/answer contract surface.
+fn new(args: NewArgs) {
+    let Some(template) = Template::parse(&args.template) else {
+        eprintln!(
+            "error: unknown template `{}` (expected docs | sqlite | blank)",
+            args.template
+        );
+        std::process::exit(2);
+    };
+    match write_scaffold(std::path::Path::new("."), &args.name, template) {
+        Ok(dir) => {
+            eprintln!("created {} ({} template)", dir.display(), template.as_str());
+            eprintln!(
+                "next: export your provider key, then `hugr run {} \"<question>\"`",
+                dir.display()
+            );
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
     }
 }
 
