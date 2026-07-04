@@ -836,7 +836,7 @@ The orchestration-facing wrapper around the existing trace machinery (§§12–1
 
 ### 19.1 Store & metadata
 
-A `TraceStore` (default: a directory in the agent's data dir; the store is a host concern, so alternative backends stay possible) holds **immutable** traces keyed by generated `TraceId`. `TraceMeta` gains (serde-defaulted, so pre-existing traces load): `trace_id`, `depends_on: Option<TraceId>`, `agent_name`, `agent_version`, `created_at`, `question`, `status`. `head()` reads metadata without folding events, so listing lineage is cheap.
+A `TraceStore` (default: a directory in the agent's data dir; the store is a host concern, so alternative backends stay possible) holds **immutable** traces keyed by generated `TraceId`. `TraceMeta` gains (serde-defaulted, so pre-existing traces load): `trace_id`, `depends_on: Option<TraceId>`, `agent_name`, `agent_version`, `created_at`, `question`, `status`. `head()` reads metadata without folding events, so listing lineage is cheap. The `trace_id` is content-derived (a hash of the headed trace, `-N`-suffixed on collision) and its file path is reserved **atomically** (`create_new`) so parallel asks are collision-free (§ROADMAP T3.2).
 
 ### 19.2 Ask semantics
 

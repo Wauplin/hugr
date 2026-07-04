@@ -188,14 +188,37 @@ impl TraceStore {
         let digest = Sha256::digest(trace.to_json()?);
         let base = format!("{digest:x}");
         let base = &base[..16];
+
+        // Reserve the id's path **atomically** so concurrent asks are
+        // collision-free (ROADMAP T3.2): two asks landing on the same content
+        // hash must not both claim the same file. `create_new` is the atomic
+        // claim — the loser sees `AlreadyExists` and bumps the `-N` suffix, so
+        // parallel puts always produce distinct ids and no trace is ever
+        // clobbered. (A bare `exists()` check would be a TOCTOU race.)
         let mut candidate = TraceId::new(base);
         let mut counter = 1u64;
-        while self.path_of(&candidate).exists() {
-            candidate = TraceId::new(format!("{base}-{counter}"));
-            counter += 1;
-        }
+        let reserved = loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(self.path_of(&candidate))
+            {
+                Ok(file) => break file,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    candidate = TraceId::new(format!("{base}-{counter}"));
+                    counter += 1;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        };
+        drop(reserved);
 
         trace.meta.trace_id = Some(candidate.as_str().to_string());
+        // The path is now reserved (an empty placeholder file); `save_atomic`
+        // writes a uniquely-named temp file and renames over the placeholder,
+        // so a reader never sees a half-written trace and the write stays
+        // crash-atomic (ARCHITECTURE §15.1). The temp name derives from the
+        // now-unique `candidate`, so concurrent puts never share a temp path.
         trace.save_atomic(self.path_of(&candidate))?;
         Ok(candidate)
     }
