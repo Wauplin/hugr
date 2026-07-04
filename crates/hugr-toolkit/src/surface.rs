@@ -86,42 +86,17 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
         Mode::Ask
     };
 
-    // Prepare the agent home (unpack the embedded definition) and load it.
-    let home = match prepare_home(bundle_bytes) {
-        Ok(home) => home,
-        Err(err) => {
-            return audit_or_answer_error(
-                mode,
-                format!("preparing agent home: {err}"),
-                started,
-                pretty,
-            );
+    // Unpack the embedded definition and assemble the agent (shared with the
+    // crate surface, T2.2). Warnings go to stderr.
+    let agent = match load_agent(bundle_bytes).await {
+        Ok(loaded) => {
+            for warning in &loaded.warnings {
+                eprintln!("warning: {warning}");
+            }
+            loaded.agent
         }
+        Err(err) => return audit_or_answer_error(mode, err.to_string(), started, pretty),
     };
-    let def = match AgentDefinition::load(&home) {
-        Ok(def) => def,
-        Err(err) => {
-            return audit_or_answer_error(
-                mode,
-                format!("loading definition: {err}"),
-                started,
-                pretty,
-            );
-        }
-    };
-    for warning in &def.warnings {
-        eprintln!("warning: {}", warning.message);
-    }
-
-    let (agent, warnings) = match build_agent(&def).await {
-        Ok(built) => built,
-        Err(err) => {
-            return audit_or_answer_error(mode, format!("assembling agent: {err}"), started, pretty);
-        }
-    };
-    for warning in &warnings {
-        eprintln!("warning: {warning}");
-    }
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
@@ -206,12 +181,52 @@ fn media_type_for(path: &Path) -> &'static str {
     }
 }
 
+/// An assembled agent plus the non-fatal build warnings collected on the way.
+/// Returned by [`load_agent`] — the shared entry point behind the CLI surface
+/// and the generated Rust-crate surface (T2.2).
+#[non_exhaustive]
+pub struct LoadedAgent {
+    /// The ready-to-ask agent.
+    pub agent: Agent,
+    /// Non-fatal build warnings (unset api-key env, skipped grants, …).
+    pub warnings: Vec<String>,
+}
+
+/// Failure to turn an embedded bundle into a runnable agent. Every variant is a
+/// build-time / infrastructure problem — run failures are `Answer`s, not this.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum LoadError {
+    #[error("preparing agent home: {0}")]
+    Home(std::io::Error),
+    #[error("loading definition: {0}")]
+    Manifest(#[from] crate::manifest::ManifestError),
+    #[error("assembling agent: {0}")]
+    Build(#[from] crate::runtime::RuntimeError),
+}
+
+/// Unpack an embedded definition [`bundle`] into the per-agent home and assemble
+/// the typed [`Agent`]. This is the whole "a binary/crate carrying a definition
+/// becomes a callable agent" path, reused by every generated surface.
+pub async fn load_agent(bundle_bytes: &[u8]) -> Result<LoadedAgent, LoadError> {
+    let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
+    let def = AgentDefinition::load(&home)?;
+    let def_warnings: Vec<String> = def.warnings.iter().map(|w| w.message.clone()).collect();
+    let (agent, mut warnings) = build_agent(&def).await?;
+    let mut all = def_warnings;
+    all.append(&mut warnings);
+    Ok(LoadedAgent {
+        agent,
+        warnings: all,
+    })
+}
+
 /// Resolve the per-agent home directory and unpack the embedded definition into
 /// it. The definition source files are (re-)written every run — they are
 /// immutable by design — while the runtime dirs (traces, scratch) are never in
 /// the bundle, so persisted traces survive across runs and `--trace` resume
 /// works on a machine with no repo checkout.
-fn prepare_home(bundle_bytes: &[u8]) -> std::io::Result<PathBuf> {
+pub fn prepare_home(bundle_bytes: &[u8]) -> std::io::Result<PathBuf> {
     let manifest = bundle::get(bundle_bytes, MANIFEST_NAME)?.ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "bundle has no hugr.toml")
     })?;

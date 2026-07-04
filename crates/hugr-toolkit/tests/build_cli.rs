@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hugr_agent::{AnswerStatus, Ask, TraceId};
+use hugr_agent::{AnswerStatus, Ask};
 use hugr_toolkit::bundle;
 use hugr_toolkit::manifest::AgentDefinition;
 use hugr_toolkit::runtime::build_agent;
@@ -125,21 +125,78 @@ fn real_build_produces_a_runnable_binary() {
         },
     )
     .expect("build succeeds");
-    assert!(
-        outcome.binary.exists(),
-        "binary at {}",
-        outcome.binary.display()
-    );
+    let binary = outcome.binary.expect("cli surface produces a binary");
+    assert!(binary.exists(), "binary at {}", binary.display());
 
     // Run `--describe` from a dir with no repo checkout in scope; point the
     // agent home at a throwaway dir so we don't touch the real data dir.
     let home = out.join("home");
-    let output = run_binary(&outcome.binary, &["--describe"], &home);
+    let output = run_binary(&binary, &["--describe"], &home);
     assert!(output.contains("\"name\": \"bcli-e2e\""), "{output}");
 
     // And an ask returns a JSON answer at exit 0 (error answer, no model).
-    let ask_out = run_binary(&outcome.binary, &["hi there"], &home);
+    let ask_out = run_binary(&binary, &["hi there"], &home);
     assert!(ask_out.contains("\"status\": \"error\""), "{ask_out}");
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// End-to-end: generate the crate surface and `cargo check` it (done inside
+/// `build_crate`). Ignored — invokes cargo.
+#[test]
+#[ignore = "invokes cargo check; slow"]
+fn real_crate_surface_compiles() {
+    use hugr_toolkit::build::{BuildOptions, build_crate};
+
+    let (_, src) = scaffold_bundle("bcli-crate", Template::Blank);
+    let def = AgentDefinition::load(&src).unwrap();
+    let out = std::env::temp_dir().join(format!("hugr-bcli-crate-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+
+    let outcome = build_crate(
+        &def,
+        &BuildOptions {
+            out_dir: out.clone(),
+            release: false,
+        },
+    )
+    .expect("crate builds");
+    assert!(outcome.binary.is_none(), "crate surface has no binary");
+    assert!(outcome.crate_dir.join("src/lib.rs").exists());
+
+    // A downstream consumer path-depends on the generated crate and calls
+    // `ask` natively (the T2.2 exit criterion). `cargo check` proves the typed
+    // API is usable without serialization.
+    let consumer = out.join("consumer");
+    std::fs::create_dir_all(consumer.join("src")).unwrap();
+    let lib = outcome.crate_dir.display();
+    std::fs::write(
+        consumer.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"consumer\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             [workspace]\n\n[dependencies]\n\
+             bcli-crate-agent = {{ path = \"{lib}\" }}\n\
+             tokio = {{ version = \"1\", features = [\"rt-multi-thread\", \"macros\"] }}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        consumer.join("src/main.rs"),
+        "#[tokio::main]\nasync fn main() {\n    \
+         let _answer = bcli_crate::ask(bcli_crate::Ask::new(\"hi\")).await;\n    \
+         let _loaded = bcli_crate::load().await;\n}\n",
+    )
+    .unwrap();
+    let status = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()))
+        .arg("check")
+        .current_dir(&consumer)
+        .status()
+        .expect("cargo check consumer");
+    assert!(
+        status.success(),
+        "downstream consumer compiles against the generated crate"
+    );
 
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);

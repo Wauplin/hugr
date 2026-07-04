@@ -12,7 +12,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use hugr_toolkit::AgentDefinition;
-use hugr_toolkit::build::{BuildOptions, Surface, build_cli};
+use hugr_toolkit::build::{BuildOptions, Surface, build as run_build};
 use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
 use hugr_toolkit::traces::render_lineage;
@@ -238,7 +238,7 @@ fn new(args: NewArgs) {
 fn build(args: BuildArgs) {
     let Some(surface) = Surface::parse(&args.surface) else {
         eprintln!(
-            "error: unknown surface `{}` (only `cli` is implemented today)",
+            "error: unknown surface `{}` (supported: cli, crate)",
             args.surface
         );
         std::process::exit(2);
@@ -260,28 +260,27 @@ fn build(args: BuildArgs) {
         release: args.release,
     };
 
-    match surface {
-        Surface::Cli => {
-            eprintln!("building `{}` (surface=cli)…", def.agent.name);
-            match build_cli(&def, &opts) {
-                Ok(outcome) => {
-                    eprintln!("built {} ✓", outcome.binary.display());
-                    eprintln!(
-                        "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
-                        outcome.binary.display()
-                    );
-                }
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    std::process::exit(1);
-                }
+    eprintln!("building `{}` (surface={})…", def.agent.name, args.surface);
+    match run_build(&def, surface, &opts) {
+        Ok(outcome) => match outcome.binary {
+            Some(binary) => {
+                eprintln!("built {} ✓", binary.display());
+                eprintln!(
+                    "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
+                    binary.display()
+                );
             }
-        }
-        // `Surface` is #[non_exhaustive] (crate/python/mcp are T2.2+); `parse`
-        // only yields `Cli` today.
-        _ => {
-            eprintln!("error: surface `{}` is not implemented yet", args.surface);
-            std::process::exit(2);
+            None => {
+                eprintln!("generated crate at {} ✓", outcome.crate_dir.display());
+                eprintln!(
+                    "depend on it: hugr-agent-crate = {{ path = \"{}\" }}, then call `ask`",
+                    outcome.crate_dir.display()
+                );
+            }
+        },
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
         }
     }
 }
