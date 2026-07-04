@@ -39,7 +39,9 @@ use crate::blobs::{self, BlobError};
 use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use crate::limits::{LimitState, LimitedAdapter};
 use crate::scratch::{ScratchDir, copy_tree, scratch_tool_schemas};
-use crate::store::{StoreError, TraceHead, TraceHeader, TraceStore};
+use crate::store::{
+    PruneReport, PrunePolicy, StoreError, StoreSize, TraceHead, TraceHeader, TraceStore,
+};
 
 /// Default name of the scratch subtree directory, placed next to the trace
 /// files inside the store root. Hidden and non-`.json`, so `TraceStore::list`
@@ -257,6 +259,27 @@ impl Agent {
     /// header-only read as [`TraceStore::list`].
     pub fn traces(&self) -> Result<Vec<TraceHead>, StoreError> {
         self.store.list()
+    }
+
+    /// Prune stored traces under `policy` and delete the pruned traces'
+    /// per-lineage scratch subtrees so scratch state does not outlive its trace
+    /// (ROADMAP T3.3). Lineage closure is enforced by the store, so a surviving
+    /// trace's `depends_on` chain always still resolves. Blob-store GC is a
+    /// separate concern (blobs are content-addressed and shared across traces).
+    pub fn prune(&self, policy: &PrunePolicy) -> Result<PruneReport, StoreError> {
+        let report = self.store.prune(policy)?;
+        for id in &report.pruned {
+            let scratch = self.scratch_root.join(id.as_str());
+            if scratch.exists() {
+                std::fs::remove_dir_all(&scratch)?;
+            }
+        }
+        Ok(report)
+    }
+
+    /// The store's on-disk size (trace count + bytes), for lifecycle reporting.
+    pub fn store_size(&self) -> Result<StoreSize, StoreError> {
+        self.store.size()
     }
 
     /// Run one ask to completion (ARCHITECTURE §18.1/§19.2). See the module

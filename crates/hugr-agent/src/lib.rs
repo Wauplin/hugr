@@ -32,7 +32,9 @@ pub use blobs::BlobError;
 pub use contract::{
     Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,
 };
-pub use store::{StoreError, TraceHead, TraceHeader, TraceStore};
+pub use store::{
+    PruneReport, PrunePolicy, StoreError, StoreSize, TraceHead, TraceHeader, TraceStore,
+};
 
 /// The content-addressed blob store outbound blobs land in (ARCHITECTURE
 /// §18.3), re-exported from `hugr-replay` so orchestrators can resolve an

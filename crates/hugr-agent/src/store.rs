@@ -36,7 +36,9 @@
 //! [`head`]: TraceStore::head
 //! [`get`]: TraceStore::get
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use hugr_replay::{Trace, TraceError, TraceMeta};
 use serde::{Deserialize, Serialize};
@@ -270,6 +272,117 @@ impl TraceStore {
         Ok(heads)
     }
 
+    /// Report the store's on-disk size: how many traces it holds and their
+    /// total bytes (ROADMAP T3.3). Only the `.json` trace files are counted —
+    /// the sibling `.scratch`/`.blobs` subtrees are separate concerns.
+    pub fn size(&self) -> Result<StoreSize, StoreError> {
+        let heads = self.list()?;
+        let mut total_bytes = 0u64;
+        for head in &heads {
+            total_bytes += std::fs::metadata(self.path_of(&head.trace_id))?.len();
+        }
+        Ok(StoreSize {
+            trace_count: heads.len(),
+            total_bytes,
+        })
+    }
+
+    /// Prune traces under a retention `policy`, **keeping every survivor's
+    /// lineage closed** (ROADMAP T3.3): a trace is deleted only if it is a
+    /// policy drop-candidate *and* no surviving trace depends on it
+    /// (transitively). So a survivor's `depends_on` chain up to its root always
+    /// still resolves — pruning can never orphan a kept trace.
+    ///
+    /// Policy (all optional; a trace is a drop-candidate if it fails **any**
+    /// active bound and is not pinned): `keep_max` keeps the N most-recently
+    /// modified traces; `max_age_secs` drops traces older than that (by file
+    /// mtime); `pinned` ids (typically pinned roots) are never dropped. Age/LRU
+    /// use filesystem mtime — this is host maintenance, outside the deterministic
+    /// replay path. Returns which ids were pruned/kept and the bytes freed.
+    pub fn prune(&self, policy: &PrunePolicy) -> Result<PruneReport, StoreError> {
+        let heads = self.list()?;
+        let ids: BTreeSet<TraceId> = heads.iter().map(|h| h.trace_id.clone()).collect();
+        let parent: BTreeMap<TraceId, Option<TraceId>> = heads
+            .iter()
+            .map(|h| (h.trace_id.clone(), h.depends_on.clone()))
+            .collect();
+
+        let mut mtimes: BTreeMap<TraceId, SystemTime> = BTreeMap::new();
+        for head in &heads {
+            let mtime = std::fs::metadata(self.path_of(&head.trace_id))?.modified()?;
+            mtimes.insert(head.trace_id.clone(), mtime);
+        }
+
+        // The `keep_max` newest by mtime (tie-broken by id for determinism).
+        let within_count: BTreeSet<TraceId> = match policy.keep_max {
+            Some(n) => {
+                let mut ranked: Vec<&TraceHead> = heads.iter().collect();
+                ranked.sort_by(|a, b| {
+                    mtimes[&b.trace_id]
+                        .cmp(&mtimes[&a.trace_id])
+                        .then_with(|| a.trace_id.cmp(&b.trace_id))
+                });
+                ranked
+                    .into_iter()
+                    .take(n)
+                    .map(|h| h.trace_id.clone())
+                    .collect()
+            }
+            None => ids.clone(),
+        };
+
+        let age_cutoff: Option<SystemTime> = policy
+            .max_age_secs
+            .and_then(|secs| SystemTime::now().checked_sub(Duration::from_secs(secs)));
+
+        // Initial keep set: everything not dropped by policy.
+        let mut keep: BTreeSet<TraceId> = BTreeSet::new();
+        for head in &heads {
+            let id = &head.trace_id;
+            if policy.pinned.contains(id) {
+                keep.insert(id.clone());
+                continue;
+            }
+            let too_old = age_cutoff.is_some_and(|cutoff| mtimes[id] < cutoff);
+            let beyond_count = policy.keep_max.is_some() && !within_count.contains(id);
+            if !(too_old || beyond_count) {
+                keep.insert(id.clone());
+            }
+        }
+
+        // Lineage closure: pull every kept trace's ancestors back into the keep
+        // set so no survivor is ever left with a dangling `depends_on`.
+        let mut stack: Vec<TraceId> = keep.iter().cloned().collect();
+        while let Some(id) = stack.pop() {
+            if let Some(Some(dep)) = parent.get(&id) {
+                if ids.contains(dep) && keep.insert(dep.clone()) {
+                    stack.push(dep.clone());
+                }
+            }
+        }
+
+        // Delete the rest.
+        let mut pruned = Vec::new();
+        let mut freed_bytes = 0u64;
+        for head in &heads {
+            if keep.contains(&head.trace_id) {
+                continue;
+            }
+            let path = self.path_of(&head.trace_id);
+            freed_bytes += std::fs::metadata(&path)?.len();
+            std::fs::remove_file(&path)?;
+            pruned.push(head.trace_id.clone());
+        }
+        pruned.sort();
+        let mut kept: Vec<TraceId> = keep.into_iter().collect();
+        kept.sort();
+        Ok(PruneReport {
+            pruned,
+            kept,
+            freed_bytes,
+        })
+    }
+
     /// Project a stored [`TraceMeta`] into a [`TraceHead`], checking the
     /// store-required fields are present and the stamped id matches the key.
     fn head_from_meta(id: &TraceId, meta: TraceMeta) -> Result<TraceHead, StoreError> {
@@ -296,6 +409,65 @@ impl TraceStore {
             status: meta.status.ok_or_else(|| field_err("status"))?,
         })
     }
+}
+
+/// Retention policy for [`TraceStore::prune`] (ROADMAP T3.3). All bounds are
+/// optional; the default policy keeps everything. Lineage closure is always
+/// enforced regardless of policy — a survivor's ancestors are never dropped.
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct PrunePolicy {
+    /// Keep at most this many traces, the most-recently-modified ones.
+    pub keep_max: Option<usize>,
+    /// Drop traces whose file mtime is older than this many seconds.
+    pub max_age_secs: Option<u64>,
+    /// Ids that must never be dropped (typically pinned roots).
+    pub pinned: BTreeSet<TraceId>,
+}
+
+impl PrunePolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Keep at most `n` traces (the most-recently-modified survive).
+    pub fn keep_max(mut self, n: usize) -> Self {
+        self.keep_max = Some(n);
+        self
+    }
+
+    /// Drop traces older than `secs` seconds (by file mtime).
+    pub fn max_age_secs(mut self, secs: u64) -> Self {
+        self.max_age_secs = Some(secs);
+        self
+    }
+
+    /// Pin an id so it (and, by lineage closure, its ancestors) is never
+    /// dropped.
+    pub fn pin(mut self, id: TraceId) -> Self {
+        self.pinned.insert(id);
+        self
+    }
+}
+
+/// Outcome of a [`TraceStore::prune`] pass.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct PruneReport {
+    /// Ids deleted (sorted).
+    pub pruned: Vec<TraceId>,
+    /// Ids retained (sorted) — includes ancestors kept for lineage closure.
+    pub kept: Vec<TraceId>,
+    /// Bytes freed by deleting the pruned trace files.
+    pub freed_bytes: u64,
+}
+
+/// On-disk size report from [`TraceStore::size`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct StoreSize {
+    pub trace_count: usize,
+    pub total_bytes: u64,
 }
 
 /// Errors from the trace store.

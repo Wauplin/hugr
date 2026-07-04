@@ -35,8 +35,8 @@ enum Command {
     New(NewArgs),
     /// Compile a definition into a self-contained artifact (cli/crate/python).
     Build(BuildArgs),
-    /// List an agent's stored traces as a lineage tree.
-    Traces(AgentArg),
+    /// List an agent's stored traces as a lineage tree (or prune / size them).
+    Traces(TracesArgs),
     /// Verify a stored trace replays bit-for-bit.
     Verify(TraceArgs),
     /// Replay a stored trace (optionally step-by-step).
@@ -47,6 +47,27 @@ enum Command {
 struct AgentArg {
     /// Path to the agent definition folder (containing hugr.toml).
     agent_dir: PathBuf,
+}
+
+#[derive(Parser)]
+struct TracesArgs {
+    /// Path to the agent definition folder (containing hugr.toml).
+    agent_dir: PathBuf,
+    /// Prune the store under the retention policy below (lineage stays closed).
+    #[arg(long)]
+    prune: bool,
+    /// Report the store's on-disk size (trace count + bytes) and exit.
+    #[arg(long)]
+    size: bool,
+    /// Prune policy: keep at most this many (most-recent) traces.
+    #[arg(long)]
+    keep_max: Option<usize>,
+    /// Prune policy: drop traces older than this many seconds.
+    #[arg(long)]
+    max_age_secs: Option<u64>,
+    /// Prune policy: pin a trace id so it (and its ancestors) is never dropped.
+    #[arg(long = "pin")]
+    pins: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -134,8 +155,54 @@ fn load_store(agent_dir: &std::path::Path) -> hugr_agent::TraceStore {
     }
 }
 
-fn traces(args: AgentArg) {
+fn traces(args: TracesArgs) {
     let store = load_store(&args.agent_dir);
+
+    if args.size {
+        match store.size() {
+            Ok(size) => println!(
+                "{} trace(s), {} bytes on disk",
+                size.trace_count, size.total_bytes
+            ),
+            Err(err) => {
+                eprintln!("error: sizing store: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if args.prune {
+        let mut policy = hugr_agent::PrunePolicy::new();
+        if let Some(n) = args.keep_max {
+            policy = policy.keep_max(n);
+        }
+        if let Some(secs) = args.max_age_secs {
+            policy = policy.max_age_secs(secs);
+        }
+        for pin in &args.pins {
+            policy = policy.pin(TraceId::new(pin.clone()));
+        }
+        match store.prune(&policy) {
+            Ok(report) => {
+                println!(
+                    "pruned {} trace(s), kept {} (lineage closed), freed {} bytes",
+                    report.pruned.len(),
+                    report.kept.len(),
+                    report.freed_bytes
+                );
+                for id in &report.pruned {
+                    println!("  - {id}");
+                }
+            }
+            Err(err) => {
+                eprintln!("error: pruning store: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     match store.list() {
         Ok(heads) => println!("{}", render_lineage(&heads)),
         Err(err) => {

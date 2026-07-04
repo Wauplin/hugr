@@ -852,7 +852,7 @@ Each agent gets a private scratch directory exposed as ungated `scratch_read`/`s
 
 ### 19.4 Trace lifecycle
 
-`hugr traces` lists the lineage tree; `hugr replay`/`verify` point the existing inspector at a stored id; pruning (T3.3) must keep lineage closed — a surviving trace's `depends_on` chain up to its root always resolves. Schema migration for long-lived stores is tracked in ROADMAP T5.2.
+`hugr traces` lists the lineage tree; `hugr replay`/`verify` point the existing inspector at a stored id. `hugr traces --prune` (`TraceStore::prune`, T3.3) applies a retention policy — `keep_max` (LRU by mtime), `max_age_secs`, and `pin`ned ids — and **keeps lineage closed**: a trace is deleted only if it is a policy drop-candidate *and* no surviving trace transitively depends on it, so a survivor's `depends_on` chain up to its root always still resolves. `Agent::prune` additionally drops the pruned traces' scratch subtrees; blob GC is a separate concern (content-addressed, shared). `hugr traces --size` (`TraceStore::size`) reports trace count + bytes. Schema migration for long-lived stores is tracked in ROADMAP T5.2.
 
 ## 20. Agent definitions (`hugr-toolkit`)
 
