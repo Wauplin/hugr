@@ -12,8 +12,9 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use hugr_toolkit::AgentDefinition;
-use hugr_toolkit::runtime::build_agent;
+use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
+use hugr_toolkit::traces::render_lineage;
 
 #[derive(Parser)]
 #[command(
@@ -31,6 +32,37 @@ enum Command {
     Run(RunArgs),
     /// Scaffold a new definition folder from a template.
     New(NewArgs),
+    /// List an agent's stored traces as a lineage tree.
+    Traces(AgentArg),
+    /// Verify a stored trace replays bit-for-bit.
+    Verify(TraceArgs),
+    /// Replay a stored trace (optionally step-by-step).
+    Replay(ReplayArgs),
+}
+
+#[derive(Parser)]
+struct AgentArg {
+    /// Path to the agent definition folder (containing hugr.toml).
+    agent_dir: PathBuf,
+}
+
+#[derive(Parser)]
+struct TraceArgs {
+    /// Path to the agent definition folder (containing hugr.toml).
+    agent_dir: PathBuf,
+    /// The trace id to operate on.
+    trace_id: String,
+}
+
+#[derive(Parser)]
+struct ReplayArgs {
+    /// Path to the agent definition folder (containing hugr.toml).
+    agent_dir: PathBuf,
+    /// The trace id to replay.
+    trace_id: String,
+    /// Print each replayed event and the commands/log it produced.
+    #[arg(long)]
+    step: bool,
 }
 
 #[derive(Parser)]
@@ -63,7 +95,97 @@ async fn main() {
     match cli.command {
         Command::Run(args) => run(args).await,
         Command::New(args) => new(args),
+        Command::Traces(args) => traces(args),
+        Command::Verify(args) => verify(args),
+        Command::Replay(args) => replay(args),
     }
+}
+
+/// Load a definition folder's trace store, exiting non-zero on a bad manifest.
+/// Trace tooling is a developer inspection surface (like `new`), not the
+/// ask/answer contract.
+fn load_store(agent_dir: &std::path::Path) -> hugr_agent::TraceStore {
+    match AgentDefinition::load(agent_dir) {
+        Ok(def) => trace_store_for(&def),
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn traces(args: AgentArg) {
+    let store = load_store(&args.agent_dir);
+    match store.list() {
+        Ok(heads) => println!("{}", render_lineage(&heads)),
+        Err(err) => {
+            eprintln!("error: listing traces: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn verify(args: TraceArgs) {
+    let store = load_store(&args.agent_dir);
+    let trace = match store.get(&TraceId::new(args.trace_id.clone())) {
+        Ok(trace) => trace,
+        Err(err) => {
+            eprintln!("error: loading trace {}: {err}", args.trace_id);
+            std::process::exit(1);
+        }
+    };
+    match hugr_replay::verify(&trace) {
+        Ok(_) => println!("{} verified ✓ (replays bit-for-bit)", args.trace_id),
+        Err(err) => {
+            eprintln!("{} FAILED verification: {err}", args.trace_id);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn replay(args: ReplayArgs) {
+    let store = load_store(&args.agent_dir);
+    let trace = match store.get(&TraceId::new(args.trace_id.clone())) {
+        Ok(trace) => trace,
+        Err(err) => {
+            eprintln!("error: loading trace {}: {err}", args.trace_id);
+            std::process::exit(1);
+        }
+    };
+    if args.step {
+        let mut inspector = hugr_replay::Inspector::new(&trace);
+        let total = inspector.len();
+        while let Some(step) = inspector.step() {
+            println!(
+                "[{}/{}] event={} → {} command(s), {} log entr(ies)",
+                step.index + 1,
+                total,
+                event_kind(&step.event),
+                step.commands.len(),
+                step.appended.len(),
+            );
+        }
+        println!("replayed {total} event(s)");
+    } else {
+        let steps = hugr_replay::Inspector::new(&trace).run();
+        let commands: usize = steps.iter().map(|s| s.commands.len()).sum();
+        println!(
+            "replayed {} event(s), {} command(s), {} log entr(ies)",
+            steps.len(),
+            commands,
+            trace.log.len(),
+        );
+    }
+}
+
+/// A short label for a recorded event, for `--step` output.
+fn event_kind(event: &hugr_core::Event) -> String {
+    // Event is #[non_exhaustive]; its Debug is stable enough for a one-word tag.
+    let dbg = format!("{event:?}");
+    dbg.split(['{', '(', ' '])
+        .next()
+        .unwrap_or("Event")
+        .to_string()
 }
 
 /// `hugr new` writes to stderr and sets a non-zero exit on failure — it is a

@@ -16,6 +16,7 @@ pub mod manifest;
 pub mod runtime;
 pub mod scaffold;
 pub mod tools;
+pub mod traces;
 
 pub use manifest::{
     AgentDefinition, AgentMeta, LimitsConfig, ManifestError, ModelsConfig, ScratchpadConfig, Span,

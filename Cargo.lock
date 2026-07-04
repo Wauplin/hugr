@@ -546,6 +546,7 @@ dependencies = [
  "hugr-core",
  "hugr-host",
  "hugr-providers",
+ "hugr-replay",
  "reqwest",
  "serde",
  "serde_json",

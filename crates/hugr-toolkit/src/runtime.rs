@@ -30,7 +30,22 @@ use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
 use crate::tools::{self, ToolError};
 
 /// Default trace-store directory when the manifest omits `[traces].store`.
-const DEFAULT_TRACE_DIRNAME: &str = ".hugr-traces";
+pub const DEFAULT_TRACE_DIRNAME: &str = ".hugr-traces";
+
+/// The trace store a definition reads/writes, resolved the same way
+/// [`build_agent`] resolves it (`[traces].store` against the definition folder,
+/// else `.hugr-traces`). Trace tooling (`hugr traces`/`replay`/`verify`) points
+/// at this store (ROADMAP T1.7).
+pub fn trace_store_for(def: &AgentDefinition) -> TraceStore {
+    let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let dir = def
+        .traces
+        .store
+        .as_deref()
+        .map(|s| resolve(&base_dir, s))
+        .unwrap_or_else(|| base_dir.join(DEFAULT_TRACE_DIRNAME));
+    TraceStore::new(dir)
+}
 
 /// Failure to assemble a runtime from a definition. (Run failures are
 /// *answers*, §18.1 — this is strictly build-time.)
@@ -75,13 +90,7 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
     }
 
     // Trace store: [traces].store, resolved against the definition folder.
-    let trace_dir = def
-        .traces
-        .store
-        .as_deref()
-        .map(|s| resolve(&base_dir, s))
-        .unwrap_or_else(|| base_dir.join(DEFAULT_TRACE_DIRNAME));
-    let store = TraceStore::new(&trace_dir);
+    let store = trace_store_for(def);
 
     let version = if def.agent.version.trim().is_empty() {
         "0.0.0"
