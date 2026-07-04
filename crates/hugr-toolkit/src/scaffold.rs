@@ -235,7 +235,7 @@ mod tests {
         assert!(
             files
                 .iter()
-                .any(|f| f.rel_path == PathBuf::from("docs/README.md"))
+                .any(|f| f.rel_path == Path::new("docs/README.md"))
         );
     }
 }
