@@ -769,4 +769,34 @@ mod tests {
         // A legitimate in-jail path still resolves.
         assert!(root.resolve_existing(Some("sub/b.txt")).is_ok());
     }
+
+    /// T3.6 regression: a symlink *inside* the jail that points *outside* it
+    /// must not be a read primitive for the target. Path components are all
+    /// `Normal`, so the traversal check passes — the post-canonicalize
+    /// `starts_with(root)` re-check is what rejects it.
+    #[cfg(unix)]
+    #[test]
+    fn jail_rejects_symlink_that_escapes_the_root() {
+        let (dir, root) = root("symlink");
+        // A secret file living OUTSIDE the jail root.
+        let outside = dir.0.parent().unwrap().join(format!(
+            "hugr-fsread-secret-{}-{:p}",
+            std::process::id(),
+            &dir as *const _
+        ));
+        fs::write(&outside, "top secret").unwrap();
+
+        // A symlink inside the root pointing at that outside file.
+        let link = dir.0.join("escape.md");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        // The symlink's own path has only Normal components, so it clears the
+        // component check — but canonicalization resolves it to `outside`,
+        // which fails the starts_with(root) re-check.
+        let err = root.resolve_existing(Some("escape.md")).unwrap_err();
+        assert!(err.to_string().contains("escapes the tool root"), "{err}");
+        assert!(read_document(&root, "escape.md", 1000).is_err());
+
+        let _ = fs::remove_file(&outside);
+    }
 }

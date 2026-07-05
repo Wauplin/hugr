@@ -13,6 +13,18 @@
 //! granted, returns a semantic tool error (the model sees it) — never a
 //! transport panic. With no `allow_hosts` the tool denies every request, so an
 //! empty grant is fail-closed.
+//!
+//! ## Sandbox hardening (ROADMAP T3.6)
+//!
+//! Automatic redirects are **disabled**: `reqwest` otherwise follows up to 10
+//! redirects, and the allowlist is only checked on the *initial* URL — so an
+//! allowlisted host could `3xx`-redirect to an off-allowlist (or internal)
+//! target and exfiltrate/SSRF past the jail. With redirects off, a `3xx`
+//! response is returned to the model as-is; following it is a *new* `http_fetch`
+//! call whose target is re-checked against the allowlist. Only `http`/`https`
+//! schemes are accepted (no `file:`/`ftp:`), and userinfo tricks
+//! (`https://allowed@evil.com`) resolve to the real host, which is what the
+//! allowlist checks. See `docs/THREAT_MODEL.md`.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -62,8 +74,14 @@ impl HttpFetch {
             .and_then(Value::as_u64)
             .map(|b| b as usize)
             .unwrap_or(DEFAULT_MAX_BYTES);
+        // Disable automatic redirects (T3.6): the allowlist is checked per URL,
+        // so a redirect to an off-allowlist host must not be followed silently.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("building http_fetch client")?;
         Ok(Self {
-            client: reqwest::Client::new(),
+            client,
             allow_hosts,
             allow_methods,
             max_bytes,
@@ -209,5 +227,37 @@ mod tests {
         let tool = HttpFetch::from_config(&json!({})).unwrap();
         assert!(!tool.host_allowed("example.com"));
         assert_eq!(tool.allow_methods, vec!["GET".to_string()]);
+    }
+
+    // --- T3.6 sandbox-hardening regressions --------------------------------
+
+    #[tokio::test]
+    async fn userinfo_and_nonhttp_schemes_cannot_bypass_the_allowlist() {
+        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+
+        // `https://example.com@evil.com/` — the real host is evil.com, so the
+        // allowlist rejects it (no network touched).
+        let err = tool
+            .fetch(json!({ "url": "https://example.com@evil.com/" }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("allowlist"), "{err}");
+
+        // Non-http(s) schemes are refused up front (no file:// exfiltration).
+        let err = tool
+            .fetch(json!({ "url": "file:///etc/passwd" }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("http(s)"), "{err}");
+    }
+
+    #[test]
+    fn a_bare_host_does_not_match_a_different_host_with_shared_suffix() {
+        // Regression: subdomain matching must require a dot boundary, so
+        // `notexample.com` never matches an `example.com` allowlist.
+        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+        assert!(!tool.host_allowed("notexample.com"));
+        assert!(!tool.host_allowed("example.com.evil.com"));
+        assert!(tool.host_allowed("deep.sub.example.com"));
     }
 }

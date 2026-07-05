@@ -9,9 +9,24 @@
 //! ```
 //!
 //! The connection is opened fresh per call (on a blocking thread) against the
-//! one manifest-declared file. `ATTACH DATABASE` is rejected up front so the
-//! query can never reach a second file — the deeper hardening pass (symlinks,
-//! pragmas) is ROADMAP T3.6.
+//! one manifest-declared file.
+//!
+//! ## Sandbox hardening (ROADMAP T3.6)
+//!
+//! - **Second-file access is blocked.** `ATTACH DATABASE` would let a query
+//!   reach a file outside the manifest scope even under a read-only main
+//!   connection, so it is rejected before the query runs. The guard is
+//!   **token-based** (`attach` as a whole SQL word) rather than a substring
+//!   scan, so a column named `attachment` is not falsely rejected while a real
+//!   `ATTACH` statement — in any casing or spacing — still is.
+//! - **Symlink scope.** The manifest `file` is canonicalized at construction,
+//!   so a symlinked path resolves to its real target once, up front (the tool
+//!   is bound to that one resolved file for its lifetime).
+//! - **Read-only engine.** The file is opened `SQLITE_OPEN_READ_ONLY`, so
+//!   writes/DDL fail at the engine regardless of the SQL text.
+//!
+//! See `docs/THREAT_MODEL.md`. (This module is behind the `sqlite` cargo
+//! feature; the guard is exercised by the unit tests below when it is enabled.)
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -110,8 +125,15 @@ impl Capability for SqliteQuery {
     }
 }
 
+/// Whether `sql` uses `attach` as a SQL keyword (whole word, any casing),
+/// rather than merely containing the substring (e.g. a column `attachment`).
+fn mentions_attach_keyword(sql: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|token| token == "attach")
+}
+
 fn run_query(file: &Path, sql: &str, max_rows: usize) -> Result<Value> {
-    if sql.to_ascii_lowercase().contains("attach") {
+    if mentions_attach_keyword(sql) {
         anyhow::bail!("ATTACH is not permitted (sqlite_query is scoped to one file)");
     }
     let conn = Connection::open_with_flags(
@@ -153,5 +175,24 @@ fn value_ref_to_json(v: ValueRef<'_>) -> Value {
         ValueRef::Real(f) => json!(f),
         ValueRef::Text(bytes) => json!(String::from_utf8_lossy(bytes).into_owned()),
         ValueRef::Blob(bytes) => json!({ "blob_bytes": bytes.len() }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mentions_attach_keyword;
+
+    #[test]
+    fn attach_keyword_is_detected_across_casing_and_spacing() {
+        assert!(mentions_attach_keyword("ATTACH DATABASE 'x' AS y"));
+        assert!(mentions_attach_keyword("  attach   database 'x'"));
+        assert!(mentions_attach_keyword("select 1;\nAttAch database 'x'"));
+    }
+
+    #[test]
+    fn substring_attach_in_an_identifier_is_not_a_false_positive() {
+        // A column/table named `attachment` must not trip the guard.
+        assert!(!mentions_attach_keyword("SELECT attachment FROM emails"));
+        assert!(!mentions_attach_keyword("SELECT id, attachments_count FROM t"));
     }
 }
