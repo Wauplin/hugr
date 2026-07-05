@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hugr_agent::{Agent, AgentLimits, ConfigEntry, ConfigProvenance, Pricing, TraceStore};
+use hugr_agent::{
+    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, ConfigEntry,
+    ConfigProvenance, Pricing, TraceStore, depth_exceeded_resolver,
+};
 use hugr_core::{ModelSelector, SamplingParams};
 use hugr_host::PluginError;
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
@@ -76,12 +79,32 @@ pub enum RuntimeError {
         #[source]
         source: PluginError,
     },
+    /// A granted child agent (`[tools.agent.<name>]`) could not be resolved
+    /// (bad `ref`, unloadable child definition).
+    #[error("wiring agent-as-tool grant `{name}`: {message}")]
+    Agent { name: String, message: String },
 }
+
+/// Default recursion cap for agent-as-tool delegation (ARCHITECTURE §20.5,
+/// §13): how many nested `agent_<name>` calls a definition tree may build
+/// before a grant is replaced by an `agent_depth_exceeded` stub. Bounds cycles
+/// (`a` grants `b` grants `a`) statically at build time.
+pub const DEFAULT_MAX_AGENT_DEPTH: u32 = 3;
 
 /// Assemble a [`Agent`] from a definition, collecting non-fatal build warnings
 /// (e.g. an external-tool grant that is not yet wired). Relative scopes resolve
 /// against the definition's `source_dir` (else the process cwd).
 pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), RuntimeError> {
+    build_agent_depth(def, DEFAULT_MAX_AGENT_DEPTH).await
+}
+
+/// Depth-aware assembly (ARCHITECTURE §20.5, ROADMAP T3.8): `agent_depth` is the
+/// remaining agent-as-tool recursion budget. A granted child is built with one
+/// less; at zero, the grant becomes an `agent_depth_exceeded` stub.
+pub async fn build_agent_depth(
+    def: &AgentDefinition,
+    agent_depth: u32,
+) -> Result<(Agent, Vec<String>), RuntimeError> {
     let mut warnings = Vec::new();
     let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
@@ -198,10 +221,10 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
                 }
             }
             ToolKind::Agent => {
-                warnings.push(format!(
-                    "agent-as-tool grant `{}` is not wired yet (ROADMAP T3.8); skipped",
-                    grant.name
-                ));
+                match build_agent_tool(grant, &base_dir, agent_depth).await {
+                    Ok(spec) => builder = builder.agent_tool(spec),
+                    Err(err) => return Err(err),
+                }
             }
         }
     }
@@ -426,6 +449,100 @@ fn command_and_args(grant: &ToolGrant) -> Result<(String, Vec<String>), RuntimeE
     Ok((command, args))
 }
 
+/// Wire one `[tools.agent.<name>]` grant into an `agent_<name>` tool spec
+/// (ARCHITECTURE §20.5, ROADMAP T3.8). Resolution follows §20.3 weight order:
+/// a `ref` pointing at a **definition folder** (contains `hugr.toml`) runs the
+/// child in-process under the interpreter; a `ref` pointing at a **file** runs
+/// it as a subprocess artifact speaking the CLI JSON contract (§21.1). At zero
+/// remaining depth the grant becomes an `agent_depth_exceeded` stub (cycle cut).
+async fn build_agent_tool(
+    grant: &ToolGrant,
+    base_dir: &Path,
+    agent_depth: u32,
+) -> Result<AgentToolSpec, RuntimeError> {
+    let tool_name = format!("agent_{}", grant.name);
+    let err = |message: String| RuntimeError::Agent {
+        name: grant.name.clone(),
+        message,
+    };
+
+    // Depth/cycle cut: no child is built or run.
+    if agent_depth == 0 {
+        return Ok(AgentToolSpec::new(
+            &tool_name,
+            "delegation refused: max agent depth reached",
+            depth_exceeded_resolver(grant.name.clone()),
+        ));
+    }
+
+    let reference = grant
+        .config
+        .get("ref")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| err("missing string `ref` (definition folder or artifact)".into()))?;
+    let resolved = resolve(base_dir, reference);
+
+    if resolved.is_dir() {
+        // Interpreter path: load + build the child under its own manifest.
+        let child_def = AgentDefinition::load(&resolved)
+            .map_err(|e| err(format!("loading child definition: {e}")))?;
+        let (child, _child_warnings) = Box::pin(build_agent_depth(&child_def, agent_depth - 1))
+            .await
+            .map_err(|e| err(format!("building child agent: {e}")))?;
+        let description = child.describe().description;
+        let child = Arc::new(child);
+        let resolver: AgentToolResolver = Arc::new(move |ask: Ask| {
+            let child = child.clone();
+            Box::pin(async move { child.ask(ask).await.map_err(|e| e.to_string()) })
+        });
+        Ok(AgentToolSpec::new(tool_name, description, resolver))
+    } else if resolved.is_file() {
+        // Subprocess-artifact path: spawn the built binary per call.
+        let bin = resolved.clone();
+        let resolver: AgentToolResolver = Arc::new(move |ask: Ask| {
+            let bin = bin.clone();
+            Box::pin(async move { run_subprocess_agent(&bin, ask).await })
+        });
+        Ok(AgentToolSpec::new(
+            tool_name,
+            format!("subagent artifact at {}", resolved.display()),
+            resolver,
+        ))
+    } else {
+        Err(err(format!(
+            "`ref` does not resolve to a definition folder or artifact: {}",
+            resolved.display()
+        )))
+    }
+}
+
+/// Run a built agent artifact as a subprocess over the CLI JSON contract
+/// (§21.1): `<bin> <question> --json [--trace <id>]`, then parse the `Answer`
+/// from stdout. Blob forwarding is a later refinement.
+async fn run_subprocess_agent(bin: &Path, ask: Ask) -> Result<Answer, String> {
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.arg(&ask.question).arg("--json");
+    if let Some(trace_id) = &ask.trace_id {
+        cmd.arg("--trace").arg(trace_id.as_str());
+    }
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("spawning subagent `{}`: {e}", bin.display()))?;
+    if !output.status.success() {
+        // The CLI contract always exits 0 with a JSON answer; a non-zero exit is
+        // an infrastructure failure surfaced to the calling model.
+        return Err(format!(
+            "subagent `{}` exited with {}: {}",
+            bin.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    serde_json::from_slice::<Answer>(&output.stdout)
+        .map_err(|e| format!("parsing subagent answer: {e}"))
+}
+
 /// Resolve a manifest path against the definition folder (absolute paths pass
 /// through).
 fn resolve(base_dir: &Path, path: &str) -> PathBuf {
@@ -630,23 +747,83 @@ root = "group:policies"
         assert!(tool_names.contains(&"scratch_read".to_string()), "{tool_names:?}");
     }
 
+    /// Write a minimal definition folder and return its path.
+    fn write_def(tag: &str, toml: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("hugr-agtool-{tag}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("hugr.toml"), toml).unwrap();
+        dir
+    }
+
     #[tokio::test]
-    async fn agent_as_tool_grant_warns_and_is_skipped() {
-        // Agent-as-tool is deferred to T3.8; it warns rather than connecting.
+    async fn agent_as_tool_interpreter_grant_registers_agent_tool() {
+        // A child definition folder granted to a parent (§20.5, T3.8) registers
+        // an `agent_<name>` capability on the parent's card.
+        let child_dir = write_def(
+            "child",
+            "[agent]\nname = \"child\"\ndescription = \"answers sub-questions\"\n[models.medium]\nmodel = \"m\"\n",
+        );
+        let parent_src = format!(
+            "[agent]\nname = \"parent\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.helper]\nref = {:?}\n",
+            child_dir.display().to_string()
+        );
+        let mut def = AgentDefinition::parse(&parent_src, "hugr.toml").unwrap();
+        def.source_dir = Some(std::env::temp_dir());
+        let (agent, warnings) = build_agent(&def).await.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let names: Vec<_> = agent.describe().tools.iter().map(|t| t.name.clone()).collect();
+        assert!(names.contains(&"agent_helper".to_string()), "{names:?}");
+        let _ = std::fs::remove_dir_all(&child_dir);
+    }
+
+    #[tokio::test]
+    async fn agent_as_tool_cycle_terminates_via_depth_cap() {
+        // a → b → a → … must build (not hang / overflow): the depth cap turns
+        // the deepest grant into a stub. We just require build() to complete.
+        let a_dir = write_def("cyc-a", "");
+        let b_dir = write_def("cyc-b", "");
+        std::fs::write(
+            a_dir.join("hugr.toml"),
+            format!(
+                "[agent]\nname = \"a\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.b]\nref = {:?}\n",
+                b_dir.display().to_string()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            b_dir.join("hugr.toml"),
+            format!(
+                "[agent]\nname = \"b\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.a]\nref = {:?}\n",
+                a_dir.display().to_string()
+            ),
+        )
+        .unwrap();
+        let def = AgentDefinition::load(&a_dir).unwrap();
+        let (agent, _warnings) = build_agent(&def).await.unwrap();
+        assert!(
+            agent.describe().tools.iter().any(|t| t.name == "agent_b"),
+            "the top-level grant is still registered"
+        );
+        let _ = std::fs::remove_dir_all(&a_dir);
+        let _ = std::fs::remove_dir_all(&b_dir);
+    }
+
+    #[tokio::test]
+    async fn agent_as_tool_bad_ref_is_a_build_error() {
         let src = r#"
 [agent]
 name = "x"
 [models.medium]
 model = "m"
 [tools.agent.receipts]
-ref = "receipts"
+ref = "./does-not-exist"
 "#;
-        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        let (_agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(
-            warnings.iter().any(|w| w.contains("agent-as-tool grant")),
-            "{warnings:?}"
-        );
+        let mut def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        def.source_dir = Some(std::env::temp_dir());
+        let err = build_agent(&def).await.err().expect("bad ref → build error");
+        assert!(matches!(err, RuntimeError::Agent { .. }), "{err}");
     }
 
     #[tokio::test]

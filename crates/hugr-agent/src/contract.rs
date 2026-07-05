@@ -384,6 +384,29 @@ impl AnswerMeta {
         self.per_tier.push(tier);
         self
     }
+
+    /// Fold a delegated child agent's accounting into this meta (ARCHITECTURE
+    /// §18.4/§20.5): the child's tokens/cost/calls roll up so the caller's cost
+    /// line stays complete. Per-tier lines merge by selector (child tiers are
+    /// added to a matching parent line, else appended). Duration is *not* added
+    /// — the parent's wall-clock already spans the child's synchronous call.
+    pub fn merge_child(&mut self, child: &AnswerMeta) {
+        self.cost_micro_usd += child.cost_micro_usd;
+        self.tokens_in += child.tokens_in;
+        self.tokens_out += child.tokens_out;
+        self.model_calls += child.model_calls;
+        self.tool_calls += child.tool_calls;
+        for tier in &child.per_tier {
+            if let Some(existing) = self.per_tier.iter_mut().find(|t| t.selector == tier.selector) {
+                existing.model_calls += tier.model_calls;
+                existing.tokens_in += tier.tokens_in;
+                existing.tokens_out += tier.tokens_out;
+                existing.cost_micro_usd += tier.cost_micro_usd;
+            } else {
+                self.per_tier.push(tier.clone());
+            }
+        }
+    }
 }
 
 /// The uniform result of one ask (ARCHITECTURE §18.1).

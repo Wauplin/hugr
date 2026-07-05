@@ -24,8 +24,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use hugr_core::{LogEntry, ModelSelector, OpId, Record, SamplingParams, ToolSchema};
@@ -35,6 +35,7 @@ use hugr_replay::{BlobStore, Trace};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::agent_tool::{AgentTool, AgentToolSpec};
 use crate::blobs::{self, BlobError};
 use crate::contract::{
     Access, Answer, AnswerMeta, AnswerStatus, Ask, ResourceGrant, ResourceGroup, ResourceRef,
@@ -101,6 +102,10 @@ pub struct Agent {
     /// §18.5, ROADMAP T3.7). Each is registered only for asks that carry a
     /// grant of sufficient access over its group.
     group_bindings: Vec<GroupBinding>,
+    /// Granted child agents exposed as ordinary `agent_<name>` capabilities
+    /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
+    /// invocation's child cost folds into this ask's `AnswerMeta`.
+    agent_tools: Vec<AgentToolSpec>,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -134,6 +139,7 @@ impl Agent {
             answer_schema: None,
             config_entries: None,
             group_bindings: Vec::new(),
+            agent_tools: Vec::new(),
         }
     }
 
@@ -163,6 +169,19 @@ impl Agent {
                 scope: json!({ "root": self.scratch_root.display().to_string() }),
             })
             .collect();
+        // Granted child agents (§20.5) show as `agent_<name>` tools; they are
+        // registered per-ask but are part of the agent's advertised surface.
+        tools.extend(self.agent_tools.iter().map(|spec| {
+            let schema = spec.schema();
+            ToolCard {
+                name: schema.name.clone(),
+                description: schema.description.clone(),
+                privilege: ToolPrivilege::Agent,
+                runs_in_background: false,
+                schema,
+                scope: Value::Null,
+            }
+        }));
         tools.extend(self.capabilities.iter().map(|capability| {
             let schema = capability.schema();
             ToolCard {
@@ -371,6 +390,15 @@ impl Agent {
             builder = builder.capability(capability);
         }
 
+        // Agent-as-tool grants (§20.5, T3.8): register each granted child agent
+        // as an `agent_<name>` capability with a per-ask spend sink, so its cost
+        // folds into *this* ask's meta after the turn.
+        let child_spend: Arc<Mutex<Vec<AnswerMeta>>> = Arc::new(Mutex::new(Vec::new()));
+        for spec in &self.agent_tools {
+            builder =
+                builder.capability(Arc::new(AgentTool::new(spec, child_spend.clone())));
+        }
+
         if let Some(trace) = parent_trace {
             // Re-fold the parent's recorded events into the fresh brain — no
             // model or tool is ever re-run for work that already happened
@@ -453,12 +481,16 @@ impl Agent {
         let trace = engine
             .trace()
             .expect("recording is always enabled on an agent engine");
-        let metadata = meta_from_trace(
+        let mut metadata = meta_from_trace(
             &trace,
             baseline,
             started.elapsed().as_millis() as u64,
             &self.pricing,
         );
+        // Fold each delegated child agent's spend into this ask's meta (§20.5).
+        for child_meta in child_spend.lock().unwrap().iter() {
+            metadata.merge_child(child_meta);
+        }
         let mut header = TraceHeader::new(
             &self.name,
             &self.version,
@@ -631,6 +663,7 @@ pub struct AgentBuilder {
     answer_schema: Option<Value>,
     config_entries: Option<Vec<ConfigEntry>>,
     group_bindings: Vec<GroupBinding>,
+    agent_tools: Vec<AgentToolSpec>,
 }
 
 impl AgentBuilder {
@@ -753,6 +786,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Grant a child agent as an ordinary `agent_<name>` tool (ARCHITECTURE
+    /// §20.5, ROADMAP T3.8). The child runs under its own manifest via the
+    /// spec's resolver; its `Answer` is the tool result and its cost folds into
+    /// this agent's `AnswerMeta`.
+    pub fn agent_tool(mut self, spec: AgentToolSpec) -> Self {
+        self.agent_tools.push(spec);
+        self
+    }
+
     pub fn build(self) -> Agent {
         let scratch_root = self
             .scratch_root
@@ -779,6 +821,7 @@ impl AgentBuilder {
             answer_schema: self.answer_schema,
             config_entries: self.config_entries,
             group_bindings: self.group_bindings,
+            agent_tools: self.agent_tools,
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -856,6 +899,8 @@ pub enum ToolPrivilege {
     ReadOnly,
     Scratchpad,
     Gated,
+    /// A granted child agent exposed as a tool (§20.5, T3.8).
+    Agent,
 }
 
 /// One logical model tier exposed in the agent card.
