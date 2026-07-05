@@ -95,7 +95,7 @@ pub const DEFAULT_MAX_AGENT_DEPTH: u32 = 3;
 /// (e.g. an external-tool grant that is not yet wired). Relative scopes resolve
 /// against the definition's `source_dir` (else the process cwd).
 pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), RuntimeError> {
-    build_agent_depth(def, DEFAULT_MAX_AGENT_DEPTH).await
+    build_agent_depth_with_provider_key(def, DEFAULT_MAX_AGENT_DEPTH, None).await
 }
 
 /// Depth-aware assembly (ARCHITECTURE §20.5, ROADMAP T3.8): `agent_depth` is the
@@ -104,6 +104,26 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
 pub async fn build_agent_depth(
     def: &AgentDefinition,
     agent_depth: u32,
+) -> Result<(Agent, Vec<String>), RuntimeError> {
+    build_agent_depth_with_provider_key(def, agent_depth, None).await
+}
+
+/// Assemble a definition with a provider key supplied by the caller instead of
+/// the manifest's `api_key_env`. This is for compatibility surfaces that
+/// already accepted explicit secrets before they became thin wrappers over the
+/// definition runtime (ROADMAP T1.6/T2.3); it avoids mutating process-global env.
+pub async fn build_agent_with_provider_key(
+    def: &AgentDefinition,
+    provider_api_key: impl Into<String>,
+) -> Result<(Agent, Vec<String>), RuntimeError> {
+    build_agent_depth_with_provider_key(def, DEFAULT_MAX_AGENT_DEPTH, Some(provider_api_key.into()))
+        .await
+}
+
+async fn build_agent_depth_with_provider_key(
+    def: &AgentDefinition,
+    agent_depth: u32,
+    provider_api_key: Option<String>,
 ) -> Result<(Agent, Vec<String>), RuntimeError> {
     let mut warnings = Vec::new();
     let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -126,13 +146,15 @@ pub async fn build_agent_depth(
 
     // The provider API key rides an env var (§20.1) — never the manifest. When
     // unset, the adapter gets an empty key and the run fails as an error answer.
-    let api_key = def
-        .models
-        .api_key_env
-        .as_deref()
-        .and_then(|var| std::env::var(var).ok())
-        .unwrap_or_default();
-    if let Some(var) = &def.models.api_key_env
+    let api_key = provider_api_key.clone().unwrap_or_else(|| {
+        def.models
+            .api_key_env
+            .as_deref()
+            .and_then(|var| std::env::var(var).ok())
+            .unwrap_or_default()
+    });
+    if provider_api_key.is_none()
+        && let Some(var) = &def.models.api_key_env
         && api_key.is_empty()
     {
         warnings.push(format!(

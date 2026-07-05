@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use hugr_agent::{Agent, AgentLimits, Ask, Pricing, TraceId, TraceStore};
-use hugr_core::{ModelSelector, OpMeta, OpOutcome, Record, SamplingParams, ToolSchema, Value};
-use hugr_host::{Capability, ChunkSink, estimate_text_tokens, policy::AllowAll};
-use hugr_providers::OpenAiAdapter;
+use hugr_agent::{Ask, TraceId};
+use hugr_core::{OpMeta, OpOutcome, Record, SamplingParams, ToolSchema, Value};
+use hugr_host::{Capability, ChunkSink, estimate_text_tokens};
+use hugr_toolkit::manifest::AgentDefinition;
+use hugr_toolkit::runtime::{build_agent_with_provider_key, trace_store_for};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -21,6 +22,8 @@ pub const DEFAULT_BASE_URL: &str = "https://router.huggingface.co/v1";
 pub const DEFAULT_TRACE_DIR: &str = ".hugr-docs-traces";
 pub const DEFAULT_INPUT_USD_PER_M_TOKENS: f64 = 1.0;
 pub const DEFAULT_OUTPUT_USD_PER_M_TOKENS: f64 = 1.5;
+const DEFINITION_MANIFEST: &str = include_str!("../definition/hugr.toml");
+const DEFINITION_SYSTEM: &str = include_str!("../definition/SYSTEM.md");
 
 const DEFAULT_READ_LIMIT_BYTES: usize = 200_000;
 const MAX_READ_LIMIT_BYTES: usize = 1_000_000;
@@ -211,29 +214,11 @@ async fn answer_question_inner(
 ) -> Result<DocsAnswer> {
     anyhow::ensure!(!question.trim().is_empty(), "question cannot be empty");
     let docs = DocsRoot::new(&config.root)?;
-    let selector = ModelSelector::named("docs");
-    let adapter = OpenAiAdapter::new(config.api_key.clone(), config.model.clone())
-        .with_base_url(config.base_url.clone())
-        .with_default_params(config.sampling.clone());
-
-    let store = TraceStore::new(&config.trace_dir);
-    let mut builder = Agent::builder("hugr-docs", env!("CARGO_PKG_VERSION"), store.clone())
-        .description("Answers questions from a read-only documentation folder.")
-        .model(selector.clone(), Arc::new(adapter))
-        .default_model(selector)
-        .system_prompt(SYSTEM_PROMPT)
-        .sampling(config.sampling.clone())
-        .policy(Arc::new(AllowAll))
-        .pricing(Pricing::new().with_tier(
-            "docs",
-            config.input_usd_per_m_tokens,
-            config.output_usd_per_m_tokens,
-        ))
-        .limits(AgentLimits::new());
-    for capability in docs.capabilities() {
-        builder = builder.capability(capability);
-    }
-    let agent = builder.build();
+    let definition = docs_definition(config, docs.root())?;
+    let store = trace_store_for(&definition);
+    let (agent, _warnings) = build_agent_with_provider_key(&definition, config.api_key.clone())
+        .await
+        .context("building docs agent from definition")?;
 
     let mut ask = Ask::new(user_prompt(question));
     if let Some(trace_id) = &config.trace_id {
@@ -258,6 +243,32 @@ async fn answer_question_inner(
         docs_answer.message = agent_answer.message;
     }
     Ok(docs_answer)
+}
+
+fn docs_definition(config: &DocsConfig, docs_root: &Path) -> Result<AgentDefinition> {
+    let mut definition =
+        AgentDefinition::parse(DEFINITION_MANIFEST, "hugr-docs/definition/hugr.toml")
+            .context("parsing embedded docs definition")?;
+    definition.source_dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("definition"));
+    definition.system_prompt = Some(DEFINITION_SYSTEM.to_string());
+    definition.agent.version = env!("CARGO_PKG_VERSION").to_string();
+    definition.models.base_url = Some(config.base_url.clone());
+    definition.models.api_key_env = Some("HUGR_DOCS_API_KEY".to_string());
+    if let Some(tier) = definition.models.tiers.get_mut("docs") {
+        tier.model = config.model.clone();
+        tier.input_usd_per_m_tokens = Some(config.input_usd_per_m_tokens);
+        tier.output_usd_per_m_tokens = Some(config.output_usd_per_m_tokens);
+        tier.temperature = config.sampling.temperature.map(f64::from);
+        tier.max_tokens = config.sampling.max_tokens;
+    }
+    let root = docs_root.display().to_string();
+    for grant in &mut definition.tools {
+        if grant.kind == hugr_toolkit::ToolKind::Library && grant.name == "fs_read" {
+            grant.config = json!({ "root": root });
+        }
+    }
+    definition.traces.store = Some(config.trace_dir.display().to_string());
+    Ok(definition)
 }
 
 /// Build a docs answer from raw inputs, swallowing every error into a
@@ -1467,10 +1478,14 @@ fn read_document_sets(log: &[hugr_core::LogEntry]) -> ReadSets {
             continue;
         };
         match name.as_str() {
-            "docs_read" | "docs_read_range" => {
+            "docs_read" | "docs_read_range" | "fs_read" | "fs_read_range" => {
                 collect_read_path(&mut read, result);
             }
-            "docs_read_many" | "docs_read_range_many" | "docs_outline" => {
+            "docs_read_many"
+            | "docs_read_range_many"
+            | "docs_outline"
+            | "fs_read_many"
+            | "fs_outline" => {
                 if let Some(documents) = result.get("documents").and_then(Value::as_array) {
                     for document in documents {
                         collect_read_path(&mut read, document);
@@ -1755,6 +1770,42 @@ mod tests {
     }
 
     #[test]
+    fn embedded_definition_is_toolkit_parseable_and_overridable() {
+        let dir = test_docs_dir();
+        let config = DocsConfig {
+            root: dir.join("docs"),
+            trace_dir: dir.join("traces"),
+            trace_id: None,
+            model: "provider/override".to_string(),
+            base_url: "https://override.test/v1".to_string(),
+            api_key: "key".to_string(),
+            input_usd_per_m_tokens: 2.0,
+            output_usd_per_m_tokens: 3.0,
+            sampling: SamplingParams::new().with_temperature(0.0),
+        };
+        let root = DocsRoot::new(&config.root).unwrap();
+        let def = docs_definition(&config, root.root()).unwrap();
+        assert_eq!(def.agent.name, "hugr-docs");
+        assert_eq!(
+            def.models.base_url.as_deref(),
+            Some("https://override.test/v1")
+        );
+        assert_eq!(def.models.tiers["docs"].model, "provider/override");
+        assert_eq!(
+            def.traces.store.as_deref(),
+            Some(dir.join("traces").to_str().unwrap())
+        );
+        assert_eq!(def.tools[0].name, "fs_read");
+        assert_eq!(
+            def.tools[0].config["root"],
+            root.root().display().to_string()
+        );
+        assert!(def.system_prompt.unwrap().contains("fs_search"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn docs_status_serializes_as_snake_case_strings() {
         // The Python side branches on `result["status"]`; pin the exact strings
         // so a serde-attribute change can't silently break the contract.
@@ -1926,6 +1977,42 @@ mod tests {
                 json!({
                     "documents": [
                         { "path": "guide/c.md", "is_index": false, "headings": [] }
+                    ]
+                }),
+            ),
+        ];
+        let read = read_document_sets(&log);
+        assert_eq!(
+            read.documents,
+            BTreeSet::from([
+                "guide/a.md".to_string(),
+                "guide/b.md".to_string(),
+                "guide/c.md".to_string()
+            ])
+        );
+        assert_eq!(read.indexes, BTreeSet::from(["AI_INDEX.md".to_string()]));
+    }
+
+    #[test]
+    fn read_document_sets_counts_definition_fs_tools() {
+        let log = vec![
+            tool_result(0, "fs_read_range", json!({ "path": "guide/a.md" })),
+            tool_result(
+                1,
+                "fs_read_many",
+                json!({
+                    "documents": [
+                        { "path": "guide/b.md" },
+                        { "path": "AI_INDEX.md" }
+                    ]
+                }),
+            ),
+            tool_result(
+                2,
+                "fs_outline",
+                json!({
+                    "documents": [
+                        { "path": "guide/c.md", "headings": [] }
                     ]
                 }),
             ),

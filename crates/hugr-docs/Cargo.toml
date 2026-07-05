@@ -24,6 +24,7 @@ hugr-core = { workspace = true }
 hugr-agent = { workspace = true }
 hugr-host = { workspace = true }
 hugr-providers = { workspace = true }
+hugr-toolkit = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }

@@ -1,0 +1,34 @@
+[agent]
+name = "hugr-docs"
+version = "0.0.2"
+description = "Answers questions from a read-only documentation folder."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGR_DOCS_API_KEY"
+default = "docs"
+
+[models.docs]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
+temperature = 0.0
+
+[tools.fs_read]
+root = "."
+
+[traces]
+store = ".hugr-docs-traces"
+
+[answer.extra_schema]
+type = "object"
+required = ["answer", "related_documents"]
+
+[answer.extra_schema.properties.answer]
+type = "string"
+
+[answer.extra_schema.properties.related_documents]
+type = "array"
+
+[answer.extra_schema.properties.related_documents.items]
+type = "string"

@@ -1,8 +1,8 @@
 # hugr-docs
 
-`hugr-docs` is a specialized Hugr host for documentation retrieval. It demonstrates the same sans-IO brain running behind a very different product surface from `hugr-cli`: one folder in, one question in, one JSON answer out.
+`hugr-docs` is the compatibility packaging surface for the checked-in documentation retrieval definition at `crates/hugr-docs/definition`: one folder in, one question in, one JSON answer out.
 
-The crate does not depend on `hugr-cli`. It now runs through `hugr-agent` for the standard Ask/Answer contract, trace store, resume/fork semantics, and cost accounting, while keeping docs-specific read-only tools and answer post-processing in this crate.
+The crate does not depend on `hugr-cli`. It runs the definition through `hugr-toolkit`/`hugr-agent` for manifest parsing, read-only tool registration, the standard Ask/Answer contract, trace store, resume/fork semantics, and cost accounting; the crate itself keeps only the old CLI/Python argument compatibility and docs JSON post-processing.
 
 ## Usage
 
@@ -110,17 +110,16 @@ Estimated cost is reported in microUSD. With the defaults, each input token cost
 
 ## Tooling model
 
-The harness registers read-only documentation capabilities:
+The checked-in definition grants the toolkit's read-only `fs_read` library, scoped at runtime to the folder passed as `docs_path`. That grant registers:
 
-- `docs_list` lists files/directories under the docs root.
-- `docs_search` performs case-insensitive substring search over text-like files and returns path/line/snippet matches.
-- `docs_read` reads a single text document under the docs root.
-- `docs_read_range` reads a 1-based inclusive line range from a single text document.
-- `docs_read_many` reads multiple text documents in one call.
-- `docs_read_range_many` reads multiple line ranges in one call.
-- `docs_outline` returns markdown-style headings for a file or directory.
+- `fs_list` lists files/directories under the docs root.
+- `fs_search` performs case-insensitive substring search over text-like files and returns path/line/snippet matches.
+- `fs_read` reads a single text document under the docs root.
+- `fs_read_range` reads a 1-based inclusive line range from a single text document.
+- `fs_read_many` reads multiple text documents in one call.
+- `fs_outline` returns markdown-style headings for a file or directory.
 
-Each tool canonicalizes paths and rejects anything outside the folder passed as `docs_path`. There is no shell access, no HTTP tool, no write/edit tool, and no interactive permission mode. Because all registered tools are read-only, the host uses `AllowAll`; this is effectively safe-autonomous mode rather than the general CLI's risky yolo mode.
+Each toolkit tool canonicalizes paths and rejects anything outside the folder passed as `docs_path`. There is no shell access, no HTTP tool, no write/edit tool, and no interactive permission mode. Because all registered tools are read-only, the host uses `AllowAll`; this is effectively safe-autonomous mode rather than the general CLI's risky yolo mode.
 
 `AI_INDEX.md` files are treated as navigation aids. The model may use them during search, but the final `related_documents` list filters them out and counts them separately as `read_indexes`.
 

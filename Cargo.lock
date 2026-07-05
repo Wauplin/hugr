@@ -461,6 +461,7 @@ dependencies = [
  "hugr-core",
  "hugr-host",
  "hugr-providers",
+ "hugr-toolkit",
  "pyo3",
  "serde",
  "serde_json",
