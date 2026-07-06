@@ -13,7 +13,7 @@ A **subagent** is, at its essence, a system prompt plus a set of tools with decl
 
 The first such agent, [`hugr-docs`](crates/hugr-docs/) (a self-contained docs-Q&A agent with a CLI and Python binding), is the template the toolkit generalizes.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the vision and rationale, [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the concrete contracts (core §§1–17, subagent layer §§18–21), and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased plan.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the vision, design, and threat model, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for progress and the work plan.
 
 ## What a subagent definition looks like
 

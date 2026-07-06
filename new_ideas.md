@@ -1,0 +1,12 @@
+- Feedback mechanism between sub agents. After subagent session, the caller can send a small feedback "this was useful, this was not, this was what I asked, this was not, here is why, etc.". Subagent stores it in its traces and that's it. Then later we can analyze them back to improve the subagent (async mode, let's not try to use the feedback in real-time)
+- Optionally an agent should be able to have a shared memory between runs e.g. a shared scratchpad
+- Have a hugr subagent that reads all traces from another agent and tries to find patterns that could be defined as other skills / tools => used auto improves the initial subagent (lower prio). Goes with the feedback feature as well.
+- let's have a "new_ideas.md" file in which we can drop ideas as unstructured text. Let's update AGENTS.md so codex/claude can also add their -short- ideas while implementing to I can get a look at them and later add them to the roadmap
+- Detailed analytics (cost per request, cost per tool/subagent -never nested-, tokens in/out per tier, nb calls, etc.)
+- Hugr on the Hub:
+  - Store traces in buckets
+  - Run agents in Jobs / Sandbox
+  - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
+- Shared blobs between agents => make sure no local copy (can be huge in case of e.g a dataset)
+- Define cron job for an agent (I.e. a prompt + a cron formula)
+- Scratchpad, memory, traces, etc. For now we assume all of this is a normal local filesystem. But we must be able to swap different backends. Filesystem is an obvious backend. But can also be a postgre SQL db. Can be a local storage (if run in a browser). Can be anything able to manage data. 
