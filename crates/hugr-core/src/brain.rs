@@ -98,20 +98,6 @@ impl Brain {
                 self.state.set_model_override(selector);
                 self.checkpoint();
             }
-            Event::HookFired {
-                phase,
-                name,
-                result,
-                est_tokens,
-            } => {
-                self.append(Record::Hook {
-                    phase,
-                    name,
-                    result,
-                    est_tokens,
-                });
-                self.checkpoint();
-            }
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {

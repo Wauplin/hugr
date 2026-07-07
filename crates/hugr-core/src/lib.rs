@@ -52,7 +52,7 @@ mod state;
 
 pub use brain::Brain;
 pub use command::{Command, DoneReason, OutputEvent, PermissionRequest};
-pub use event::{Decision, Event, HookPhase, SteerMode, Version, VersionRef};
+pub use event::{Decision, Event, SteerMode, Version, VersionRef};
 pub use model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextCacheHint, ContextDisposition,
     ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,

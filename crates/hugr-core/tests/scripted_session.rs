@@ -80,7 +80,7 @@ fn user_model_tool_model_done() {
 }
 
 #[test]
-fn tool_results_are_projected_adjacent_to_tool_calls_even_with_hooks_between() {
+fn tool_results_are_projected_adjacent_to_tool_calls_even_with_records_between() {
     let mut brain = Brain::with_default_policy();
 
     let commands = run_script(
@@ -93,11 +93,11 @@ fn tool_results_are_projected_adjacent_to_tool_calls_even_with_hooks_between() {
                 usage: usage(),
                 est_tokens: 1,
             },
-            Event::HookFired {
-                phase: hugr_core::HookPhase::PreTool,
-                name: "builtin_pre_tool".to_string(),
-                result: json!({ "op": 1, "capability": "shell" }),
-                est_tokens: 1,
+            // A durable record lands between the model output and the tool
+            // result (here: a model-override record) — projection must still
+            // group the tool result adjacent to its originating tool call.
+            Event::ModelOverride {
+                selector: Some(ModelSelector::named("big")),
             },
             Event::CapabilityDone {
                 op: OpId(1),
@@ -128,13 +128,6 @@ fn tool_results_are_projected_adjacent_to_tool_calls_even_with_hooks_between() {
         followup.blocks[2].content.as_slice(),
         [ContentPart::ToolResult { id, .. }] if id == "call-1"
     ));
-    assert!(
-        followup
-            .blocks
-            .iter()
-            .skip(3)
-            .any(|block| matches!(block.role, Role::System))
-    );
 }
 
 #[test]
@@ -253,49 +246,6 @@ fn versioned_tool_calls_stamp_expected_version_and_route_conflict_retry() {
         retry_read,
         "conflict should be routed back so the model can re-read"
     );
-}
-
-#[test]
-fn hook_records_are_durable_and_projected() {
-    let mut brain = Brain::with_default_policy();
-    let commands = run_script(
-        &mut brain,
-        vec![
-            Event::HookFired {
-                phase: hugr_core::HookPhase::PreTool,
-                name: "lint".to_string(),
-                result: json!({ "warning": "about to run cargo_verify" }),
-                est_tokens: 4,
-            },
-            user("continue"),
-        ],
-    );
-
-    assert!(brain.state().log().iter().any(|entry| {
-        matches!(
-            &entry.record,
-            Record::Hook { name, .. } if name == "lint"
-        )
-    }));
-    let request = commands
-        .iter()
-        .find_map(|cmd| match cmd {
-            Command::StartModelCall { request, .. } => Some(request),
-            _ => None,
-        })
-        .expect("model request");
-    let rendered = request
-        .blocks
-        .iter()
-        .flat_map(|block| &block.content)
-        .filter_map(|part| match part {
-            ContentPart::Text(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(rendered.contains("Host hook"));
-    assert!(rendered.contains("about to run cargo_verify"));
 }
 
 #[test]

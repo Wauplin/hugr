@@ -512,28 +512,6 @@ impl TurnPolicy for StaticPolicy {
                         "durable summary projection",
                     );
                 }
-                Record::Hook {
-                    phase,
-                    name,
-                    result,
-                    est_tokens,
-                } => {
-                    let disposition = ContextDisposition::included(ContextBlock::new(
-                        Role::System,
-                        vec![ContentPart::Text(format!(
-                            "Host hook from durable log:{} ({phase:?}/{name}):\n{}",
-                            entry.seq.0, result
-                        ))],
-                    ));
-                    push(
-                        &mut totals,
-                        &mut entries,
-                        ContextSource::log_entry(entry.seq),
-                        *est_tokens,
-                        disposition,
-                        "host hook result from durable record",
-                    );
-                }
                 // OpEnded entries are bookkeeping (timing/cost); they do not
                 // contribute to model context, but the plan still explains why
                 // the block is omitted.
@@ -741,15 +719,6 @@ fn default_render_summary_record(seq: Seq, record: &Record) -> Option<String> {
             Some(format!("log:{} tool {}: {}", seq.0, name, result))
         }
         Record::Summary { text, .. } => Some(format!("log:{} summary: {}", seq.0, text)),
-        Record::Hook {
-            phase,
-            name,
-            result,
-            ..
-        } => Some(format!(
-            "log:{} hook {:?}/{}: {}",
-            seq.0, phase, name, result
-        )),
         // Turn-control / bookkeeping records contribute nothing to a summary.
         Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
     }
@@ -771,10 +740,7 @@ fn summary_text(output: &ModelOutput) -> String {
 fn is_compactable_record(record: &Record) -> bool {
     matches!(
         record,
-        Record::UserMessage { .. }
-            | Record::ModelOutput { .. }
-            | Record::ToolResult { .. }
-            | Record::Hook { .. }
+        Record::UserMessage { .. } | Record::ModelOutput { .. } | Record::ToolResult { .. }
     )
 }
 

@@ -137,16 +137,6 @@ pub enum Record {
         est_tokens_out: u32,
     },
 
-    /// A deterministic host hook result. Hooks can add context or warnings, but
-    /// never mutate core internals (ROADMAP_2 D10).
-    Hook {
-        phase: crate::event::HookPhase,
-        name: String,
-        result: Value,
-        #[serde(default)]
-        est_tokens: u32,
-    },
-
     /// An operation ended; carries per-op metadata (timing, cost, selector) so
     /// latency and spend are queryable from the trace itself (ARCHITECTURE §4.1).
     OpEnded {
@@ -166,7 +156,7 @@ impl Record {
             | Record::ToolResult { op, .. }
             | Record::Summary { op, .. }
             | Record::OpEnded { op, .. } => Some(*op),
-            Record::UserMessage { .. } | Record::ModelOverride { .. } | Record::Hook { .. } => None,
+            Record::UserMessage { .. } | Record::ModelOverride { .. } => None,
         }
     }
 
@@ -178,7 +168,6 @@ impl Record {
             | Record::ModelOutput { est_tokens, .. }
             | Record::ToolResult { est_tokens, .. } => Some(*est_tokens),
             Record::Summary { est_tokens_out, .. } => Some(*est_tokens_out),
-            Record::Hook { est_tokens, .. } => Some(*est_tokens),
             Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
         }
     }
