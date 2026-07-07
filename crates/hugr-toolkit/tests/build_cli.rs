@@ -110,14 +110,14 @@ async fn embedded_definition_self_describes() {
 #[test]
 #[ignore = "invokes cargo build; slow"]
 fn real_build_produces_a_runnable_binary() {
-    use hugr_toolkit::build::{BuildOptions, build_cli};
+    use hugr_toolkit::build::{BuildOptions, build};
 
     let (_, src) = scaffold_bundle("bcli-e2e", Template::Blank);
     let def = AgentDefinition::load(&src).unwrap();
     let out = std::env::temp_dir().join(format!("hugr-bcli-out-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
 
-    let outcome = build_cli(
+    let outcome = build(
         &def,
         &BuildOptions {
             out_dir: out.clone(),
@@ -125,7 +125,7 @@ fn real_build_produces_a_runnable_binary() {
         },
     )
     .expect("build succeeds");
-    let binary = outcome.binary.expect("cli surface produces a binary");
+    let binary = outcome.binary;
     assert!(binary.exists(), "binary at {}", binary.display());
 
     // Run `--describe` from a dir with no repo checkout in scope; point the
@@ -142,110 +142,20 @@ fn real_build_produces_a_runnable_binary() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// End-to-end: generate the crate surface and `cargo check` it (done inside
-/// `build_crate`). Ignored — invokes cargo.
-#[test]
-#[ignore = "invokes cargo check; slow"]
-fn real_crate_surface_compiles() {
-    use hugr_toolkit::build::{BuildOptions, build_crate};
-
-    let (_, src) = scaffold_bundle("bcli-crate", Template::Blank);
-    let def = AgentDefinition::load(&src).unwrap();
-    let out = std::env::temp_dir().join(format!("hugr-bcli-crate-out-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&out);
-
-    let outcome = build_crate(
-        &def,
-        &BuildOptions {
-            out_dir: out.clone(),
-            release: false,
-        },
-    )
-    .expect("crate builds");
-    assert!(outcome.binary.is_none(), "crate surface has no binary");
-    assert!(outcome.crate_dir.join("src/lib.rs").exists());
-
-    // A downstream consumer path-depends on the generated crate and calls
-    // `ask` natively (the T2.2 exit criterion). `cargo check` proves the typed
-    // API is usable without serialization.
-    let consumer = out.join("consumer");
-    std::fs::create_dir_all(consumer.join("src")).unwrap();
-    let lib = outcome.crate_dir.display();
-    std::fs::write(
-        consumer.join("Cargo.toml"),
-        format!(
-            "[package]\nname = \"consumer\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
-             [workspace]\n\n[dependencies]\n\
-             bcli-crate-agent = {{ path = \"{lib}\" }}\n\
-             tokio = {{ version = \"1\", features = [\"rt-multi-thread\", \"macros\"] }}\n"
-        ),
-    )
-    .unwrap();
-    std::fs::write(
-        consumer.join("src/main.rs"),
-        "#[tokio::main]\nasync fn main() {\n    \
-         let _answer = bcli_crate::ask(bcli_crate::Ask::new(\"hi\")).await;\n    \
-         let _loaded = bcli_crate::load().await;\n}\n",
-    )
-    .unwrap();
-    let status = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()))
-        .arg("check")
-        .current_dir(&consumer)
-        .status()
-        .expect("cargo check consumer");
-    assert!(
-        status.success(),
-        "downstream consumer compiles against the generated crate"
-    );
-
-    let _ = std::fs::remove_dir_all(&src);
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-/// End-to-end: generate the Python (PyO3) surface and `cargo check` it. Ignored
-/// — invokes cargo. Building an actual wheel needs maturin + a Python toolchain
-/// (a downstream `maturin build` step), so this proves the generated extension
-/// module compiles rather than installing it.
-#[test]
-#[ignore = "invokes cargo check; slow"]
-fn real_python_surface_compiles() {
-    use hugr_toolkit::build::{BuildOptions, build_python};
-
-    let (_, src) = scaffold_bundle("bcli-py", Template::Blank);
-    let def = AgentDefinition::load(&src).unwrap();
-    let out = std::env::temp_dir().join(format!("hugr-bcli-py-out-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&out);
-
-    let outcome = build_python(
-        &def,
-        &BuildOptions {
-            out_dir: out.clone(),
-            release: false,
-        },
-    )
-    .expect("python surface builds");
-    assert!(outcome.binary.is_none());
-    assert!(outcome.crate_dir.join("pyproject.toml").exists());
-    assert!(outcome.crate_dir.join("src/lib.rs").exists());
-
-    let _ = std::fs::remove_dir_all(&src);
-    let _ = std::fs::remove_dir_all(&out);
-}
-
 /// End-to-end: build the cli binary and drive its `--mcp-serve` mode over real
 /// stdio, exercising initialize → tools/call(ask) with `trace_id` round-tripping
 /// across two calls (the T2.4 exit criterion). Ignored — invokes cargo build.
 #[test]
 #[ignore = "invokes cargo build; slow"]
 fn real_mcp_serve_round_trips_over_stdio() {
-    use hugr_toolkit::build::{BuildOptions, build_cli};
+    use hugr_toolkit::build::{BuildOptions, build};
     use std::io::{BufRead, BufReader, Write};
 
     let (_, src) = scaffold_bundle("bcli-mcp", Template::Blank);
     let def = AgentDefinition::load(&src).unwrap();
     let out = std::env::temp_dir().join(format!("hugr-bcli-mcp-out-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
-    let binary = build_cli(
+    let binary = build(
         &def,
         &BuildOptions {
             out_dir: out.clone(),
@@ -253,8 +163,7 @@ fn real_mcp_serve_round_trips_over_stdio() {
         },
     )
     .expect("build")
-    .binary
-    .expect("cli binary");
+    .binary;
 
     let home = out.join("home");
     let mut child = std::process::Command::new(&binary)

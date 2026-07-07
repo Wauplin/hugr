@@ -12,7 +12,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
 use hugr_toolkit::AgentDefinition;
-use hugr_toolkit::build::{BuildOptions, Surface, build as run_build};
+use hugr_toolkit::build::{BuildOptions, build as run_build};
 use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
 use hugr_toolkit::traces::render_lineage;
@@ -33,7 +33,8 @@ enum Command {
     Run(RunArgs),
     /// Scaffold a new definition folder from a template.
     New(NewArgs),
-    /// Compile a definition into a self-contained artifact (cli/crate/python).
+    /// Compile a definition into one self-contained CLI binary (also serves
+    /// `--mcp-serve`).
     Build(BuildArgs),
     /// List an agent's stored traces as a lineage tree (or prune / size them).
     Traces(TracesArgs),
@@ -93,9 +94,6 @@ struct ReplayArgs {
 struct BuildArgs {
     /// Path to the agent definition folder (containing hugr.toml).
     agent_dir: PathBuf,
-    /// Target surface: cli | crate | python | mcp.
-    #[arg(long, default_value = "cli")]
-    surface: String,
     /// Where to write the generated shim crate (built binary lands under its
     /// `target/`). Defaults to `<agent-dir>/dist`.
     #[arg(long)]
@@ -303,13 +301,6 @@ fn new(args: NewArgs) {
 /// `hugr build` is a developer command (like `new`): progress on stderr,
 /// non-zero exit on failure — not the ask/answer contract surface.
 fn build(args: BuildArgs) {
-    let Some(surface) = Surface::parse(&args.surface) else {
-        eprintln!(
-            "error: unknown surface `{}` (supported: cli, crate)",
-            args.surface
-        );
-        std::process::exit(2);
-    };
     let def = match AgentDefinition::load(&args.agent_dir) {
         Ok(def) => def,
         Err(err) => {
@@ -327,33 +318,19 @@ fn build(args: BuildArgs) {
         release: args.release,
     };
 
-    eprintln!("building `{}` (surface={})…", def.agent.name, args.surface);
-    match run_build(&def, surface, &opts) {
-        Ok(outcome) => match outcome.binary {
-            Some(binary) => {
-                eprintln!("built {} ✓", binary.display());
-                match surface {
-                    Surface::Mcp => eprintln!(
-                        "serve it: {} --mcp-serve  (register this stdio command in your MCP client)",
-                        binary.display()
-                    ),
-                    _ => eprintln!(
-                        "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
-                        binary.display()
-                    ),
-                }
-            }
-            None => {
-                eprintln!("generated crate at {} ✓", outcome.crate_dir.display());
-                match surface {
-                    Surface::Python => eprintln!(
-                        "build a wheel: (cd {} && maturin build --release), then `pip install` it",
-                        outcome.crate_dir.display()
-                    ),
-                    _ => eprintln!("depend on it by path from your orchestrator, then call `ask`"),
-                }
-            }
-        },
+    eprintln!("building `{}`…", def.agent.name);
+    match run_build(&def, &opts) {
+        Ok(outcome) => {
+            eprintln!("built {} ✓", outcome.binary.display());
+            eprintln!(
+                "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
+                outcome.binary.display()
+            );
+            eprintln!(
+                "serve MCP: {} --mcp-serve  (register this stdio command in your MCP client)",
+                outcome.binary.display()
+            );
+        }
         Err(err) => {
             eprintln!("error: {err}");
             std::process::exit(1);

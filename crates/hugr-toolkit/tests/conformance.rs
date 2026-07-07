@@ -7,20 +7,19 @@
 //! tool set), the status of each ask, and the trace-lineage relationships
 //! (a follow-up and a fork each write fresh, distinct trace ids).
 //!
-//! The whole suite is `#[ignore]`d: it compiles real artifacts (the cli/mcp
-//! binary, and — when maturin is present — a Python wheel), which is slow. Run
-//! it with `cargo test -p hugr-toolkit --test conformance -- --ignored`. It is
-//! the gate for `hugr build` changes.
+//! The whole suite is `#[ignore]`d: it compiles a real cli/mcp binary, which
+//! is slow. Run it with `cargo test -p hugr-toolkit --test conformance --
+//! --ignored`. It is the gate for `hugr build` changes.
 //!
 //! No network: with no reachable model every ask is a `status: "error"` answer,
 //! but a trace still persists — so the *lineage* invariants (the point of the
 //! conformance check) hold identically across surfaces.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use hugr_agent::Ask;
-use hugr_toolkit::build::{BuildOptions, Surface, build};
+use hugr_toolkit::build::{BuildOptions, build};
 use hugr_toolkit::manifest::AgentDefinition;
 use hugr_toolkit::runtime::build_agent;
 use hugr_toolkit::scaffold::{Template, scaffold_files};
@@ -62,28 +61,19 @@ fn every_surface_agrees_on_the_scenario() {
     // Build the cli/mcp binary once (the mcp surface is the same artifact).
     let binary = build(
         &def,
-        Surface::Cli,
         &BuildOptions {
             out_dir: base.join("dist"),
             release: false,
         },
     )
     .expect("cli build")
-    .binary
-    .expect("cli binary");
+    .binary;
 
     let cli = cli_result(&binary, &base.join("home-cli"));
     assert_eq!(cli, reference, "cli surface diverges from reference");
 
     let mcp = mcp_result(&binary, &base.join("home-mcp"));
     assert_eq!(mcp, reference, "mcp surface diverges from reference");
-
-    // Python: only when maturin + python3 are available. A skip is logged (no
-    // silent cap) — the Python round-trip is otherwise covered by T2.3.
-    match python_result(&def, &base) {
-        Some(py) => assert_eq!(py, reference, "python surface diverges from reference"),
-        None => println!("python surface: SKIPPED (maturin or python3 unavailable)"),
-    }
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -187,105 +177,6 @@ fn mcp_result(binary: &Path, home: &Path) -> Normalized {
     result
 }
 
-/// The scenario over a maturin-built, pip-installed Python wheel. Returns `None`
-/// when maturin or python3 is unavailable.
-fn python_result(def: &AgentDefinition, base: &Path) -> Option<Normalized> {
-    if which("maturin").is_none() || which("python3").is_none() {
-        return None;
-    }
-    let outcome = build(
-        def,
-        Surface::Python,
-        &BuildOptions {
-            out_dir: base.join("pydist"),
-            release: true,
-        },
-    )
-    .expect("python build");
-    let crate_dir = outcome.crate_dir;
-    let wheels = base.join("wheels");
-    let status = Command::new("maturin")
-        .args(["build", "--release", "-o"])
-        .arg(&wheels)
-        .current_dir(&crate_dir)
-        .status()
-        .ok()?;
-    if !status.success() {
-        println!("python surface: maturin build failed; skipping");
-        return None;
-    }
-    let venv = base.join("venv");
-    Command::new("python3")
-        .args(["-m", "venv"])
-        .arg(&venv)
-        .status()
-        .ok()?;
-    let pip = venv.join("bin/pip");
-    let py = venv.join("bin/python3");
-    let wheel = std::fs::read_dir(&wheels)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "whl"))?;
-    Command::new(&pip)
-        .arg("install")
-        .arg("-q")
-        .arg(&wheel)
-        .status()
-        .ok()?;
-
-    let module = def.agent.name.replace('-', "_");
-    let home = base.join("home-py");
-    let script = format!(
-        r#"
-import json, {module} as m
-d = m.describe()
-a1 = m.answer("q1")
-a2 = m.answer("q2", trace_id=a1["trace_id"])
-a3 = m.answer("q3", trace_id=a1["trace_id"])
-tools = sorted(t["name"] for t in d["tools"])
-print(json.dumps({{
-  "name": d["name"], "tools": tools,
-  "statuses": [a1["status"], a2["status"], a3["status"]],
-  "traces": [a1["trace_id"], a2["trace_id"], a3["trace_id"]],
-}}))
-"#
-    );
-    let out = Command::new(&py)
-        .arg("-c")
-        .arg(&script)
-        .env("HUGR_AGENT_HOME", &home)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        println!(
-            "python surface: script failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let traces: Vec<&str> = v["traces"]
-        .as_array()?
-        .iter()
-        .map(|t| t.as_str().unwrap())
-        .collect();
-    Some(Normalized {
-        describe_name: v["name"].as_str()?.to_string(),
-        tools: v["tools"]
-            .as_array()?
-            .iter()
-            .map(|t| t.as_str().unwrap().to_string())
-            .collect(),
-        statuses: v["statuses"]
-            .as_array()?
-            .iter()
-            .map(|s| s.as_str().unwrap().to_string())
-            .collect(),
-        distinct_traces: distinct(&traces),
-    })
-}
-
 // --- helpers ---
 
 fn normalized_from(describe: &serde_json::Value, answers: &[&serde_json::Value]) -> Normalized {
@@ -326,11 +217,4 @@ fn run_json(binary: &Path, args: &[&str], home: &Path) -> serde_json::Value {
         .expect("run binary");
     assert!(out.status.success(), "exit 0 for {args:?}");
     serde_json::from_slice(&out.stdout).expect("json stdout")
-}
-
-fn which(cmd: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(cmd))
-        .find(|p| p.is_file())
 }
