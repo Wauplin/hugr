@@ -78,12 +78,6 @@ pub enum DoneReason {
 pub enum OutputEvent {
     /// A chunk of streamed assistant text (for live rendering).
     ModelText { op: OpId, text: String },
-    /// A chunk of streamed model reasoning/thinking.
-    ModelReasoning { op: OpId, text: String },
-    /// The model began a tool call (id + name known before args complete).
-    ToolCallStarted { op: OpId, id: String, name: String },
-    /// A streamed chunk from a capability (e.g. a line of stdout).
-    ToolChunk { op: OpId, chunk: Value },
     /// A free-form notice for logs/status lines.
     Notice(String),
 }

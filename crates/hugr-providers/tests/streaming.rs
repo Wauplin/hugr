@@ -1,7 +1,7 @@
 //! Drives [`OpenAiAdapter`] against a local mock SSE server, exercising the real
 //! reqwest streaming + SSE-parsing path end-to-end (no external network).
 
-use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams, StopReason};
+use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams};
 use hugr_host::{ModelAdapter, ModelSink};
 use hugr_providers::OpenAiAdapter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -55,7 +55,7 @@ data: [DONE]\n";
         .expect("adapter call should succeed");
 
     assert_eq!(output.text, "Hello, world");
-    assert_eq!(output.stop, StopReason::EndTurn);
+    assert_eq!(output.stop, "end_turn");
     assert!(output.tool_calls.is_empty());
     assert_eq!(usage.input_tokens, 11);
     assert_eq!(usage.output_tokens, 4);
@@ -92,7 +92,7 @@ data: [DONE]\n";
         .await
         .expect("adapter call should succeed");
 
-    assert_eq!(output.stop, StopReason::ToolUse);
+    assert_eq!(output.stop, "tool_use");
     assert_eq!(output.tool_calls.len(), 1);
     let call = &output.tool_calls[0];
     assert_eq!(call.id, "call-7");

@@ -10,9 +10,7 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hugr_core::{
-    ContentPart, ModelOutput, ModelRequest, Role, SamplingParams, StopReason, ToolCall, Usage,
-};
+use hugr_core::{ContentPart, ModelOutput, ModelRequest, Role, SamplingParams, ToolCall, Usage};
 use hugr_host::{ModelAdapter, ModelSink};
 use serde_json::{Value, json};
 
@@ -274,7 +272,7 @@ impl ModelAdapter for OpenAiAdapter {
         };
         consume_sse(resp.bytes_stream(), &mut acc, sink).await?;
 
-        Ok(acc.finish(sink))
+        Ok(acc.finish())
     }
 }
 
@@ -348,7 +346,7 @@ struct Accumulator {
     text: String,
     reasoning: String,
     tool_calls: BTreeMap<u64, ToolAccum>,
-    stop: Option<StopReason>,
+    stop: Option<String>,
     input_tokens: u64,
     output_tokens: u64,
     /// Real cost (USD) read from the router's response, when it reports one. The
@@ -422,16 +420,9 @@ impl Accumulator {
                             }
                         }
                         if let Some(args) = function.get("arguments").and_then(Value::as_str) {
+                            // Args are consolidated internally; only the announce
+                            // (id + name) streams as a live delta.
                             entry.args.push_str(args);
-                            // Stream the live delta only once the call is announced
-                            // (so it has a stable, non-empty id to attach to). Args
-                            // that arrive before the announce — e.g. a server that
-                            // streams `arguments` before the `id`/`name` — are
-                            // buffered and flushed once at announce time below, so
-                            // nothing is lost and nothing is emitted twice.
-                            if !args.is_empty() && entry.announced {
-                                sink.tool_call_args(&entry.id, args);
-                            }
                         }
                     }
                     // Announce the tool call once its name is known. Guarantee a
@@ -445,10 +436,6 @@ impl Accumulator {
                         }
                         entry.announced = true;
                         sink.tool_call_start(&entry.id, &entry.name);
-                        // Flush any args buffered before the announce, in one delta.
-                        if !entry.args.is_empty() {
-                            sink.tool_call_args(&entry.id, &entry.args);
-                        }
                     }
                 }
             }
@@ -459,7 +446,7 @@ impl Accumulator {
         }
     }
 
-    fn finish(self, sink: &ModelSink) -> (ModelOutput, Usage) {
+    fn finish(self) -> (ModelOutput, Usage) {
         let mut calls = Vec::new();
         for (index, tool) in self.tool_calls.into_iter() {
             // Guarantee a stable, non-empty id even for a call the server never
@@ -471,7 +458,6 @@ impl Accumulator {
             } else {
                 tool.id
             };
-            sink.tool_call_end(&id);
             let args = if tool.args.trim().is_empty() {
                 json!({})
             } else {
@@ -481,7 +467,7 @@ impl Accumulator {
         }
 
         let reasoning = (!self.reasoning.is_empty()).then_some(self.reasoning);
-        let stop = self.stop.unwrap_or(StopReason::EndTurn);
+        let stop = self.stop.unwrap_or_else(|| "end_turn".to_string());
         let output = ModelOutput::new(self.text, reasoning, calls, stop);
 
         // Prefer the router's real cost; only fall back to the static price
@@ -551,12 +537,12 @@ fn estimate_cost(input_tokens: u64, output_tokens: u64, model: &str) -> Option<f
     Some(cost)
 }
 
-fn map_stop(finish_reason: &str) -> StopReason {
+fn map_stop(finish_reason: &str) -> String {
     match finish_reason {
-        "stop" => StopReason::EndTurn,
-        "tool_calls" | "function_call" => StopReason::ToolUse,
-        "length" => StopReason::MaxTokens,
-        other => StopReason::Other(other.to_string()),
+        "stop" => "end_turn".to_string(),
+        "tool_calls" | "function_call" => "tool_use".to_string(),
+        "length" => "max_tokens".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -717,10 +703,10 @@ mod tests {
             &sink,
         );
 
-        let (output, usage) = acc.finish(&sink);
+        let (output, usage) = acc.finish();
         assert_eq!(output.text, "Hello");
         assert!(output.tool_calls.is_empty());
-        assert_eq!(output.stop, StopReason::EndTurn);
+        assert_eq!(output.stop, "end_turn");
         assert_eq!(usage, Usage::new(7, 3));
 
         // Streamed deltas were forwarded to the sink.
@@ -756,7 +742,7 @@ mod tests {
             &sink,
         );
 
-        let (_output, usage) = acc.finish(&sink);
+        let (_output, usage) = acc.finish();
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.output_tokens, 1000);
         // Cost comes straight from the response, tagged as router-sourced.
@@ -783,7 +769,7 @@ mod tests {
             &sink,
         );
 
-        let (_output, usage) = acc.finish(&sink);
+        let (_output, usage) = acc.finish();
         assert_eq!(usage.extra["cost"], json!(12.5));
         assert_eq!(usage.extra["cost_source"], json!("estimated"));
     }
@@ -806,7 +792,7 @@ mod tests {
             &sink,
         );
 
-        let (_output, usage) = acc.finish(&sink);
+        let (_output, usage) = acc.finish();
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.output_tokens, 20);
         assert!(usage.extra.is_null(), "no cost should be guessed");
@@ -847,8 +833,8 @@ mod tests {
             &sink,
         );
 
-        let (output, _usage) = acc.finish(&sink);
-        assert_eq!(output.stop, StopReason::ToolUse);
+        let (output, _usage) = acc.finish();
+        assert_eq!(output.stop, "tool_use");
         assert_eq!(output.tool_calls.len(), 1);
         let call = &output.tool_calls[0];
         assert_eq!(call.id, "call-9");
@@ -882,10 +868,10 @@ mod tests {
         let stream = futures_util::stream::iter(chunks);
         consume_sse(stream, &mut acc, &sink).await.unwrap();
 
-        let (output, usage) = acc.finish(&sink);
+        let (output, usage) = acc.finish();
         assert_eq!(output.text, "hi");
-        // `length` must survive as MaxTokens, not degrade to the EndTurn default.
-        assert_eq!(output.stop, StopReason::MaxTokens);
+        // `length` must survive as max_tokens, not degrade to the end_turn default.
+        assert_eq!(output.stop, "max_tokens");
         // The usage chunk on the unterminated line must not fold to 0/0.
         assert_eq!(usage.input_tokens, 7);
         assert_eq!(usage.output_tokens, 3);
@@ -923,7 +909,7 @@ mod tests {
             &sink,
         );
 
-        let (output, _usage) = acc.finish(&sink);
+        let (output, _usage) = acc.finish();
         assert_eq!(output.tool_calls.len(), 1);
         let call = &output.tool_calls[0];
         assert_eq!(call.id, "call_0", "synthesized a stable id from the index");
@@ -934,24 +920,12 @@ mod tests {
             "buffered args reassemble"
         );
 
-        // No streamed delta may carry an empty id, and the args reassemble from
-        // the deltas exactly once (no loss, no duplication).
+        // No streamed announce may carry an empty id.
         drop(sink);
-        let mut streamed_args = String::new();
         while let Ok(Event::ModelDelta { delta, .. }) = rx.try_recv() {
-            match delta {
-                ModelDelta::ToolCallStart { id, .. } => assert!(!id.is_empty()),
-                ModelDelta::ToolCallEnd { id } => assert!(!id.is_empty()),
-                ModelDelta::ToolCallArgsDelta { id, json_fragment } => {
-                    assert!(!id.is_empty(), "args delta must have a non-empty id");
-                    streamed_args.push_str(&json_fragment);
-                }
-                _ => {}
+            if let ModelDelta::ToolCallStart { id, .. } = delta {
+                assert!(!id.is_empty());
             }
         }
-        assert_eq!(
-            streamed_args, "{\"cmd\":\"ls\"}",
-            "args streamed once, in full"
-        );
     }
 }

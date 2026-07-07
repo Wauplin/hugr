@@ -45,21 +45,10 @@ pub fn effectful(commands: &[Command]) -> Vec<&Command> {
         .collect()
 }
 
-/// Convenience for a user message event with the default steer mode.
+/// Convenience for a user message event.
 pub fn user(text: &str) -> Event {
     Event::UserInput {
         content: json!(text),
-        mode: hugr_core::SteerMode::Queue,
-        est_tokens: 1,
-    }
-}
-
-/// Convenience for a mid-turn steering interrupt (ARCHITECTURE §4.6): cancel
-/// in-flight ops, append the input, resume into a fresh turn once they drain.
-pub fn user_interrupt(text: &str) -> Event {
-    Event::UserInput {
-        content: json!(text),
-        mode: hugr_core::SteerMode::Interrupt,
         est_tokens: 1,
     }
 }

@@ -33,9 +33,6 @@ pub struct BrainState {
     outbox: Vec<Command>,
     /// Latest injected time (ARCHITECTURE §6.1).
     now: Timestamp,
-    /// Set when an interrupt cancelled in-flight ops and a fresh turn must start
-    /// once they drain.
-    pending_resume: bool,
     /// Set when a `UserAbort` arrived while ops were in flight (ARCHITECTURE
     /// §4.3/§4.6). The abort's `Cancel` commands race each op's own terminal
     /// event; while latched, terminal events fold their records but start no
@@ -59,10 +56,7 @@ impl BrainState {
     /// (ARCHITECTURE §14): a child sub-agent (or a resumed session) starts from a
     /// copy of a log prefix. `BrainState` is a fold over the log (§3.1), so we
     /// take the log verbatim and derive the counters/clock/read-set from it.
-    /// Nothing is in flight (a consolidated prefix has no open ops), and
-    /// `pending_resume` is likewise derived-`false`: an interrupt-resume latch
-    /// only exists while ops are in flight, so a consolidated prefix — by that
-    /// same contract — has nothing pending to resume.
+    /// Nothing is in flight (a consolidated prefix has no open ops).
     ///
     pub(crate) fn from_log(log: Vec<LogEntry>) -> Self {
         let next_seq = log.last().map(|e| e.seq.0 + 1).unwrap_or(0);
@@ -164,14 +158,6 @@ impl BrainState {
     /// this order leaks into emitted `Cancel` commands (ARCHITECTURE §6.2).
     pub(crate) fn inflight_op_ids(&self) -> Vec<OpId> {
         self.inflight.keys().copied().collect()
-    }
-
-    pub(crate) fn pending_resume(&self) -> bool {
-        self.pending_resume
-    }
-
-    pub(crate) fn set_pending_resume(&mut self, v: bool) {
-        self.pending_resume = v;
     }
 
     pub(crate) fn abort_requested(&self) -> bool {

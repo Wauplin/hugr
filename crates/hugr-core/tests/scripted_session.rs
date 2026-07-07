@@ -95,7 +95,6 @@ fn tool_results_are_projected_adjacent_to_tool_calls_even_with_records_between()
             // still group the tool result adjacent to its originating call.
             Event::UserInput {
                 content: json!("also check the README"),
-                mode: hugr_core::SteerMode::Queue,
                 est_tokens: 1,
             },
             Event::CapabilityDone {
@@ -354,7 +353,6 @@ fn context_plan_explains_dispositions_and_renders_request() {
     assert_eq!(request.blocks.len(), 2);
     assert_eq!(plan.totals.used_tokens, 4);
     assert_eq!(plan.totals.omitted_tokens, 0);
-    assert!(plan.cache_hints.is_empty());
 
     assert!(
         matches!(plan.entries[0].source, ContextSource::LogEntry { .. })
@@ -639,51 +637,4 @@ fn model_error_replay_is_deterministic() {
         },
         deferred,
     );
-}
-
-/// A prior log heavy enough to cross a small high-water budget: one user turn
-/// and one assistant answer.
-/// Queue vs interrupt input write distinguishable `UserMessage` records: the
-/// fold is no longer lossy about how input steered the turn (log fidelity).
-#[test]
-fn user_message_records_carry_their_steer_mode() {
-    let mut brain = Brain::with_default_policy();
-    run_script(
-        &mut brain,
-        vec![
-            user("first"),          // idle → Queue
-            user_interrupt("stop"), // mid-turn interrupt
-            Event::OpCancelled { op: OpId(0) },
-        ],
-    );
-    let steers: Vec<_> = brain
-        .state()
-        .log()
-        .iter()
-        .filter_map(|entry| match &entry.record {
-            Record::UserMessage { steer, .. } => Some(*steer),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        steers,
-        vec![hugr_core::SteerMode::Queue, hugr_core::SteerMode::Interrupt]
-    );
-}
-
-/// Serde back-compat: an old trace's `UserMessage` JSON (no `steer` key) still
-/// loads, defaulting to `Queue`.
-#[test]
-fn old_user_message_json_without_steer_defaults_to_queue() {
-    let record: Record = serde_json::from_value(json!({
-        "UserMessage": { "text": "hi", "est_tokens": 3 }
-    }))
-    .unwrap();
-    assert!(matches!(
-        record,
-        Record::UserMessage {
-            steer: hugr_core::SteerMode::Queue,
-            ..
-        }
-    ));
 }

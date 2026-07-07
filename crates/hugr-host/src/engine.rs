@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
     Brain, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
-    SamplingParams, StaticPolicy, SteerMode, Timestamp, Value,
+    SamplingParams, StaticPolicy, Timestamp, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -149,7 +149,6 @@ impl Engine {
     pub async fn user_turn(&mut self, text: String) {
         self.submit(Event::UserInput {
             content: json!(text),
-            mode: SteerMode::Queue,
             est_tokens: estimate_text_tokens(&text),
         });
         self.drive_to_idle().await;

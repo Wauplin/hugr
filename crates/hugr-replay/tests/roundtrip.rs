@@ -6,8 +6,7 @@
 //! build on: a trace persisted today reconstructs the same session later.
 
 use hugr_core::{
-    Decision, Event, LogEntry, ModelOutput, OpId, Record, Seq, SteerMode, Timestamp, ToolCall,
-    Usage,
+    Decision, Event, LogEntry, ModelOutput, OpId, Record, Seq, Timestamp, ToolCall, Usage,
 };
 use hugr_replay::{BlobManifest, BlobRef, FORMAT_VERSION, Trace};
 use serde_json::json;
@@ -22,7 +21,6 @@ fn sample_events() -> Vec<Event> {
         },
         Event::UserInput {
             content: json!("run `echo hi` and tell me the output"),
-            mode: SteerMode::Queue,
             est_tokens: 1,
         },
         Event::ModelDelta {
@@ -71,7 +69,6 @@ fn sample_log() -> Vec<LogEntry> {
             Record::UserMessage {
                 text: "run `echo hi` and tell me the output".to_string(),
                 est_tokens: 10,
-                steer: SteerMode::Queue,
             },
         ),
         LogEntry::new(
@@ -138,7 +135,7 @@ fn sample_log() -> Vec<LogEntry> {
                     "meta": {
                         "started_at": 1_022,
                         "ended_at": 1_031,
-                        "model": { "Named": "big" },
+                        "model": "big",
                         "usage": { "input_tokens": 60, "output_tokens": 5, "extra": null },
                         "extra": { "cost": 0.0003, "cost_source": "router" }
                     }

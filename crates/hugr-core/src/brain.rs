@@ -16,7 +16,7 @@
 use serde_json::json;
 
 use crate::command::{Command, DoneReason, OutputEvent, PermissionRequest};
-use crate::event::{Decision, Event, SteerMode};
+use crate::event::{Decision, Event};
 use crate::model::{ContextPlan, ModelDelta, ModelOutput, ToolCall, Usage};
 use crate::policy::{StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Value};
@@ -82,9 +82,8 @@ impl Brain {
         match event {
             Event::UserInput {
                 content,
-                mode,
                 est_tokens,
-            } => self.on_user_input(content, mode, est_tokens),
+            } => self.on_user_input(content, est_tokens),
             Event::UserAbort => self.on_user_abort(),
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
@@ -96,9 +95,9 @@ impl Brain {
             } => self.on_model_done(op, output, usage, est_tokens),
             Event::ModelError { op, error } => self.on_model_error(op, error),
 
-            Event::CapabilityChunk { op, chunk } => {
-                self.emit(OutputEvent::ToolChunk { op, chunk });
-            }
+            // Capability chunks are transport-only progress; nothing durable
+            // and no reduced output — the host may render them itself.
+            Event::CapabilityChunk { .. } => {}
             Event::CapabilityDone {
                 op,
                 result,
@@ -126,40 +125,24 @@ impl Brain {
     // Event handlers
     // ========================================================================
 
-    fn on_user_input(&mut self, content: Value, mode: SteerMode, est_tokens: u32) {
+    fn on_user_input(&mut self, content: Value, est_tokens: u32) {
         self.append(Record::UserMessage {
             text: stringify(&content),
             est_tokens,
-            steer: mode,
         });
-
+        // Idle: start a turn immediately. Mid-turn input just queues: the next
+        // turn boundary's projection sees the new message (ARCHITECTURE §4.6).
         if !self.state.is_busy() {
-            // Idle: start a turn immediately, regardless of mode.
             self.start_model_turn();
-            return;
-        }
-
-        match mode {
-            // Append now; the next turn boundary picks it up (its projection
-            // sees the new message). No new mechanism needed.
-            SteerMode::Queue | SteerMode::AppendAndContinue => {}
-            // Cancel in-flight ops; once they drain (partial work logged first),
-            // a fresh turn starts that sees both the partial work and the input.
-            SteerMode::Interrupt => {
-                self.state.set_pending_resume(true);
-                self.cancel_all_inflight();
-            }
         }
     }
 
     /// A pure control-signal abort (ARCHITECTURE §4.6). While ops are in flight
     /// this latches `abort_requested`: the `Cancel` commands race each op's own
     /// terminal event, and whichever arrives first must still end the turn
-    /// `Cancelled` without starting new work (ARCHITECTURE §4.3). An abort also
-    /// supersedes a pending interrupt-resume — a steer followed by an abort
-    /// must not become a surprise model turn. An idle abort stays a no-op.
+    /// `Cancelled` without starting new work (ARCHITECTURE §4.3). An idle abort
+    /// stays a no-op.
     fn on_user_abort(&mut self) {
-        self.state.set_pending_resume(false);
         if self.state.is_busy() {
             self.state.set_abort_requested(true);
             self.cancel_all_inflight();
@@ -174,13 +157,9 @@ impl Brain {
                 self.state.buffer_model_text(op, &t);
                 self.emit(OutputEvent::ModelText { op, text: t });
             }
-            ModelDelta::Reasoning(t) => {
-                self.emit(OutputEvent::ModelReasoning { op, text: t });
-            }
-            ModelDelta::ToolCallStart { id, name } => {
-                self.emit(OutputEvent::ToolCallStarted { op, id, name });
-            }
-            ModelDelta::ToolCallArgsDelta { .. } | ModelDelta::ToolCallEnd { .. } => {}
+            // Reasoning and tool-call-start deltas produce no reduced output;
+            // they only exist so adapters can stream uniformly.
+            ModelDelta::Reasoning(_) | ModelDelta::ToolCallStart { .. } => {}
         }
     }
 
@@ -215,15 +194,7 @@ impl Brain {
             // way (the model output is durable) but defer `Done` until idle.
             self.checkpoint();
             if !self.background_running() {
-                if self.state.pending_resume() {
-                    // An interrupt's `Cancel` lost the race to this normal
-                    // completion (ARCHITECTURE §4.6): the interrupting input is
-                    // already logged, so consume the latch and start the fresh
-                    // turn it asked for instead of ending.
-                    self.start_model_turn();
-                } else {
-                    self.done(DoneReason::EndTurn);
-                }
+                self.done(DoneReason::EndTurn);
             }
         } else {
             // The model wants tools: turn each call into an op. The brain routes;
@@ -249,18 +220,9 @@ impl Brain {
         // Mirror `on_model_done`: while a background op is still running the
         // turn is not over (ARCHITECTURE §4.2), so defer the terminal
         // `Done(Error)` until the last op drains rather than emitting commands
-        // after a terminal `Done`. A pending interrupt-resume supersedes the
-        // error: the interrupting input starts a fresh turn once ops drain.
+        // after a terminal `Done`.
         if self.background_running() {
-            if !self.state.pending_resume() {
-                self.state.set_deferred_error(Some(stringify(&error)));
-            }
-            return;
-        }
-        if self.state.pending_resume() {
-            // An interrupt's `Cancel` lost the race to this error: consume the
-            // latch and start the fresh turn it asked for (ARCHITECTURE §4.6).
-            self.start_model_turn();
+            self.state.set_deferred_error(Some(stringify(&error)));
             return;
         }
         self.done(DoneReason::Error(stringify(&error)));
@@ -395,12 +357,7 @@ impl Brain {
             return;
         }
 
-        if self.state.pending_resume() && !self.state.is_busy() {
-            // An interrupt (steer) is waiting for the in-flight ops to drain:
-            // start the fresh turn now that they have (the partial work is
-            // already logged, so the new turn's projection sees it).
-            self.start_model_turn();
-        } else if !self.state.is_busy() {
+        if !self.state.is_busy() {
             // A host-initiated cancel with nothing to resume and no abort
             // latched: the turn is over, cancelled. Emit the terminal `Done`
             // once the last in-flight op has drained so the front-end sees it.
@@ -415,10 +372,6 @@ impl Brain {
     /// Begin a model turn: ask the policy which model to call and how to project
     /// context, then emit the call.
     fn start_model_turn(&mut self) {
-        // Starting a turn consumes any pending interrupt-resume: the projection
-        // computed below already sees the interrupting input (ARCHITECTURE
-        // §4.6), so the latch never outlives the resume it asked for.
-        self.state.set_pending_resume(false);
         let budget = self.policy.context_budget(&self.state);
         let plan = self.policy.project_context(self.state.log(), budget);
         let op = self.state.alloc_op();

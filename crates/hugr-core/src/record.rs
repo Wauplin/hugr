@@ -8,7 +8,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::event::SteerMode;
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
@@ -41,12 +40,6 @@ pub enum Record {
         /// value but never tokenizes content itself (ARCHITECTURE §3.5).
         #[serde(default)]
         est_tokens: u32,
-        /// How the input steered the turn when it arrived (queue vs interrupt,
-        /// ARCHITECTURE §4.6). Recorded so the fold is not lossy for
-        /// audit/replay tooling. `#[serde(default)]` (= `Queue`) keeps old
-        /// traces loading unchanged.
-        #[serde(default)]
-        steer: SteerMode,
     },
 
     /// A consolidated model output (the authoritative result of a model call).

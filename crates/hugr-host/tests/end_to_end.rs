@@ -1073,7 +1073,6 @@ async fn resume_after_crash_starts_quiescent() {
         },
         hugr_core::Event::UserInput {
             content: json!("start then crash"),
-            mode: hugr_core::SteerMode::Queue,
             est_tokens: 5,
         },
     ];

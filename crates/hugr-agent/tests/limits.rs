@@ -43,7 +43,6 @@ impl ModelAdapter for LoopingModel {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         let id = format!("call-{n}");
         sink.tool_call_start(id.clone(), "noop");
-        sink.tool_call_end(id.clone());
         let output = ModelOutput::tool_calls(vec![ToolCall::new(id, "noop", json!({}))]);
         Ok((output, Usage::new(7, 3)))
     }

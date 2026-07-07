@@ -3,7 +3,7 @@
 //! recorded log matches bit-for-bit — the Phase 3 exit criterion. Also covers
 //! the step-through [`Inspector`].
 
-use hugr_core::{Command, Event, ModelOutput, OpId, SteerMode, Timestamp, ToolCall, Usage, Value};
+use hugr_core::{Command, Event, ModelOutput, OpId, Timestamp, ToolCall, Usage, Value};
 use hugr_replay::{Inspector, Trace, TraceError, replay, verify};
 use serde_json::json;
 
@@ -17,7 +17,6 @@ fn session_events() -> Vec<Event> {
         tick(1),
         Event::UserInput {
             content: json!("run echo hi"),
-            mode: SteerMode::Queue,
             est_tokens: 1,
         },
         // model asks for a shell tool call (op 0 is the first model call)

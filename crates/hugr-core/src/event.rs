@@ -13,11 +13,11 @@ use crate::primitives::{OpId, Timestamp, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Event {
-    /// New conversational input. May arrive **at any time**, including mid-turn;
-    /// the reducer consults `mode` (ARCHITECTURE §4.6). `content` is opaque/rich.
+    /// New conversational input. May arrive **at any time**, including
+    /// mid-turn: the message is appended to the log and picked up at the next
+    /// turn boundary (ARCHITECTURE §4.6). `content` is opaque/rich.
     UserInput {
         content: Value,
-        mode: SteerMode,
         /// Host-provided approximate token count for the durable user message.
         #[serde(default)]
         est_tokens: u32,
@@ -89,22 +89,6 @@ pub enum Event {
     Tick {
         now: Timestamp,
     },
-}
-
-/// How conversational input is handled when it arrives mid-turn (ARCHITECTURE
-/// §4.6). The default is [`Queue`](SteerMode::Queue) (interrupt is reversible;
-/// an accidental interrupt would discard in-flight work).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum SteerMode {
-    /// Append the input; process it at the next turn boundary. Non-disruptive.
-    #[default]
-    Queue,
-    /// Cancel in-flight ops, then start a fresh turn that sees both the partial
-    /// work and the new instruction.
-    Interrupt,
-    /// Add to context; the current op finishes and the next model call sees it.
-    AppendAndContinue,
 }
 
 /// A policy's decision on a permission request.

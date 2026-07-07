@@ -1196,11 +1196,7 @@ fn aggregate_log(new_entries: &[LogEntry], pricing: &Pricing, aggregate: &mut Sp
 }
 
 fn selector_name(selector: &ModelSelector) -> String {
-    match selector {
-        ModelSelector::Named(name) => name.clone(),
-        #[allow(unreachable_patterns)]
-        _ => format!("{selector:?}"),
-    }
+    selector.0.clone()
 }
 
 #[derive(Default)]

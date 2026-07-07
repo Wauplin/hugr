@@ -63,19 +63,6 @@ impl ModelSink {
         });
     }
 
-    /// A fragment of a tool call's streamed JSON arguments.
-    pub fn tool_call_args(&self, id: impl Into<String>, json_fragment: impl Into<String>) {
-        self.delta(ModelDelta::ToolCallArgsDelta {
-            id: id.into(),
-            json_fragment: json_fragment.into(),
-        });
-    }
-
-    /// A tool call finished streaming its arguments.
-    pub fn tool_call_end(&self, id: impl Into<String>) {
-        self.delta(ModelDelta::ToolCallEnd { id: id.into() });
-    }
-
     fn delta(&self, delta: ModelDelta) {
         let _ = self.tx.send(Event::ModelDelta { op: self.op, delta });
     }

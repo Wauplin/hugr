@@ -50,11 +50,11 @@ mod state;
 
 pub use brain::Brain;
 pub use command::{Command, DoneReason, OutputEvent, PermissionRequest};
-pub use event::{Decision, Event, SteerMode};
+pub use event::{Decision, Event};
 pub use model::{
-    ContentPart, ContextBlock, ContextBudgetTotals, ContextCacheHint, ContextDisposition,
-    ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
-    ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
+    ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
+    ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,
+    SamplingParams, TokenBudget, ToolCall, ToolSchema, Usage,
 };
 pub use policy::{StaticPolicy, TurnPolicy, decode_policy};
 pub use primitives::{OpId, Seq, Timestamp, Value};

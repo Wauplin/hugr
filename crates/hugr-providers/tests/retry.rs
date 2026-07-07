@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams, StopReason};
+use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams};
 use hugr_host::{ModelAdapter, ModelSink};
 use hugr_providers::OpenAiAdapter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,7 +94,7 @@ async fn retries_transient_failures_then_succeeds() {
         .expect("transient failures should be retried until success");
 
     assert_eq!(output.text, "ok");
-    assert_eq!(output.stop, StopReason::EndTurn);
+    assert_eq!(output.stop, "end_turn");
     // 2 failures + 1 success = 3 requests reached the server.
     assert_eq!(hits.load(Ordering::SeqCst), 3);
 }

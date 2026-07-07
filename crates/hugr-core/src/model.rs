@@ -15,18 +15,14 @@ use crate::primitives::{Seq, Value};
 
 /// A logical model **role**, not a concrete endpoint. The brain names a role;
 /// the host's model registry resolves it to a provider/model/key/adapter
-/// (ARCHITECTURE §5.3). This is how multi-model routing works.
+/// (ARCHITECTURE §5.3). An open string set, e.g. `"medium"`, `"summarizer"`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum ModelSelector {
-    /// e.g. `"router"`, `"big"`, `"fast"`, `"summarizer"`, `"vision"`.
-    Named(String),
-}
+pub struct ModelSelector(pub String);
 
 impl ModelSelector {
     /// Convenience constructor: `ModelSelector::named("big")`.
     pub fn named(name: impl Into<String>) -> Self {
-        ModelSelector::Named(name.into())
+        ModelSelector(name.into())
     }
 }
 
@@ -94,7 +90,6 @@ pub struct ContextPlan {
     pub budget: TokenBudget,
     pub entries: Vec<ContextPlanEntry>,
     pub totals: ContextBudgetTotals,
-    pub cache_hints: Vec<ContextCacheHint>,
     pub tools: Vec<ToolSchema>,
     pub params: SamplingParams,
     pub extra: Value,
@@ -112,7 +107,6 @@ impl ContextPlan {
             budget,
             entries,
             totals,
-            cache_hints: Vec::new(),
             tools,
             params,
             extra: Value::Null,
@@ -131,11 +125,6 @@ impl ContextPlan {
             params: self.params.clone(),
             extra: self.extra.clone(),
         }
-    }
-
-    pub fn with_cache_hints(mut self, cache_hints: Vec<ContextCacheHint>) -> Self {
-        self.cache_hints = cache_hints;
-        self
     }
 
     pub fn with_extra(mut self, extra: Value) -> Self {
@@ -176,7 +165,6 @@ impl ContextPlanEntry {
 pub enum ContextSource {
     System,
     LogEntry { seq: Seq },
-    Synthetic { label: String },
 }
 
 impl ContextSource {
@@ -186,12 +174,6 @@ impl ContextSource {
 
     pub fn log_entry(seq: Seq) -> Self {
         Self::LogEntry { seq }
-    }
-
-    pub fn synthetic(label: impl Into<String>) -> Self {
-        Self::Synthetic {
-            label: label.into(),
-        }
     }
 }
 
@@ -244,25 +226,6 @@ impl ContextBudgetTotals {
             ContextDisposition::Omitted => {
                 self.omitted_tokens += est_tokens;
             }
-        }
-    }
-}
-
-/// Provider/context-cache hint attached to a planned request.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct ContextCacheHint {
-    pub entry_index: usize,
-    pub key: String,
-    pub reason: String,
-}
-
-impl ContextCacheHint {
-    pub fn new(entry_index: usize, key: impl Into<String>, reason: impl Into<String>) -> Self {
-        Self {
-            entry_index,
-            key: key.into(),
-            reason: reason.into(),
         }
     }
 }
@@ -364,8 +327,6 @@ pub enum ModelDelta {
     Text(String),
     Reasoning(String),
     ToolCallStart { id: String, name: String },
-    ToolCallArgsDelta { id: String, json_fragment: String },
-    ToolCallEnd { id: String },
 }
 
 /// The consolidated, authoritative result of a model call — exactly what the
@@ -377,7 +338,10 @@ pub struct ModelOutput {
     pub text: String,
     pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
-    pub stop: StopReason,
+    /// Provider-reported stop reason, e.g. `"end_turn"`, `"tool_use"`,
+    /// `"max_tokens"`. Recorded for the trace; the brain never branches on it
+    /// (the presence of `tool_calls` drives the turn loop).
+    pub stop: String,
 }
 
 impl ModelOutput {
@@ -386,13 +350,13 @@ impl ModelOutput {
         text: String,
         reasoning: Option<String>,
         tool_calls: Vec<ToolCall>,
-        stop: StopReason,
+        stop: impl Into<String>,
     ) -> Self {
         Self {
             text,
             reasoning,
             tool_calls,
-            stop,
+            stop: stop.into(),
         }
     }
 
@@ -400,7 +364,7 @@ impl ModelOutput {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            stop: StopReason::EndTurn,
+            stop: "end_turn".to_string(),
             ..Self::default()
         }
     }
@@ -409,7 +373,7 @@ impl ModelOutput {
     pub fn tool_calls(calls: Vec<ToolCall>) -> Self {
         Self {
             tool_calls: calls,
-            stop: StopReason::ToolUse,
+            stop: "tool_use".to_string(),
             ..Self::default()
         }
     }
@@ -432,16 +396,6 @@ impl ToolCall {
             args,
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum StopReason {
-    #[default]
-    EndTurn,
-    ToolUse,
-    MaxTokens,
-    Other(String),
 }
 
 /// Authoritative token accounting returned by the provider after a call.

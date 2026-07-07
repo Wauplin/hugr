@@ -1651,7 +1651,7 @@ mod tests {
                     "meta": {
                         "started_at": 0,
                         "ended_at": 1,
-                        "model": { "Named": "docs" },
+                        "model": "docs",
                         "usage": null,
                         "extra": null
                     }
@@ -1728,7 +1728,7 @@ mod tests {
                     "meta": {
                         "started_at": 0,
                         "ended_at": 1,
-                        "model": { "Named": "docs" },
+                        "model": "docs",
                         "usage": null,
                         "extra": null
                     }
