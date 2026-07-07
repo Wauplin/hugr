@@ -87,17 +87,6 @@ impl Brain {
             } => self.on_user_input(content, mode, est_tokens),
             Event::UserAbort => self.on_user_abort(),
             Event::CompactContext => self.on_compact_context(),
-            Event::ModelOverride { selector } => {
-                // Durable, not just in-memory: a pending override must survive
-                // checkpoint/resume, and `BrainState` must stay a pure fold
-                // over the log (ARCHITECTURE §3.1). `from_log` re-derives the
-                // pending override from this record (see `Record::ModelOverride`).
-                self.append(Record::ModelOverride {
-                    selector: selector.clone(),
-                });
-                self.state.set_model_override(selector);
-                self.checkpoint();
-            }
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {
@@ -540,10 +529,7 @@ impl Brain {
         }
 
         let op = self.state.alloc_op();
-        let selector = self
-            .state
-            .take_model_override()
-            .unwrap_or_else(|| self.policy.choose_model(&self.state));
+        let selector = self.policy.choose_model(&self.state);
         let request = plan.to_model_request();
         self.state.mark(
             op,
@@ -589,9 +575,7 @@ impl Brain {
     ) {
         let op = self.state.alloc_op();
         // Route the compaction model through the policy (ARCHITECTURE §2.5): the
-        // reducer must not hardcode a selector. The per-turn model override is
-        // deliberately *not* consumed here — it belongs to the real turn that
-        // resumes after compaction.
+        // reducer must not hardcode a selector.
         let _ = plan;
         let selector = self.policy.choose_model(&self.state);
         let request = self.policy.compaction_request(self.state.log(), summary_of);

@@ -51,9 +51,6 @@ pub struct BrainState {
     /// ARCHITECTURE §4.2): emitted once the last op drains.
     #[serde(default)]
     deferred_error: Option<String>,
-    /// One-shot model selector override, injected as an event and consumed by
-    /// the next normal model turn.
-    next_model_override: Option<ModelSelector>,
 }
 
 impl BrainState {
@@ -70,12 +67,6 @@ impl BrainState {
     /// only exists while ops are in flight, so a consolidated prefix — by that
     /// same contract — has nothing pending to resume.
     ///
-    /// A pending model override *is* re-derived (it must survive a
-    /// checkpoint/resume): the last [`Record::ModelOverride`] not yet consumed
-    /// by a subsequent main-turn [`Record::ModelOutput`] is still pending.
-    /// Compaction passes never consume an override (they log a
-    /// [`Record::Summary`], never a `ModelOutput`), so `ModelOutput` alone is
-    /// the consumption marker.
     pub(crate) fn from_log(log: Vec<LogEntry>) -> Self {
         let next_seq = log.last().map(|e| e.seq.0 + 1).unwrap_or(0);
         let now = log.last().map(|e| e.at).unwrap_or_default();
@@ -96,25 +87,12 @@ impl BrainState {
                 _ => None,
             })
             .collect();
-        // Fold rule (documented above): the last `ModelOverride` record wins;
-        // any later main-turn `ModelOutput` consumes it.
-        let mut next_model_override = None;
-        for entry in &log {
-            match &entry.record {
-                crate::record::Record::ModelOverride { selector } => {
-                    next_model_override = selector.clone();
-                }
-                crate::record::Record::ModelOutput { .. } => next_model_override = None,
-                _ => {}
-            }
-        }
         Self {
             log,
             next_seq,
             next_op,
             now,
             versions,
-            next_model_override,
             ..Self::default()
         }
     }
@@ -149,11 +127,6 @@ impl BrainState {
     /// The optimistic-concurrency read-set (last-seen version per object).
     pub fn versions(&self) -> &HashMap<ObjectKey, String> {
         &self.versions
-    }
-
-    /// Pending one-shot model selector override, if any.
-    pub fn next_model_override(&self) -> Option<&ModelSelector> {
-        self.next_model_override.as_ref()
     }
 
     // --- mutation helpers, used only by the reducer --------------------------
@@ -245,14 +218,6 @@ impl BrainState {
 
     pub(crate) fn take_deferred_error(&mut self) -> Option<String> {
         self.deferred_error.take()
-    }
-
-    pub(crate) fn set_model_override(&mut self, selector: Option<ModelSelector>) {
-        self.next_model_override = selector;
-    }
-
-    pub(crate) fn take_model_override(&mut self) -> Option<ModelSelector> {
-        self.next_model_override.take()
     }
 }
 

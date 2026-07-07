@@ -75,15 +75,6 @@ pub enum Record {
         steer: SteerMode,
     },
 
-    /// A one-shot model-selector override arrived ([`Event::ModelOverride`]
-    /// (crate::Event::ModelOverride)); `None` cleared a pending one. Durable so
-    /// a pending override survives checkpoint/resume: `BrainState::from_log`
-    /// re-derives it as the last `ModelOverride` record not followed by a
-    /// main-turn [`ModelOutput`](Record::ModelOutput) record (compaction passes
-    /// log a [`Summary`](Record::Summary), never a `ModelOutput`, so they don't
-    /// consume it).
-    ModelOverride { selector: Option<ModelSelector> },
-
     /// A consolidated model output (the authoritative result of a model call).
     /// Phase 0 stores it inline; later phases may store a [`Value`] blob ref.
     ModelOutput {
@@ -156,7 +147,7 @@ impl Record {
             | Record::ToolResult { op, .. }
             | Record::Summary { op, .. }
             | Record::OpEnded { op, .. } => Some(*op),
-            Record::UserMessage { .. } | Record::ModelOverride { .. } => None,
+            Record::UserMessage { .. } => None,
         }
     }
 
@@ -168,7 +159,7 @@ impl Record {
             | Record::ModelOutput { est_tokens, .. }
             | Record::ToolResult { est_tokens, .. } => Some(*est_tokens),
             Record::Summary { est_tokens_out, .. } => Some(*est_tokens_out),
-            Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
+            Record::OpEnded { .. } => None,
         }
     }
 }

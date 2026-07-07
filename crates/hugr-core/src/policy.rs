@@ -524,17 +524,6 @@ impl TurnPolicy for StaticPolicy {
                         "operation metadata is not model context",
                     ));
                 }
-                // A model-override record is turn-control bookkeeping (which
-                // selector the next turn uses), never model-visible context.
-                Record::ModelOverride { .. } => {
-                    let disposition = ContextDisposition::omitted();
-                    entries.push(ContextPlanEntry::new(
-                        ContextSource::log_entry(entry.seq),
-                        0,
-                        disposition,
-                        "model override is turn control, not model context",
-                    ));
-                }
             }
         }
 
@@ -720,7 +709,7 @@ fn default_render_summary_record(seq: Seq, record: &Record) -> Option<String> {
         }
         Record::Summary { text, .. } => Some(format!("log:{} summary: {}", seq.0, text)),
         // Turn-control / bookkeeping records contribute nothing to a summary.
-        Record::ModelOverride { .. } | Record::OpEnded { .. } => None,
+        Record::OpEnded { .. } => None,
     }
 }
 

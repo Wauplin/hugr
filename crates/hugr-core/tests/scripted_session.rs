@@ -94,10 +94,12 @@ fn tool_results_are_projected_adjacent_to_tool_calls_even_with_records_between()
                 est_tokens: 1,
             },
             // A durable record lands between the model output and the tool
-            // result (here: a model-override record) — projection must still
-            // group the tool result adjacent to its originating tool call.
-            Event::ModelOverride {
-                selector: Some(ModelSelector::named("big")),
+            // result (here: a queued mid-turn user message) — projection must
+            // still group the tool result adjacent to its originating call.
+            Event::UserInput {
+                content: json!("also check the README"),
+                mode: hugr_core::SteerMode::Queue,
+                est_tokens: 1,
             },
             Event::CapabilityDone {
                 op: OpId(1),
@@ -246,37 +248,6 @@ fn versioned_tool_calls_stamp_expected_version_and_route_conflict_retry() {
         retry_read,
         "conflict should be routed back so the model can re-read"
     );
-}
-
-#[test]
-fn model_override_forces_one_turn_then_clears() {
-    let script = vec![
-        Event::ModelOverride {
-            selector: Some(ModelSelector::named("big")),
-        },
-        user("ordinary request"),
-        Event::ModelDone {
-            op: OpId(0),
-            output: text_output("Done."),
-            usage: usage(),
-            est_tokens: 1,
-        },
-        user("another ordinary request"),
-    ];
-    let mut brain = Brain::new(Box::new(StaticPolicy::default()));
-    let commands = run_script(&mut brain, script);
-    let selectors: Vec<_> = commands
-        .iter()
-        .filter_map(|command| match command {
-            Command::StartModelCall { model, .. } => Some(model.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        selectors,
-        vec![ModelSelector::named("big"), ModelSelector::named("medium")]
-    );
-    assert!(brain.state().next_model_override().is_none());
 }
 
 /// The same session, but the tool requires permission. The sequence gains a
@@ -1407,134 +1378,6 @@ fn compaction_prompt_and_rendering_are_overridable() {
         text_of(Role::System).starts_with("Summarize the provided Hugr log span"),
         "default system prompt missing: {}",
         text_of(Role::System)
-    );
-}
-
-/// `Event::ModelOverride` is durable: it appends a `Record::ModelOverride`
-/// (plus a `Checkpoint`), and `Brain::from_log` re-derives the pending override
-/// from the log — the last override record not yet consumed by a subsequent
-/// main-turn `ModelOutput` (the log is the source of truth, ARCHITECTURE §3.1).
-#[test]
-fn model_override_is_logged_and_survives_resume() {
-    let mut brain = Brain::new(Box::new(StaticPolicy::default()));
-    let commands = run_script(
-        &mut brain,
-        vec![Event::ModelOverride {
-            selector: Some(ModelSelector::named("big")),
-        }],
-    );
-    // Pinned command sequence: the durable record is checkpointed.
-    assert_eq!(effectful(&commands), vec![&Command::Checkpoint]);
-    assert!(matches!(
-        brain.state().log().last().map(|entry| &entry.record),
-        Some(Record::ModelOverride { selector: Some(s) }) if *s == ModelSelector::named("big")
-    ));
-
-    // Crash/resume before the override is consumed: the fold restores it.
-    let resumed = Brain::from_log(
-        Box::new(StaticPolicy::default()),
-        brain.state().log().to_vec(),
-    );
-    assert_eq!(
-        resumed.state().next_model_override(),
-        Some(&ModelSelector::named("big")),
-        "a pending override must survive checkpoint/resume via the log"
-    );
-
-    // Consume it with a real turn: the next main-turn ModelOutput record marks
-    // the override consumed, so a later resume restores nothing.
-    run_script(
-        &mut brain,
-        vec![
-            user("ordinary request"),
-            Event::ModelDone {
-                op: OpId(0),
-                output: text_output("Done."),
-                usage: usage(),
-                est_tokens: 1,
-            },
-        ],
-    );
-    assert!(brain.state().next_model_override().is_none());
-    let resumed = Brain::from_log(
-        Box::new(StaticPolicy::default()),
-        brain.state().log().to_vec(),
-    );
-    assert!(
-        resumed.state().next_model_override().is_none(),
-        "a consumed override must not be resurrected by the fold"
-    );
-
-    // Clearing (`selector: None`) is durable too: it supersedes a pending one.
-    let mut cleared = Brain::new(Box::new(StaticPolicy::default()));
-    run_script(
-        &mut cleared,
-        vec![
-            Event::ModelOverride {
-                selector: Some(ModelSelector::named("big")),
-            },
-            Event::ModelOverride { selector: None },
-        ],
-    );
-    let resumed = Brain::from_log(
-        Box::new(StaticPolicy::default()),
-        cleared.state().log().to_vec(),
-    );
-    assert!(resumed.state().next_model_override().is_none());
-
-    // Determinism: the whole override path replays bit-for-bit.
-    assert_deterministic_replay(
-        || Brain::new(Box::new(StaticPolicy::default())),
-        || {
-            vec![
-                Event::ModelOverride {
-                    selector: Some(ModelSelector::named("big")),
-                },
-                user("ordinary request"),
-                Event::ModelDone {
-                    op: OpId(0),
-                    output: text_output("Done."),
-                    usage: usage(),
-                    est_tokens: 1,
-                },
-            ]
-        },
-    );
-}
-
-/// A compaction pass does not consume a pending override: compaction logs a
-/// `Summary` record (never a `ModelOutput`), so the fold keeps the override
-/// pending for the real turn that resumes afterwards.
-#[test]
-fn model_override_survives_a_compaction_pass_in_the_fold() {
-    let log = vec![
-        LogEntry::new(
-            Seq(0),
-            Timestamp(0),
-            serde_json::from_value(json!({
-                "ModelOverride": { "selector": { "Named": "big" } }
-            }))
-            .unwrap(),
-        ),
-        LogEntry::new(
-            Seq(1),
-            Timestamp(0),
-            Record::Summary {
-                op: OpId(0),
-                text: "old span summary".to_string(),
-                summary_of: SeqRange::new(Seq(0), Seq(0)),
-                coverage: SummaryCoverage::Complete,
-                tier: ModelSelector::named("small"),
-                est_tokens_in: 10,
-                est_tokens_out: 2,
-            },
-        ),
-    ];
-    let brain = Brain::from_log(Box::new(StaticPolicy::default()), log);
-    assert_eq!(
-        brain.state().next_model_override(),
-        Some(&ModelSelector::named("big")),
-        "a compaction summary must not consume the pending override"
     );
 }
 
