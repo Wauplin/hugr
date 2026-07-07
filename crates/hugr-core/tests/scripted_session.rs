@@ -360,7 +360,6 @@ fn context_plan_explains_dispositions_and_renders_request() {
                 plan.entries[0].disposition,
                 ContextDisposition::Included { .. }
             )
-            && plan.entries[0].reason == "static pass-through projection"
     );
     assert!(
         matches!(plan.entries[1].source, ContextSource::LogEntry { .. })
@@ -372,7 +371,6 @@ fn context_plan_explains_dispositions_and_renders_request() {
     assert!(
         matches!(plan.entries[2].source, ContextSource::LogEntry { .. })
             && matches!(plan.entries[2].disposition, ContextDisposition::Omitted)
-            && plan.entries[2].reason == "operation metadata is not model context"
     );
 }
 

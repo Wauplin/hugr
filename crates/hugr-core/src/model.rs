@@ -140,21 +140,14 @@ pub struct ContextPlanEntry {
     pub source: ContextSource,
     pub est_tokens: u32,
     pub disposition: ContextDisposition,
-    pub reason: String,
 }
 
 impl ContextPlanEntry {
-    pub fn new(
-        source: ContextSource,
-        est_tokens: u32,
-        disposition: ContextDisposition,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn new(source: ContextSource, est_tokens: u32, disposition: ContextDisposition) -> Self {
         Self {
             source,
             est_tokens,
             disposition,
-            reason: reason.into(),
         }
     }
 }

@@ -8,7 +8,6 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
@@ -174,10 +173,9 @@ impl TurnPolicy for StaticPolicy {
             source: ContextSource,
             est_tokens: u32,
             disposition: ContextDisposition,
-            note: &str,
         ) {
             totals.add(&disposition, est_tokens);
-            entries.push(ContextPlanEntry::new(source, est_tokens, disposition, note));
+            entries.push(ContextPlanEntry::new(source, est_tokens, disposition));
         }
         if let Some(system) = &self.system {
             let disposition = ContextDisposition::included(ContextBlock::new(
@@ -190,7 +188,6 @@ impl TurnPolicy for StaticPolicy {
                 ContextSource::system(),
                 0,
                 disposition,
-                "static system prompt",
             );
         }
         let mut projected_tool_results = HashSet::new();
@@ -201,7 +198,6 @@ impl TurnPolicy for StaticPolicy {
                     ContextSource::log_entry(entry.seq),
                     est_tokens,
                     ContextDisposition::omitted(),
-                    "tool result projected adjacent to originating tool call",
                 ));
                 continue;
             }
@@ -219,7 +215,6 @@ impl TurnPolicy for StaticPolicy {
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
-                        "static pass-through projection",
                     );
                 }
                 Record::ModelOutput {
@@ -245,7 +240,6 @@ impl TurnPolicy for StaticPolicy {
                             ContextSource::log_entry(entry.seq),
                             *est_tokens,
                             disposition,
-                            "static pass-through projection",
                         );
                     }
                     // OpenAI-compatible chat formats require tool result
@@ -278,7 +272,6 @@ impl TurnPolicy for StaticPolicy {
                                     ContextSource::log_entry(result_entry.seq),
                                     *est_tokens,
                                     disposition,
-                                    "tool result grouped with originating tool call",
                                 );
                                 projected_tool_results.insert(result_entry.seq);
                             }
@@ -304,7 +297,6 @@ impl TurnPolicy for StaticPolicy {
                         ContextSource::log_entry(entry.seq),
                         *est_tokens,
                         disposition,
-                        "static pass-through projection",
                     );
                 }
                 // OpEnded entries are bookkeeping (timing/cost); they do not
@@ -316,7 +308,6 @@ impl TurnPolicy for StaticPolicy {
                         ContextSource::log_entry(entry.seq),
                         0,
                         disposition,
-                        "operation metadata is not model context",
                     ));
                 }
             }
@@ -329,7 +320,6 @@ impl TurnPolicy for StaticPolicy {
             self.tools.clone(),
             self.params.clone(),
         )
-        .with_extra(json!(null))
     }
 
     fn needs_permission(&self, capability: &str) -> bool {
