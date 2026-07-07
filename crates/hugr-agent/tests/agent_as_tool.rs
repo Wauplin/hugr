@@ -65,23 +65,23 @@ async fn parent_delegates_to_child_and_folds_cost() {
 
     // Child: one text answer, usage 5 in / 2 out. Priced medium 2/5 →
     // 5*2 + 2*5 = 20 microUSD.
-    let child = Arc::new(
-        Agent::builder("child", "0.1.0", TraceStore::new(child_dir.path()))
-            .model(
-                ModelSelector::named("medium"),
-                MockModel::new(
-                    vec![
-                        ModelOutput::text("child says hi"),
-                        ModelOutput::text("child follow-up"),
-                    ],
-                    Usage::new(5, 2),
-                ),
-            )
-            .system_prompt("child")
-            .clock(clock())
-            .pricing(Pricing::new().with_tier("medium", 2.0, 5.0))
-            .build(),
-    );
+    let child = Arc::new({
+        let mut agent = Agent::new("child", "0.1.0", TraceStore::new(child_dir.path()));
+        agent.models.push((
+            ModelSelector::named("medium"),
+            MockModel::new(
+                vec![
+                    ModelOutput::text("child says hi"),
+                    ModelOutput::text("child follow-up"),
+                ],
+                Usage::new(5, 2),
+            ),
+        ));
+        agent.system_prompt = Some("child".into());
+        agent.clock = Some(clock());
+        agent.pricing = Pricing::new().with_tier("medium", 2.0, 5.0);
+        agent
+    });
 
     // Track child trace ids the resolver produces (for the follow-up assertion).
     let child_ids = Arc::new(Mutex::new(Vec::new()));
@@ -101,8 +101,9 @@ async fn parent_delegates_to_child_and_folds_cost() {
 
     // Parent: first turn calls agent_child, second turn answers. Usage 7/3 per
     // call, priced medium 2/5 → 2 * (7*2 + 3*5) = 58 microUSD across 2 calls.
-    let parent = Agent::builder("parent", "0.1.0", TraceStore::new(parent_dir.path()))
-        .model(
+    let parent = {
+        let mut agent = Agent::new("parent", "0.1.0", TraceStore::new(parent_dir.path()));
+        agent.models.push((
             ModelSelector::named("medium"),
             MockModel::new(
                 vec![
@@ -115,16 +116,17 @@ async fn parent_delegates_to_child_and_folds_cost() {
                 ],
                 Usage::new(7, 3),
             ),
-        )
-        .system_prompt("parent")
-        .clock(clock())
-        .pricing(Pricing::new().with_tier("medium", 2.0, 5.0))
-        .agent_tool(AgentToolSpec::new(
+        ));
+        agent.system_prompt = Some("parent".into());
+        agent.clock = Some(clock());
+        agent.pricing = Pricing::new().with_tier("medium", 2.0, 5.0);
+        agent.agent_tools.push(AgentToolSpec::new(
             "agent_child",
             "answers child questions",
             resolver,
-        ))
-        .build();
+        ));
+        agent
+    };
 
     let answer = parent.ask(Ask::new("delegate please")).await.unwrap();
 

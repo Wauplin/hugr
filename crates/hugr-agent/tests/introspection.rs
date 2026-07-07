@@ -55,18 +55,20 @@ impl Capability for ReadOnlyTool {
 }
 
 fn agent(store: TraceStore) -> Agent {
-    Agent::builder("docs-agent", "1.2.3", store)
-        .description("Answers documentation questions.")
-        .model(ModelSelector::named("medium"), Arc::new(MockModel))
-        .default_model(ModelSelector::named("medium"))
-        .capability(Arc::new(ReadOnlyTool))
-        .pricing(Pricing::new().with_tier("medium", 0.25, 1.25))
-        .limits(
-            AgentLimits::new()
-                .with_max_model_calls(8)
-                .with_max_cost_micro_usd(50_000),
-        )
-        .build()
+    {
+        let mut agent = Agent::new("docs-agent", "1.2.3", store);
+        agent.description = "Answers documentation questions.".into();
+        agent
+            .models
+            .push((ModelSelector::named("medium"), Arc::new(MockModel)));
+        agent.default_model = Some(ModelSelector::named("medium"));
+        agent.capabilities.push(Arc::new(ReadOnlyTool));
+        agent.pricing = Pricing::new().with_tier("medium", 0.25, 1.25);
+        agent.limits = AgentLimits::new()
+            .with_max_model_calls(8)
+            .with_max_cost_micro_usd(50_000);
+        agent
+    }
 }
 
 #[test]

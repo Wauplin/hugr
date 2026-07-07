@@ -58,11 +58,15 @@ fn deterministic_clock() -> Clock {
 }
 
 fn agent(store: TraceStore, outputs: Vec<ModelOutput>) -> Agent {
-    Agent::builder("scratch-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new(outputs))
-        .system_prompt("You take notes.")
-        .clock(deterministic_clock())
-        .build()
+    {
+        let mut agent = Agent::new("scratch-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new(outputs)));
+        agent.system_prompt = Some("You take notes.".into());
+        agent.clock = Some(deterministic_clock());
+        agent
+    }
 }
 
 fn write_call(id: &str, path: &str, content: &str) -> ToolCall {

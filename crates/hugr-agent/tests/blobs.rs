@@ -59,11 +59,15 @@ fn deterministic_clock() -> Clock {
 }
 
 fn agent(store: TraceStore, outputs: Vec<ModelOutput>) -> Agent {
-    Agent::builder("blob-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new(outputs))
-        .system_prompt("You process handed-in files.")
-        .clock(deterministic_clock())
-        .build()
+    {
+        let mut agent = Agent::new("blob-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new(outputs)));
+        agent.system_prompt = Some("You process handed-in files.".into());
+        agent.clock = Some(deterministic_clock());
+        agent
+    }
 }
 
 fn read_call(id: &str, path: &str) -> ToolCall {

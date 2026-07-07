@@ -58,11 +58,15 @@ fn deterministic_clock() -> Clock {
 
 fn agent(store: TraceStore) -> Agent {
     let replies = vec!["answer"; 64];
-    Agent::builder("test-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new(replies))
-        .system_prompt("You answer tersely.")
-        .clock(deterministic_clock())
-        .build()
+    {
+        let mut agent = Agent::new("test-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new(replies)));
+        agent.system_prompt = Some("You answer tersely.".into());
+        agent.clock = Some(deterministic_clock());
+        agent
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

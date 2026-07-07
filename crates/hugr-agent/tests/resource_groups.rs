@@ -77,18 +77,24 @@ fn agent(store: TraceStore, spy: ToolSpy) -> Agent {
     let writer: hugr_agent::GroupCapabilityFactory = Arc::new(|_res: &[ResourceRef]| {
         Ok(vec![Arc::new(NoopTool("writer")) as Arc<dyn Capability>])
     });
-    Agent::builder("test-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), Arc::new(MockModel { spy }))
-        .system_prompt("answer")
-        .clock(clock())
-        .group_binding(GroupBinding::new("data", "reader", Access::Read, reader))
-        .group_binding(GroupBinding::new(
+    {
+        let mut agent = Agent::new("test-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), Arc::new(MockModel { spy })));
+        agent.system_prompt = Some("answer".into());
+        agent.clock = Some(clock());
+        agent
+            .group_bindings
+            .push(GroupBinding::new("data", "reader", Access::Read, reader));
+        agent.group_bindings.push(GroupBinding::new(
             "data",
             "writer",
             Access::ReadWrite,
             writer,
-        ))
-        .build()
+        ));
+        agent
+    }
 }
 
 fn data_group() -> ResourceGroup {

@@ -129,8 +129,8 @@ async fn build_agent_depth_with_provider_key(
     } else {
         def.agent.version.as_str()
     };
-    let mut builder = Agent::builder(def.agent.name.clone(), version, store)
-        .description(def.agent.description.clone());
+    let mut agent = Agent::new(def.agent.name.clone(), version, store);
+    agent.description = def.agent.description.clone();
 
     // The provider API key rides an env var (§20.1) — never the manifest. When
     // unset, the adapter gets an empty key and the run fails as an error answer.
@@ -165,7 +165,7 @@ async fn build_agent_depth_with_provider_key(
             sampling = sampling.with_max_tokens(m);
         }
         adapter = adapter.with_default_params(sampling);
-        builder = builder.model(selector, Arc::new(adapter));
+        agent.models.push((selector, Arc::new(adapter)));
 
         // Price a tier that declares either side; a missing side is 0.
         if tier.input_usd_per_m_tokens.is_some() || tier.output_usd_per_m_tokens.is_some() {
@@ -177,14 +177,13 @@ async fn build_agent_depth_with_provider_key(
         }
     }
     if let Some(default) = def.default_tier() {
-        builder = builder.default_model(ModelSelector::named(default.to_string()));
+        agent.default_model = Some(ModelSelector::named(default.to_string()));
     }
-    builder = builder.pricing(pricing);
+    agent.pricing = pricing;
 
     // System prompt (with template vars). A definition without SYSTEM.md gets a
     // minimal default so the agent still runs.
-    let prompt = render_system_prompt(def);
-    builder = builder.system_prompt(prompt);
+    agent.system_prompt = Some(render_system_prompt(def));
 
     // Granted tools — sandbox-by-registration (§20.1). Library grants build
     // in-process; MCP grants (§20.3) connect their external process and
@@ -197,11 +196,12 @@ async fn build_agent_depth_with_provider_key(
                 // when a matching grant arrives. Otherwise the manifest scope is
                 // concrete and the capability is registered eagerly.
                 if let Some(group) = tools::group_scope(grant) {
-                    builder = builder
-                        .group_binding(tools::library_group_binding(grant, group, &base_dir));
+                    agent
+                        .group_bindings
+                        .push(tools::library_group_binding(grant, group, &base_dir));
                 } else {
                     for capability in tools::build_library_grant(grant, &base_dir)? {
-                        builder = builder.capability(capability);
+                        agent.capabilities.push(capability);
                     }
                 }
             }
@@ -214,12 +214,10 @@ async fn build_agent_depth_with_provider_key(
                         name: grant.name.clone(),
                         source,
                     })?;
-                for capability in caps {
-                    builder = builder.capability(capability);
-                }
+                agent.capabilities.extend(caps);
             }
             ToolKind::Agent => match build_agent_tool(grant, &base_dir, agent_depth).await {
-                Ok(spec) => builder = builder.agent_tool(spec),
+                Ok(spec) => agent.agent_tools.push(spec),
                 Err(err) => return Err(err),
             },
         }
@@ -239,25 +237,25 @@ async fn build_agent_depth_with_provider_key(
     if let Some(v) = def.limits.timeout_s {
         limits = limits.with_timeout_ms(v.saturating_mul(1000));
     }
-    builder = builder.limits(limits);
+    agent.limits = limits;
 
     if let Some(root) = &def.scratchpad.root {
-        builder = builder.scratch_root(resolve(&base_dir, root));
+        agent.scratch_root = resolve(&base_dir, root);
     }
 
     // Structured-answer-extra schema (T3.4): inline `[answer].extra_schema` or a
     // `.json` file. Advisory only — a schema that can't be read/parsed warns and
     // is skipped rather than failing the build.
     match resolve_answer_schema(def, &base_dir) {
-        Ok(Some(schema)) => builder = builder.answer_schema(schema),
+        Ok(Some(schema)) => agent.answer_schema = Some(schema),
         Ok(None) => {}
         Err(warning) => warnings.push(warning),
     }
 
     // Effective config with real provenance + redaction for `--config` (T3.5).
-    builder = builder.config_entries(effective_config(def, &base_dir));
+    agent.config_entries = Some(effective_config(def, &base_dir));
 
-    Ok((builder.build(), warnings))
+    Ok((agent, warnings))
 }
 
 /// Build the effective configuration with per-key provenance and secret

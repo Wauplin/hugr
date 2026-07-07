@@ -63,47 +63,47 @@ const PENDING_DIRNAME: &str = ".pending";
 const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
 
 /// A configured subagent: ask it questions, get [`Answer`]s, resume or fork
-/// any stored trace. Build one with [`Agent::builder`].
+/// any stored trace. Construct with [`Agent::new`], then set the public fields
+/// (the toolkit's `build_agent` is the one assembly path).
 ///
 /// Cheap to share pieces: adapters, capabilities, and the policy are `Arc`s,
 /// so each ask assembles a fresh engine without re-constructing them.
-#[non_exhaustive]
 pub struct Agent {
-    name: String,
-    version: String,
-    description: String,
-    store: TraceStore,
-    system_prompt: Option<String>,
-    models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
-    default_model: Option<ModelSelector>,
-    capabilities: Vec<Arc<dyn Capability>>,
-    sampling: Option<SamplingParams>,
-    clock: Option<Clock>,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub store: TraceStore,
+    pub system_prompt: Option<String>,
+    pub models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
+    pub default_model: Option<ModelSelector>,
+    pub capabilities: Vec<Arc<dyn Capability>>,
+    pub sampling: Option<SamplingParams>,
+    pub clock: Option<Clock>,
     /// Root of the per-lineage scratchpad subtree (ARCHITECTURE §19.3).
-    scratch_root: PathBuf,
+    pub scratch_root: PathBuf,
     /// Content-addressed store outbound blobs land in (ARCHITECTURE §18.3).
-    blob_store: BlobStore,
+    pub blob_store: BlobStore,
     /// Per-tier pricing used to derive `AnswerMeta.cost_micro_usd` from
     /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
-    pricing: Pricing,
-    limits: AgentLimits,
+    pub pricing: Pricing,
+    pub limits: AgentLimits,
     /// Optional JSON schema for `Answer.extra` (ROADMAP T3.4). When set, the
     /// agent lifts the final JSON message into `extra` and validates it against
     /// this schema post-hoc — violations become `Answer.warnings`, never errors.
-    answer_schema: Option<Value>,
+    pub answer_schema: Option<Value>,
     /// Effective config with real provenance, supplied by the layer that knows
     /// where values came from (the toolkit's `build_agent`: manifest/env/flag,
     /// secrets redacted — ROADMAP T3.5). When `None`, [`Agent::config`] derives a
     /// builder/default-tagged view from its own fields.
-    config_entries: Option<Vec<ConfigEntry>>,
+    pub config_entries: Option<Vec<ConfigEntry>>,
     /// Manifest tools bound to a resource group (`group:<name>`, ARCHITECTURE
     /// §18.5, ROADMAP T3.7). Each is registered only for asks that carry a
     /// grant of sufficient access over its group.
-    group_bindings: Vec<GroupBinding>,
+    pub group_bindings: Vec<GroupBinding>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities
     /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
     /// invocation's child cost folds into this ask's `AnswerMeta`.
-    agent_tools: Vec<AgentToolSpec>,
+    pub agent_tools: Vec<AgentToolSpec>,
     /// Monotonic counter naming each ask's pending working directory — the one
     /// piece of host-side nondeterminism, kept off the trace (scratch content
     /// never enters the log; results carry only relative paths).
@@ -111,14 +111,14 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Start building an agent. `name`/`version` are stamped into every trace
-    /// header; `store` is where the immutable traces live.
-    pub fn builder(
-        name: impl Into<String>,
-        version: impl Into<String>,
-        store: TraceStore,
-    ) -> AgentBuilder {
-        AgentBuilder {
+    /// A fresh agent with defaults. `name`/`version` are stamped into every
+    /// trace header; `store` is where the immutable traces live. The scratch
+    /// and blob roots default to hidden subtrees inside the store root; set
+    /// the public fields to override anything.
+    pub fn new(name: impl Into<String>, version: impl Into<String>, store: TraceStore) -> Agent {
+        let scratch_root = store.root().join(DEFAULT_SCRATCH_DIRNAME);
+        let blob_store = BlobStore::new(store.root().join(DEFAULT_BLOBS_DIRNAME));
+        Agent {
             name: name.into(),
             version: version.into(),
             description: String::new(),
@@ -129,14 +129,15 @@ impl Agent {
             capabilities: Vec::new(),
             sampling: None,
             clock: None,
-            scratch_root: None,
-            blob_store: None,
+            scratch_root,
+            blob_store,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
             answer_schema: None,
             config_entries: None,
             group_bindings: Vec::new(),
             agent_tools: Vec::new(),
+            next_scratch: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -633,183 +634,6 @@ impl Agent {
             .collect();
         tiers.sort_by(|a, b| a.selector.cmp(&b.selector));
         tiers
-    }
-}
-
-/// Builds an [`Agent`]. Mirrors `hugr_host::EngineBuilder` for the pieces an
-/// agent definition declares; everything not set gets the host default.
-#[non_exhaustive]
-pub struct AgentBuilder {
-    name: String,
-    version: String,
-    description: String,
-    store: TraceStore,
-    system_prompt: Option<String>,
-    models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
-    default_model: Option<ModelSelector>,
-    capabilities: Vec<Arc<dyn Capability>>,
-    sampling: Option<SamplingParams>,
-    clock: Option<Clock>,
-    scratch_root: Option<PathBuf>,
-    blob_store: Option<BlobStore>,
-    pricing: Pricing,
-    limits: AgentLimits,
-    answer_schema: Option<Value>,
-    config_entries: Option<Vec<ConfigEntry>>,
-    group_bindings: Vec<GroupBinding>,
-    agent_tools: Vec<AgentToolSpec>,
-}
-
-impl AgentBuilder {
-    /// Set the human-facing description used by `Agent::describe`.
-    pub fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = description.into();
-        self
-    }
-
-    /// Register a model adapter under a logical selector. The first registered
-    /// selector is the default unless [`default_model`](Self::default_model)
-    /// overrides it (same rule as the engine builder).
-    pub fn model(mut self, selector: ModelSelector, adapter: Arc<dyn ModelAdapter>) -> Self {
-        self.models.push((selector, adapter));
-        self
-    }
-
-    /// Override which logical selector the turn policy calls.
-    pub fn default_model(mut self, selector: ModelSelector) -> Self {
-        self.default_model = Some(selector);
-        self
-    }
-
-    /// Grant a capability (tool). Sandbox-by-registration (§18.2): only what
-    /// is registered here exists for the agent — never register more than the
-    /// definition grants.
-    pub fn capability(mut self, capability: Arc<dyn Capability>) -> Self {
-        self.capabilities.push(capability);
-        self
-    }
-
-    /// Set the system prompt.
-    pub fn system_prompt(mut self, system: impl Into<String>) -> Self {
-        self.system_prompt = Some(system.into());
-        self
-    }
-
-    /// Set sampling parameters for every model request.
-    pub fn sampling(mut self, sampling: SamplingParams) -> Self {
-        self.sampling = Some(sampling);
-        self
-    }
-
-    /// Override the host clock (tests inject a deterministic counter so
-    /// recorded traces are reproducible).
-    pub fn clock(mut self, clock: Clock) -> Self {
-        self.clock = Some(clock);
-        self
-    }
-
-    /// Override the per-lineage scratchpad root (ARCHITECTURE §19.3). Defaults
-    /// to a hidden `.scratch` subtree inside the trace store root, so a store
-    /// dir carries its agents' scratch lineage alongside the traces.
-    pub fn scratch_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.scratch_root = Some(root.into());
-        self
-    }
-
-    /// Override the content-addressed blob store outbound blobs land in
-    /// (ARCHITECTURE §18.3). Defaults to a hidden `.blobs` subtree inside the
-    /// trace store root, so a store dir carries its agents' blobs alongside the
-    /// traces.
-    pub fn blob_store(mut self, store: BlobStore) -> Self {
-        self.blob_store = Some(store);
-        self
-    }
-
-    /// Set per-tier pricing for cost accounting (ARCHITECTURE §18.4). The
-    /// trace records selector + token usage; this host-side table turns those
-    /// durable facts into `AnswerMeta.cost_micro_usd`.
-    pub fn pricing(mut self, pricing: Pricing) -> Self {
-        self.pricing = pricing;
-        self
-    }
-
-    /// Set the runtime limits enforced on every ask (ROADMAP T3.1): the
-    /// counting/cost bounds refuse an over-budget model call, and `timeout_ms`
-    /// bounds the wall-clock turn. Exceeding one yields an error answer with a
-    /// typed reason (never an `AskError`). Also part of the T0.7 audit surface.
-    pub fn limits(mut self, limits: AgentLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Declare a JSON schema for `Answer.extra` (ROADMAP T3.4). When set, a
-    /// successful ask whose final message parses as JSON has that value lifted
-    /// into `extra` and validated against `schema`; violations surface as
-    /// `Answer.warnings` and never fail the ask (the extra is never
-    /// load-bearing). The validator is the minimal subset in `answer_schema`.
-    pub fn answer_schema(mut self, schema: Value) -> Self {
-        self.answer_schema = Some(schema);
-        self
-    }
-
-    /// Supply the effective configuration with real provenance and redaction
-    /// (ROADMAP T3.5). The layer that assembled the agent (the toolkit's
-    /// `build_agent`) knows whether each value came from the manifest, an env
-    /// var, or a flag, and which are secrets — it builds this list and
-    /// [`Agent::config`] returns it verbatim. Absent this, `config()` derives a
-    /// builder/default-tagged view from the agent's own fields.
-    pub fn config_entries(mut self, entries: Vec<ConfigEntry>) -> Self {
-        self.config_entries = Some(entries);
-        self
-    }
-
-    /// Bind a tool to a resource group (ARCHITECTURE §18.5, ROADMAP T3.7): the
-    /// `factory` builds the tool's capabilities from a granted group's
-    /// resources, and the tool is registered only for asks carrying a grant of
-    /// at least `required_access` over `group`. Sandbox-by-registration extended
-    /// to caller-supplied scopes — no grant, no capability.
-    pub fn group_binding(mut self, binding: GroupBinding) -> Self {
-        self.group_bindings.push(binding);
-        self
-    }
-
-    /// Grant a child agent as an ordinary `agent_<name>` tool (ARCHITECTURE
-    /// §20.5, ROADMAP T3.8). The child runs under its own manifest via the
-    /// spec's resolver; its `Answer` is the tool result and its cost folds into
-    /// this agent's `AnswerMeta`.
-    pub fn agent_tool(mut self, spec: AgentToolSpec) -> Self {
-        self.agent_tools.push(spec);
-        self
-    }
-
-    pub fn build(self) -> Agent {
-        let scratch_root = self
-            .scratch_root
-            .unwrap_or_else(|| self.store.root().join(DEFAULT_SCRATCH_DIRNAME));
-        let blob_store = self
-            .blob_store
-            .unwrap_or_else(|| BlobStore::new(self.store.root().join(DEFAULT_BLOBS_DIRNAME)));
-        Agent {
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            store: self.store,
-            system_prompt: self.system_prompt,
-            models: self.models,
-            default_model: self.default_model,
-            capabilities: self.capabilities,
-            sampling: self.sampling,
-            clock: self.clock,
-            scratch_root,
-            blob_store,
-            pricing: self.pricing,
-            limits: self.limits,
-            answer_schema: self.answer_schema,
-            config_entries: self.config_entries,
-            group_bindings: self.group_bindings,
-            agent_tools: self.agent_tools,
-            next_scratch: Arc::new(AtomicU64::new(0)),
-        }
     }
 }
 

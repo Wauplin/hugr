@@ -105,14 +105,18 @@ fn deterministic_clock() -> Clock {
 }
 
 fn looping_agent(store: TraceStore, limits: AgentLimits) -> Agent {
-    Agent::builder("limit-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), LoopingModel::new())
-        .capability(Arc::new(NoopTool))
-        .system_prompt("You loop.")
-        .clock(deterministic_clock())
-        .pricing(Pricing::new().with_tier("medium", 2.0, 5.0))
-        .limits(limits)
-        .build()
+    {
+        let mut agent = Agent::new("limit-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), LoopingModel::new()));
+        agent.capabilities.push(Arc::new(NoopTool));
+        agent.system_prompt = Some("You loop.".into());
+        agent.clock = Some(deterministic_clock());
+        agent.pricing = Pricing::new().with_tier("medium", 2.0, 5.0);
+        agent.limits = limits;
+        agent
+    }
 }
 
 /// The `{limit, value}` object placed on `Answer.extra` by a limit trip.
@@ -186,12 +190,16 @@ async fn max_cost_trips_after_the_running_total_crosses_the_bound() {
 async fn timeout_trips_and_persists_a_replayable_partial_trace() {
     let dir = tempdir();
     let store = TraceStore::new(dir.path());
-    let agent = Agent::builder("slow-agent", "0.1.0", store.clone())
-        .model(ModelSelector::named("medium"), Arc::new(SlowModel))
-        .system_prompt("You are slow.")
-        .clock(deterministic_clock())
-        .limits(AgentLimits::new().with_timeout_ms(50))
-        .build();
+    let agent = {
+        let mut agent = Agent::new("slow-agent", "0.1.0", store.clone());
+        agent
+            .models
+            .push((ModelSelector::named("medium"), Arc::new(SlowModel)));
+        agent.system_prompt = Some("You are slow.".into());
+        agent.clock = Some(deterministic_clock());
+        agent.limits = AgentLimits::new().with_timeout_ms(50);
+        agent
+    };
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
@@ -209,11 +217,15 @@ async fn timeout_trips_and_persists_a_replayable_partial_trace() {
 async fn no_limits_leaves_behavior_unchanged() {
     let dir = tempdir();
     let store = TraceStore::new(dir.path());
-    let agent = Agent::builder("plain-agent", "0.1.0", store.clone())
-        .model(ModelSelector::named("medium"), Arc::new(FastModel))
-        .system_prompt("You answer.")
-        .clock(deterministic_clock())
-        .build();
+    let agent = {
+        let mut agent = Agent::new("plain-agent", "0.1.0", store.clone());
+        agent
+            .models
+            .push((ModelSelector::named("medium"), Arc::new(FastModel)));
+        agent.system_prompt = Some("You answer.".into());
+        agent.clock = Some(deterministic_clock());
+        agent
+    };
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 

@@ -1,9 +1,12 @@
-//! `hugr-agent` — the common subagent runtime API (ARCHITECTURE §18–19).
+//! `hugr-agent` — the common subagent runtime (ARCHITECTURE §18–19).
 //!
 //! This crate turns "an engine + a trace dir + a config" into a callable
-//! subagent with a uniform contract: [`Ask`] in, [`Answer`] out. One Rust API
-//! is the source of truth; every wire shape (CLI JSON, Python dict, MCP tool
-//! result) is a serialization of it.
+//! subagent with a uniform contract: [`Ask`] in, [`Answer`] out. It is an
+//! **internal layer**: the supported way to assemble an [`Agent`] is a
+//! definition folder through `hugr-toolkit`'s `build_agent` (`hugr run` / a
+//! built binary), and the supported calling surfaces are the CLI JSON
+//! contract and `--mcp-serve`. The Rust API here is the shared implementation
+//! those surfaces serialize, not a user-facing entry point.
 //!
 //! Contract design rules (ARCHITECTURE §18.1):
 //!
@@ -13,8 +16,6 @@
 //!   on data, not on exceptions.
 //! - `extra` is the narrow-waist escape hatch: agent-specific structure rides
 //!   there, never as new contract fields.
-//! - Every public type is `#[non_exhaustive]` with constructors, so the
-//!   contract can grow without breaking hosts or surfaces.
 
 mod agent;
 mod agent_tool;
@@ -26,9 +27,9 @@ mod scratch;
 mod store;
 
 pub use agent::{
-    Agent, AgentBuilder, AgentCard, AgentConfig, AgentLimits, AskError, ConfigEntry,
-    ConfigProvenance, GroupBinding, GroupCapabilityFactory, ModelTierCard, Pricing, TierPrice,
-    ToolCard, ToolPrivilege,
+    Agent, AgentCard, AgentConfig, AgentLimits, AskError, ConfigEntry, ConfigProvenance,
+    GroupBinding, GroupCapabilityFactory, ModelTierCard, Pricing, TierPrice, ToolCard,
+    ToolPrivilege,
 };
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
 pub use answer_schema::validate_extra;

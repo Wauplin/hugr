@@ -58,20 +58,28 @@ fn deterministic_clock() -> Clock {
 }
 
 fn agent(store: TraceStore, replies: Vec<&'static str>) -> Agent {
-    Agent::builder("test-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new(replies))
-        .system_prompt("You answer tersely.")
-        .clock(deterministic_clock())
-        .build()
+    {
+        let mut agent = Agent::new("test-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new(replies)));
+        agent.system_prompt = Some("You answer tersely.".into());
+        agent.clock = Some(deterministic_clock());
+        agent
+    }
 }
 
 fn priced_agent(store: TraceStore, replies: Vec<&'static str>) -> Agent {
-    Agent::builder("test-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new(replies))
-        .system_prompt("You answer tersely.")
-        .clock(deterministic_clock())
-        .pricing(Pricing::new().with_tier("medium", 2.0, 5.0))
-        .build()
+    {
+        let mut agent = Agent::new("test-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new(replies)));
+        agent.system_prompt = Some("You answer tersely.".into());
+        agent.clock = Some(deterministic_clock());
+        agent.pricing = Pricing::new().with_tier("medium", 2.0, 5.0);
+        agent
+    }
 }
 
 /// Read a stored trace's raw bytes for a byte-for-byte unchanged assertion.

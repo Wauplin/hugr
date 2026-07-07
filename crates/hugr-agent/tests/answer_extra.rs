@@ -46,18 +46,22 @@ fn clock() -> Clock {
 }
 
 fn agent_with_schema(store: TraceStore, reply: &'static str) -> Agent {
-    Agent::builder("test-agent", "0.1.0", store)
-        .model(ModelSelector::named("medium"), MockModel::new([reply]))
-        .system_prompt("Answer as JSON.")
-        .clock(clock())
-        .answer_schema(json!({
+    {
+        let mut agent = Agent::new("test-agent", "0.1.0", store);
+        agent
+            .models
+            .push((ModelSelector::named("medium"), MockModel::new([reply])));
+        agent.system_prompt = Some("Answer as JSON.".into());
+        agent.clock = Some(clock());
+        agent.answer_schema = Some(json!({
             "type": "object",
             "required": ["related_documents"],
             "properties": {
                 "related_documents": { "type": "array", "items": { "type": "string" } }
             }
-        }))
-        .build()
+        }));
+        agent
+    }
 }
 
 #[tokio::test]

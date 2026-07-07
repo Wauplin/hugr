@@ -116,14 +116,32 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
                 1
             }
         },
-        Mode::Ask => run_ask(&agent, args, started, pretty).await,
+        Mode::Ask => {
+            run_ask(
+                &agent,
+                args.question,
+                args.trace,
+                &args.blobs,
+                started,
+                pretty,
+            )
+            .await
+        }
     }
 }
 
 /// Run one ask and print its answer. Missing question, blob problems, and infra
-/// `AskError`s all surface as `status: "error"` answers (exit 0).
-async fn run_ask(agent: &Agent, args: SurfaceArgs, started: Instant, pretty: bool) -> i32 {
-    let Some(question) = args.question else {
+/// `AskError`s all surface as `status: "error"` answers (exit 0). Shared by the
+/// built binary and `hugr run` — the one run path (ARCHITECTURE §21.1).
+pub async fn run_ask(
+    agent: &Agent,
+    question: Option<String>,
+    trace: Option<String>,
+    blob_paths: &[PathBuf],
+    started: Instant,
+    pretty: bool,
+) -> i32 {
+    let Some(question) = question else {
         return print_answer(
             &error_answer(
                 "no question provided (use --describe/--config/--traces for the audit views)",
@@ -133,8 +151,8 @@ async fn run_ask(agent: &Agent, args: SurfaceArgs, started: Instant, pretty: boo
         );
     };
 
-    let mut blobs = Vec::with_capacity(args.blobs.len());
-    for path in &args.blobs {
+    let mut blobs = Vec::with_capacity(blob_paths.len());
+    for path in blob_paths {
         match blob_handle_from_path(path) {
             Ok(handle) => blobs.push(handle),
             Err(err) => return print_answer(&error_answer(err, started), pretty),
@@ -142,7 +160,7 @@ async fn run_ask(agent: &Agent, args: SurfaceArgs, started: Instant, pretty: boo
     }
 
     let mut ask = Ask::new(question).with_blobs(blobs);
-    if let Some(trace) = args.trace {
+    if let Some(trace) = trace {
         ask = ask.with_trace_id(TraceId::new(trace));
     }
 
@@ -313,7 +331,9 @@ fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: 
     }
 }
 
-fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
+/// An error-status [`Answer`] stamped with the elapsed duration. Shared by
+/// every surface that must turn a failure into an answer (§18.1).
+pub fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
     let meta = AnswerMeta::new().with_duration_ms(started.elapsed().as_millis() as u64);
     Answer::new(
         AnswerStatus::Error,
@@ -323,7 +343,9 @@ fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
     )
 }
 
-fn print_answer(answer: &Answer, pretty: bool) -> i32 {
+/// Print one JSON answer to stdout. The ask path always exits 0 — errors are
+/// answers.
+pub fn print_answer(answer: &Answer, pretty: bool) -> i32 {
     print_json_or_die(answer, pretty);
     0 // the ask path always exits 0 — errors are answers
 }

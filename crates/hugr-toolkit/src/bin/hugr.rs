@@ -10,11 +10,12 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
-use hugr_agent::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
+use hugr_agent::TraceId;
 use hugr_toolkit::AgentDefinition;
 use hugr_toolkit::build::{BuildOptions, build as run_build};
 use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
+use hugr_toolkit::surface::{error_answer, print_answer, run_ask};
 use hugr_toolkit::traces::render_lineage;
 
 #[derive(Parser)]
@@ -121,8 +122,8 @@ struct RunArgs {
     /// Resume/fork from an existing trace id (writes a new child trace).
     #[arg(long)]
     trace: Option<String>,
-    /// Emit the JSON answer (the default output; accepted for symmetry with
-    /// built binaries).
+    /// Emit compact single-line JSON (default is pretty-printed), matching the
+    /// built binary's flag.
     #[arg(long)]
     json: bool,
 }
@@ -340,11 +341,16 @@ fn build(args: BuildArgs) {
 
 async fn run(args: RunArgs) {
     let started = Instant::now();
+    let pretty = !args.json;
 
-    // A bad manifest is an error answer, not a panic (§21.1).
+    // A bad manifest is an error answer, not a panic (§21.1) — shared with the
+    // built binary via `surface::error_answer`/`print_answer`.
     let def = match AgentDefinition::load(&args.agent_dir) {
         Ok(def) => def,
-        Err(err) => return print_error(err.to_string(), started),
+        Err(err) => {
+            print_answer(&error_answer(err.to_string(), started), pretty);
+            return;
+        }
     };
     for warning in &def.warnings {
         eprintln!("warning: {}", warning.message);
@@ -352,41 +358,23 @@ async fn run(args: RunArgs) {
 
     let (agent, warnings) = match build_agent(&def).await {
         Ok(built) => built,
-        Err(err) => return print_error(err.to_string(), started),
+        Err(err) => {
+            print_answer(&error_answer(err.to_string(), started), pretty);
+            return;
+        }
     };
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
 
-    let mut ask = Ask::new(args.question);
-    if let Some(trace) = args.trace {
-        ask = ask.with_trace_id(TraceId::new(trace));
-    }
-
-    match agent.ask(ask).await {
-        Ok(answer) => print_answer(&answer),
-        // Infrastructure failure (unknown parent id, store write, …) → error
-        // answer at the surface boundary (§18.1).
-        Err(err) => print_error(err.to_string(), started),
-    }
-    // Silence the unused flag; output is always the JSON answer for now.
-    let _ = args.json;
-}
-
-fn print_answer(answer: &Answer) {
-    match serde_json::to_string_pretty(answer) {
-        Ok(json) => println!("{json}"),
-        Err(err) => eprintln!("error: serializing answer: {err}"),
-    }
-}
-
-fn print_error(message: String, started: Instant) {
-    let meta = AnswerMeta::new().with_duration_ms(started.elapsed().as_millis() as u64);
-    let answer = Answer::new(
-        AnswerStatus::Error,
-        message,
-        TraceId::new(String::new()),
-        meta,
-    );
-    print_answer(&answer);
+    // The same run path as the built binary (ARCHITECTURE §21.1).
+    run_ask(
+        &agent,
+        Some(args.question),
+        args.trace,
+        &[],
+        started,
+        pretty,
+    )
+    .await;
 }
