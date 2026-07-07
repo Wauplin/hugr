@@ -29,21 +29,6 @@ pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
         .map(|policy| Box::new(policy) as Box<dyn TurnPolicy>)
 }
 
-/// How to seed a **sub-agent's** log when it is spawned (ARCHITECTURE §14). A
-/// fork is *copying a log prefix*: the child then evolves independently. Values
-/// are compared, never parsed — the brain resolves this to the actual prefix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum AgentSeed {
-    /// Empty log — a fully isolated child (no shared context).
-    Fresh,
-    /// Copy the parent's log entries up to and including this `seq` — shared
-    /// context, then diverge (also the primitive under branch/rewind).
-    ForkAt { seq: u64 },
-    /// Copy the entire current parent log — shared full context.
-    ForkFull,
-}
-
 /// Strategy for driving the turn loop. Implementations must be **pure**:
 /// [`project_context`](TurnPolicy::project_context) only *reads* the log (no
 /// IO, no model calls).
@@ -77,18 +62,6 @@ pub trait TurnPolicy: Send + Sync {
     fn is_background(&self, _capability: &str) -> bool {
         false
     }
-
-    /// Whether invoking `capability` spawns a **sub-agent** rather than an
-    /// ordinary capability, and if so how to seed the child's log — fork the
-    /// parent's context ([`ForkFull`](AgentSeed::ForkFull) /
-    /// [`ForkAt`](AgentSeed::ForkAt)) or start [`Fresh`](AgentSeed::Fresh)
-    /// (ARCHITECTURE §13/§14). `None` (the default) means an ordinary
-    /// capability. This is *strategy*, so it lives here, not in the reducer:
-    /// the brain merely emits [`Command::StartAgent`](crate::Command::StartAgent)
-    /// instead of `StartCapability` when this returns `Some`.
-    fn agent_seed(&self, _capability: &str) -> Option<AgentSeed> {
-        None
-    }
 }
 
 /// A simple, configurable [`TurnPolicy`] with a **trivial pass-through
@@ -109,10 +82,6 @@ pub struct StaticPolicy {
     tools: Vec<ToolSchema>,
     permissioned: Vec<String>,
     background: Vec<String>,
-    /// Capability names that spawn a sub-agent, each with its seed strategy.
-    /// `#[serde(default)]` so traces recorded before Phase 6 still decode.
-    #[serde(default)]
-    agents: Vec<(String, AgentSeed)>,
     params: SamplingParams,
     system: Option<String>,
     #[serde(default)]
@@ -126,7 +95,6 @@ impl Default for StaticPolicy {
             tools: Vec::new(),
             permissioned: Vec::new(),
             background: Vec::new(),
-            agents: Vec::new(),
             params: SamplingParams::default(),
             system: None,
             context_budget: TokenBudget::default(),
@@ -161,22 +129,6 @@ impl StaticPolicy {
     /// turn, so the model keeps streaming while they run (ARCHITECTURE §6.3).
     pub fn with_background(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.background = names.into_iter().collect();
-        self
-    }
-
-    /// Treat `name` as a **sub-agent spawner**: invoking it starts a child brain
-    /// seeded per `seed` rather than an ordinary capability (ARCHITECTURE §13/§14).
-    pub fn with_agent(mut self, name: impl Into<String>, seed: AgentSeed) -> Self {
-        self.agents.push((name.into(), seed));
-        self
-    }
-
-    /// Treat each of these capability names as a sub-agent spawner, sharing the
-    /// parent's full context ([`AgentSeed::ForkFull`]). Use
-    /// [`with_agent`](Self::with_agent) for a different seed strategy.
-    pub fn with_agents(mut self, names: impl IntoIterator<Item = String>) -> Self {
-        self.agents
-            .extend(names.into_iter().map(|n| (n, AgentSeed::ForkFull)));
         self
     }
 
@@ -386,13 +338,6 @@ impl TurnPolicy for StaticPolicy {
 
     fn is_background(&self, capability: &str) -> bool {
         self.background.iter().any(|c| c == capability)
-    }
-
-    fn agent_seed(&self, capability: &str) -> Option<AgentSeed> {
-        self.agents
-            .iter()
-            .find(|(name, _)| name == capability)
-            .map(|(_, seed)| *seed)
     }
 }
 

@@ -18,7 +18,7 @@ use serde_json::json;
 use crate::command::{Command, DoneReason, OutputEvent, PermissionRequest};
 use crate::event::{Decision, Event, SteerMode};
 use crate::model::{ContextPlan, ModelDelta, ModelOutput, ToolCall, Usage};
-use crate::policy::{AgentSeed, StaticPolicy, TurnPolicy};
+use crate::policy::{StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Value};
 use crate::record::{LogEntry, OpMeta, OpOutcome, Record};
 use crate::state::{BrainState, OpKind};
@@ -47,8 +47,8 @@ impl Brain {
     }
 
     /// Create a brain **seeded from an inherited log** — the fork primitive
-    /// (ARCHITECTURE §14). A sub-agent (`Command::StartAgent`'s `seed`) or a
-    /// resumed session starts from a copy of a log prefix; the brain re-derives
+    /// (ARCHITECTURE §14). A fork or a resumed session starts from a copy of a
+    /// log prefix; the brain re-derives
     /// its state by folding it (§3.1). No IO: the recorded ops are not re-run,
     /// only re-folded to reconstruct `BrainState`.
     pub fn from_log(policy: Box<dyn TurnPolicy>, log: Vec<LogEntry>) -> Self {
@@ -109,17 +109,6 @@ impl Brain {
                 error,
                 est_tokens,
             } => self.on_capability_error(op, error, est_tokens),
-
-            Event::AgentDone {
-                op,
-                result,
-                est_tokens,
-            } => self.on_agent_done(op, result, est_tokens),
-            Event::AgentError {
-                op,
-                error,
-                est_tokens,
-            } => self.on_agent_error(op, error, est_tokens),
 
             Event::PermissionDecision {
                 op,
@@ -310,17 +299,6 @@ impl Brain {
         self.finish_tool_result(op, error.clone(), OpOutcome::Error(error), est_tokens);
     }
 
-    fn on_agent_done(&mut self, op: OpId, result: Value, est_tokens: u32) {
-        // A sub-agent result returns to the parent as a tool-result-shaped value
-        // the next model turn consumes (ARCHITECTURE §13.1/§14.3): the child's
-        // digest flows back as *one* value; forks diverge, results flow back.
-        self.finish_tool_result(op, result, OpOutcome::Ok, est_tokens);
-    }
-
-    fn on_agent_error(&mut self, op: OpId, error: Value, est_tokens: u32) {
-        self.finish_tool_result(op, error.clone(), OpOutcome::Error(error), est_tokens);
-    }
-
     fn on_permission_decision(&mut self, op: OpId, decision: Decision, est_tokens: u32) {
         // Only an op actually awaiting permission may consume a decision. Peek
         // before removing: a stray/duplicate decision (e.g. a second `Allow`
@@ -491,30 +469,6 @@ impl Brain {
     /// start it immediately.
     fn begin_tool_call(&mut self, call: ToolCall) {
         let op = self.state.alloc_op();
-        // A policy-designated sub-agent (ARCHITECTURE §13/§14): fork the log
-        // prefix per the seed strategy and hand it to the host as a child brain.
-        // The brain owns the log, so resolving the fork is a pure operation here.
-        if let Some(seed) = self.policy.agent_seed(&call.name) {
-            let seed_log = self.resolve_seed(seed);
-            // The agent *name* is typed on the command (the host branches on
-            // which agent to run); the model's args pass through **untouched**
-            // as the opaque config — the brain never edits opaque payloads
-            // (ARCHITECTURE §2.4).
-            self.state.mark(
-                op,
-                OpKind::Agent {
-                    name: call.name.clone(),
-                    call_id: call.id,
-                },
-            );
-            self.state.push_command(Command::StartAgent {
-                op,
-                agent: call.name,
-                config: call.args,
-                seed: seed_log,
-            });
-            return;
-        }
         if self.policy.needs_permission(&call.name) {
             self.state.mark(
                 op,
@@ -555,23 +509,6 @@ impl Brain {
         );
         self.state
             .push_command(Command::StartCapability { op, name, args });
-    }
-
-    /// Resolve a sub-agent [`AgentSeed`] into the actual log prefix to fork
-    /// (ARCHITECTURE §14). Pure: the brain owns the log. Copy-on-write is a host
-    /// optimization; the contract is just "the child starts from these entries."
-    fn resolve_seed(&self, seed: AgentSeed) -> Vec<LogEntry> {
-        match seed {
-            AgentSeed::Fresh => Vec::new(),
-            AgentSeed::ForkFull => self.state.log().to_vec(),
-            AgentSeed::ForkAt { seq } => self
-                .state
-                .log()
-                .iter()
-                .filter(|e| e.seq.0 <= seq)
-                .cloned()
-                .collect(),
-        }
     }
 
     fn cancel_all_inflight(&mut self) {

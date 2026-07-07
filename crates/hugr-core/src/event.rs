@@ -68,20 +68,6 @@ pub enum Event {
         est_tokens: u32,
     },
 
-    // --- sub-agents (full handling lands in Phase 6) -------------------------
-    AgentDone {
-        op: OpId,
-        result: Value,
-        #[serde(default)]
-        est_tokens: u32,
-    },
-    AgentError {
-        op: OpId,
-        error: Value,
-        #[serde(default)]
-        est_tokens: u32,
-    },
-
     // --- brain asks ----------------------------------------------------------
     PermissionDecision {
         op: OpId,

@@ -22,13 +22,13 @@
 //! (an unknown parent id, a store write error) return [`AskError`]; surfaces
 //! convert those to error answers at their own boundary (T0.8).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use hugr_core::{LogEntry, ModelSelector, OpId, Record, SamplingParams, ToolSchema};
+use hugr_core::{LogEntry, ModelSelector, Record, SamplingParams, ToolSchema};
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter};
 use hugr_replay::{BlobStore, Trace};
 use serde::{Deserialize, Serialize};
@@ -1168,50 +1168,7 @@ fn meta_from_trace(
     let mut aggregate = SpendAggregate::default();
     aggregate_log(new_entries, pricing, &mut aggregate);
 
-    let child_ops: BTreeSet<OpId> = new_entries
-        .iter()
-        .filter_map(|entry| match &entry.record {
-            Record::OpEnded { op, meta, .. } if meta.model.is_none() && meta.usage.is_none() => {
-                Some(*op)
-            }
-            _ => None,
-        })
-        .collect();
-    for child in &trace.children {
-        if child_ops.contains(&child.op) {
-            let child_baseline = child.seed.len().min(child.trace.log.len());
-            aggregate_trace(&child.trace, child_baseline, pricing, &mut aggregate);
-        }
-    }
-
     aggregate.into_meta(duration_ms)
-}
-
-fn aggregate_trace(
-    trace: &Trace,
-    baseline: usize,
-    pricing: &Pricing,
-    aggregate: &mut SpendAggregate,
-) {
-    let baseline = baseline.min(trace.log.len());
-    let new_entries = &trace.log[baseline..];
-    aggregate_log(new_entries, pricing, aggregate);
-
-    let child_ops: BTreeSet<OpId> = new_entries
-        .iter()
-        .filter_map(|entry| match &entry.record {
-            Record::OpEnded { op, meta, .. } if meta.model.is_none() && meta.usage.is_none() => {
-                Some(*op)
-            }
-            _ => None,
-        })
-        .collect();
-    for child in &trace.children {
-        if child_ops.contains(&child.op) {
-            let child_baseline = child.seed.len().min(child.trace.log.len());
-            aggregate_trace(&child.trace, child_baseline, pricing, aggregate);
-        }
-    }
 }
 
 fn aggregate_log(new_entries: &[LogEntry], pricing: &Pricing, aggregate: &mut SpendAggregate) {

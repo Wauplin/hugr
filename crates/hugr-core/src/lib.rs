@@ -30,9 +30,8 @@
 //! This started as the Phase 0 deliverable (see `docs/ROADMAP.md`): the turn loop
 //! (`user → model → tool → model → done`), the op table, a trivial pass-through
 //! [`projection`](TurnPolicy::project_context), and deterministic replay. Later
-//! phases added, still sans-IO: cancellation & background ops, and
-//! **sub-agents & forks** ([`Command::StartAgent`], [`AgentSeed`],
-//! [`Brain::from_log`]). Blob stores remain host-side; resume lives in the
+//! phases added, still sans-IO: cancellation & background ops, and **forks**
+//! ([`Brain::from_log`]). Blob stores remain host-side; resume lives in the
 //! host (`hugr-replay`).
 
 #![forbid(unsafe_code)]
@@ -57,7 +56,7 @@ pub use model::{
     ContextPlan, ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest,
     ModelSelector, Role, SamplingParams, StopReason, TokenBudget, ToolCall, ToolSchema, Usage,
 };
-pub use policy::{AgentSeed, StaticPolicy, TurnPolicy, decode_policy};
+pub use policy::{StaticPolicy, TurnPolicy, decode_policy};
 pub use primitives::{OpId, Seq, Timestamp, Value};
 pub use record::{LogEntry, OpMeta, OpOutcome, Record};
 pub use state::{BrainState, InflightOp, OpKind};

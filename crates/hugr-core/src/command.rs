@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelRequest, ModelSelector};
 use crate::primitives::{OpId, Value};
-use crate::record::LogEntry;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -25,28 +24,6 @@ pub enum Command {
     /// Invoke a host capability (a tool). Covers fs, http, MCP tools —
     /// there are no privileged built-ins. `args` is opaque to the brain.
     StartCapability { op: OpId, name: String, args: Value },
-
-    /// Spawn a **sub-agent**: a child `hugr-core` instance the host runs as an
-    /// op (ARCHITECTURE §13). `agent` is the **typed** agent name (the tool the
-    /// model called): the host legitimately branches on which agent to run —
-    /// op-lifecycle-adjacent, so it is typed per the narrow waist (ARCHITECTURE
-    /// §2.4). `config` is opaque to the brain — the model's tool-call args
-    /// forwarded **untouched** (the host interprets the child's
-    /// prompt/model/tools). `seed` is the child's initial log — a **fork** of
-    /// the parent's log prefix (ARCHITECTURE §14), resolved here from the
-    /// parent's log by the [`TurnPolicy`](crate::TurnPolicy)'s
-    /// [`agent_seed`](crate::TurnPolicy::agent_seed); it is empty for an
-    /// isolated (`Fresh`) child. The child's result returns via
-    /// [`Event::AgentDone`](crate::Event::AgentDone).
-    StartAgent {
-        op: OpId,
-        /// The agent tool's name (`serde(default)` so traces recorded before
-        /// this field existed still deserialize).
-        #[serde(default)]
-        agent: String,
-        config: Value,
-        seed: Vec<LogEntry>,
-    },
 
     /// Request permission for a pending action; the host's policy decides and
     /// replies with [`Event::PermissionDecision`](crate::Event::PermissionDecision).

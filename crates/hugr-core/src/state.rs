@@ -236,10 +236,6 @@ pub enum OpKind {
         args: Value,
         call_id: String,
     },
-    /// A sub-agent op in progress (ARCHITECTURE §13). Like a capability it
-    /// blocks the turn and returns a tool-result-shaped value; it carries the
-    /// originating model `tool_call` id so its result correlates (§13.1).
-    Agent { name: String, call_id: String },
 }
 
 impl OpKind {
@@ -254,9 +250,7 @@ impl OpKind {
     /// The capability (or sub-agent) name, if this op has one.
     pub(crate) fn capability_name(&self) -> Option<&str> {
         match self {
-            OpKind::Capability { name, .. }
-            | OpKind::AwaitingPermission { name, .. }
-            | OpKind::Agent { name, .. } => Some(name),
+            OpKind::Capability { name, .. } | OpKind::AwaitingPermission { name, .. } => Some(name),
             _ => None,
         }
     }
@@ -264,9 +258,9 @@ impl OpKind {
     /// The originating model `tool_call` id, if this op has one.
     pub(crate) fn call_id(&self) -> Option<&str> {
         match self {
-            OpKind::Capability { call_id, .. }
-            | OpKind::AwaitingPermission { call_id, .. }
-            | OpKind::Agent { call_id, .. } => Some(call_id),
+            OpKind::Capability { call_id, .. } | OpKind::AwaitingPermission { call_id, .. } => {
+                Some(call_id)
+            }
             _ => None,
         }
     }
@@ -279,7 +273,7 @@ impl OpKind {
     pub(crate) fn blocks_turn(&self) -> bool {
         match self {
             OpKind::Capability { background, .. } => !background,
-            OpKind::AwaitingPermission { .. } | OpKind::Agent { .. } => true,
+            OpKind::AwaitingPermission { .. } => true,
             OpKind::Model { .. } => false,
         }
     }
