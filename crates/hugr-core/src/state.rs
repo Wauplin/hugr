@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::command::Command;
 use crate::model::ModelSelector;
 use crate::primitives::{ObjectKey, OpId, Timestamp, Value};
-use crate::record::{LogEntry, SeqRange};
+use crate::record::LogEntry;
 
 /// The brain's working state. Derived from [`log`](BrainState::log); never the
 /// source of truth itself.
@@ -169,11 +169,8 @@ impl BrainState {
 
     pub(crate) fn buffer_model_text(&mut self, op: OpId, text: &str) {
         if let Some(entry) = self.inflight.get_mut(&op) {
-            match &mut entry.kind {
-                OpKind::Model { text_so_far, .. } | OpKind::Compaction { text_so_far, .. } => {
-                    text_so_far.push_str(text)
-                }
-                _ => {}
+            if let OpKind::Model { text_so_far, .. } = &mut entry.kind {
+                text_so_far.push_str(text)
             }
         }
     }
@@ -248,19 +245,6 @@ pub enum OpKind {
         selector: ModelSelector,
         text_so_far: String,
     },
-    /// A small-tier model call that summarizes an exact log span for lossless
-    /// compaction (ARCHITECTURE §3.4). `resume_turn` distinguishes an automatic
-    /// pass (resumes the real model turn after checkpointing) from a
-    /// host-triggered manual pass (returns to idle). `OpKind` is never
-    /// persisted (`BrainState` is always re-derived from the log), so this
-    /// shape carries no serialization back-compat burden.
-    Compaction {
-        selector: ModelSelector,
-        summary_of: SeqRange,
-        est_tokens_in: u32,
-        resume_turn: bool,
-        text_so_far: String,
-    },
     /// A capability (tool) invocation in progress. `background` ops do **not**
     /// block the model turn (ARCHITECTURE §4.2/§6.3): the turn resumes while they
     /// keep running, so a model stream and a long shell op run simultaneously.
@@ -285,9 +269,7 @@ impl OpKind {
     /// The model selector, if this is a model op (for [`OpMeta`](crate::OpMeta)).
     pub(crate) fn selector(&self) -> Option<ModelSelector> {
         match self {
-            OpKind::Model { selector, .. } | OpKind::Compaction { selector, .. } => {
-                Some(selector.clone())
-            }
+            OpKind::Model { selector, .. } => Some(selector.clone()),
             _ => None,
         }
     }
@@ -321,11 +303,11 @@ impl OpKind {
         match self {
             OpKind::Capability { background, .. } => !background,
             OpKind::AwaitingPermission { .. } | OpKind::Agent { .. } => true,
-            OpKind::Model { .. } | OpKind::Compaction { .. } => false,
+            OpKind::Model { .. } => false,
         }
     }
 
     pub(crate) fn is_model_call(&self) -> bool {
-        matches!(self, OpKind::Model { .. } | OpKind::Compaction { .. })
+        matches!(self, OpKind::Model { .. })
     }
 }

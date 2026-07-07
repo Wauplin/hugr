@@ -200,8 +200,6 @@ impl ContextSource {
 #[non_exhaustive]
 pub enum ContextDisposition {
     Included { block: ContextBlock },
-    Referenced { block: ContextBlock },
-    Summarized { block: ContextBlock },
     Omitted,
 }
 
@@ -210,23 +208,13 @@ impl ContextDisposition {
         Self::Included { block }
     }
 
-    pub fn referenced(block: ContextBlock) -> Self {
-        Self::Referenced { block }
-    }
-
-    pub fn summarized(block: ContextBlock) -> Self {
-        Self::Summarized { block }
-    }
-
     pub fn omitted() -> Self {
         Self::Omitted
     }
 
     fn as_request_block(&self) -> Option<&ContextBlock> {
         match self {
-            ContextDisposition::Included { block }
-            | ContextDisposition::Referenced { block }
-            | ContextDisposition::Summarized { block } => Some(block),
+            ContextDisposition::Included { block } => Some(block),
             ContextDisposition::Omitted => None,
         }
     }
@@ -239,9 +227,6 @@ impl ContextDisposition {
 #[non_exhaustive]
 pub struct ContextBudgetTotals {
     pub used_tokens: u64,
-    pub included_tokens: u64,
-    pub referenced_tokens: u64,
-    pub summarized_tokens: u64,
     pub omitted_tokens: u64,
 }
 
@@ -254,15 +239,6 @@ impl ContextBudgetTotals {
         let est_tokens = u64::from(est_tokens);
         match disposition {
             ContextDisposition::Included { .. } => {
-                self.included_tokens += est_tokens;
-                self.used_tokens += est_tokens;
-            }
-            ContextDisposition::Referenced { .. } => {
-                self.referenced_tokens += est_tokens;
-                self.used_tokens += est_tokens;
-            }
-            ContextDisposition::Summarized { .. } => {
-                self.summarized_tokens += est_tokens;
                 self.used_tokens += est_tokens;
             }
             ContextDisposition::Omitted => {
@@ -314,9 +290,7 @@ pub enum Role {
     Tool,
 }
 
-/// A piece of content within a [`ContextBlock`]. A large payload can be carried
-/// as a `Ref` to a content-addressed blob (the blob store arrives in Phase 3);
-/// for Phase 0 content is inline.
+/// A piece of content within a [`ContextBlock`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ContentPart {
@@ -331,12 +305,6 @@ pub enum ContentPart {
     ToolResult {
         id: String,
         result: Value,
-    },
-    /// A reference to an evicted/large payload (rehydratable). Phase 3+.
-    Ref {
-        reference: String,
-        summary: String,
-        est_tokens: u32,
     },
 }
 

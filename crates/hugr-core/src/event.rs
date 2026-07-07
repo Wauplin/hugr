@@ -24,10 +24,6 @@ pub enum Event {
     },
     /// Pure control signal: cancel current activity, no new content (e.g. ESC).
     UserAbort,
-    /// Pure control signal: request one lossless compaction pass over the
-    /// current projection. Hosts fire this from `/compact` or a UI button; the
-    /// reducer deterministically selects the span via [`TurnPolicy`].
-    CompactContext,
 
     // --- model streaming (transport only; never logged) ---------------------
     ModelDelta {

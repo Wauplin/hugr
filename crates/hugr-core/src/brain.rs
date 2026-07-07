@@ -17,10 +17,10 @@ use serde_json::json;
 
 use crate::command::{Command, DoneReason, OutputEvent, PermissionRequest};
 use crate::event::{Decision, Event, SteerMode, VersionRef};
-use crate::model::{ContextPlan, ModelDelta, ModelOutput, ModelSelector, ToolCall, Usage};
+use crate::model::{ContextPlan, ModelDelta, ModelOutput, ToolCall, Usage};
 use crate::policy::{AgentSeed, StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Value};
-use crate::record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage};
+use crate::record::{LogEntry, OpMeta, OpOutcome, Record};
 use crate::state::{BrainState, OpKind};
 
 /// The pure, sans-IO agent core. Construct one with a [`TurnPolicy`], feed it
@@ -86,7 +86,6 @@ impl Brain {
                 est_tokens,
             } => self.on_user_input(content, mode, est_tokens),
             Event::UserAbort => self.on_user_abort(),
-            Event::CompactContext => self.on_compact_context(),
 
             Event::ModelDelta { op, delta } => self.on_model_delta(op, delta),
             Event::ModelDone {
@@ -183,46 +182,22 @@ impl Brain {
     fn on_model_delta(&mut self, op: OpId, delta: ModelDelta) {
         // Deltas are transport only: accumulate cheaply for live UI and forward
         // a cosmetic event. Never written to the log (ARCHITECTURE §4.5).
-        let is_compaction = matches!(
-            self.state.get_op(op).map(|entry| &entry.kind),
-            Some(OpKind::Compaction { .. })
-        );
         match delta {
             ModelDelta::Text(t) => {
                 self.state.buffer_model_text(op, &t);
-                if !is_compaction {
-                    self.emit(OutputEvent::ModelText { op, text: t });
-                }
+                self.emit(OutputEvent::ModelText { op, text: t });
             }
             ModelDelta::Reasoning(t) => {
-                if !is_compaction {
-                    self.emit(OutputEvent::ModelReasoning { op, text: t });
-                }
+                self.emit(OutputEvent::ModelReasoning { op, text: t });
             }
             ModelDelta::ToolCallStart { id, name } => {
-                if !is_compaction {
-                    self.emit(OutputEvent::ToolCallStarted { op, id, name });
-                }
+                self.emit(OutputEvent::ToolCallStarted { op, id, name });
             }
             ModelDelta::ToolCallArgsDelta { .. } | ModelDelta::ToolCallEnd { .. } => {}
         }
     }
 
     fn on_model_done(&mut self, op: OpId, output: ModelOutput, usage: Usage, est_tokens: u32) {
-        if let Some((summary_of, est_tokens_in, tier, resume_turn)) = self.compaction_op(op) {
-            self.on_compaction_done(
-                op,
-                output,
-                usage,
-                est_tokens,
-                summary_of,
-                est_tokens_in,
-                tier,
-                resume_turn,
-            );
-            return;
-        }
-
         self.append(Record::ModelOutput {
             op,
             output: output.clone(),
@@ -495,22 +470,6 @@ impl Brain {
         }
     }
 
-    fn on_compact_context(&mut self) {
-        if self.state.is_busy() {
-            self.emit(OutputEvent::Notice(
-                "compaction skipped: operations are still in flight".to_string(),
-            ));
-            return;
-        }
-        let budget = self.policy.context_budget(&self.state);
-        let plan = self.policy.project_context(self.state.log(), budget);
-        if !self.start_selected_compaction(&plan, false) {
-            self.emit(OutputEvent::Notice(
-                "compaction skipped: no compactable context span".to_string(),
-            ));
-        }
-    }
-
     // ========================================================================
     // Turn-loop helpers
     // ========================================================================
@@ -524,10 +483,6 @@ impl Brain {
         self.state.set_pending_resume(false);
         let budget = self.policy.context_budget(&self.state);
         let plan = self.policy.project_context(self.state.log(), budget);
-        if self.should_compact(&plan, budget) && self.start_selected_compaction(&plan, true) {
-            return;
-        }
-
         let op = self.state.alloc_op();
         let selector = self.policy.choose_model(&self.state);
         let request = plan.to_model_request();
@@ -543,103 +498,6 @@ impl Brain {
             model: selector,
             request,
         });
-    }
-
-    /// Start a policy-selected compaction from a projection `plan` the caller
-    /// already computed (turn-start reuses its own; manual compaction computes
-    /// one) — avoids projecting the same log twice per decision.
-    fn start_selected_compaction(&mut self, plan: &ContextPlan, resume_turn: bool) -> bool {
-        let Some(target) = self.policy.select_compaction_span(self.state.log(), plan) else {
-            return false;
-        };
-        self.start_compaction_turn(target.summary_of, target.est_tokens_in, resume_turn, plan);
-        true
-    }
-
-    fn should_compact(
-        &self,
-        plan: &crate::model::ContextPlan,
-        budget: crate::model::TokenBudget,
-    ) -> bool {
-        self.policy
-            .compaction_high_water(&self.state, budget)
-            .is_some_and(|high_water| plan.totals.used_tokens > high_water)
-    }
-
-    fn start_compaction_turn(
-        &mut self,
-        summary_of: SeqRange,
-        est_tokens_in: u32,
-        resume_turn: bool,
-        plan: &ContextPlan,
-    ) {
-        let op = self.state.alloc_op();
-        // Route the compaction model through the policy (ARCHITECTURE §2.5): the
-        // reducer must not hardcode a selector.
-        let _ = plan;
-        let selector = self.policy.choose_model(&self.state);
-        let request = self.policy.compaction_request(self.state.log(), summary_of);
-        self.state.mark(
-            op,
-            OpKind::Compaction {
-                selector: selector.clone(),
-                summary_of,
-                est_tokens_in,
-                resume_turn,
-                text_so_far: String::new(),
-            },
-        );
-        self.state.push_command(Command::StartModelCall {
-            op,
-            model: selector,
-            request,
-        });
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn on_compaction_done(
-        &mut self,
-        op: OpId,
-        output: ModelOutput,
-        usage: Usage,
-        est_tokens_out: u32,
-        summary_of: SeqRange,
-        est_tokens_in: u32,
-        tier: ModelSelector,
-        resume_turn: bool,
-    ) {
-        self.append(Record::Summary {
-            op,
-            text: summary_text(&output),
-            summary_of,
-            coverage: SummaryCoverage::Complete,
-            tier,
-            est_tokens_in,
-            est_tokens_out,
-        });
-        self.end_op(op, OpOutcome::Ok, Some(usage));
-        self.checkpoint();
-        // A latched abort raced this compaction's completion: fold the summary
-        // but do not resume — end the turn `Cancelled` once drained (§4.3).
-        if self.resolve_abort_if_drained() {
-            return;
-        }
-        if resume_turn {
-            self.start_model_turn();
-        }
-    }
-
-    fn compaction_op(&self, op: OpId) -> Option<(SeqRange, u32, ModelSelector, bool)> {
-        match self.state.get_op(op).map(|entry| &entry.kind) {
-            Some(OpKind::Compaction {
-                selector,
-                summary_of,
-                est_tokens_in,
-                resume_turn,
-                ..
-            }) => Some((*summary_of, *est_tokens_in, selector.clone(), *resume_turn)),
-            _ => None,
-        }
     }
 
     /// After a tool/agent op resolves, resume the model turn once nothing the
@@ -905,9 +763,7 @@ impl Brain {
     /// Whatever a cancelled op produced so far (e.g. partial model text).
     fn partial_of(&self, op: OpId) -> Value {
         match self.state.get_op(op).map(|o| &o.kind) {
-            Some(OpKind::Model { text_so_far, .. } | OpKind::Compaction { text_so_far, .. })
-                if !text_so_far.is_empty() =>
-            {
+            Some(OpKind::Model { text_so_far, .. }) if !text_so_far.is_empty() => {
                 Value::String(text_so_far.clone())
             }
             _ => Value::Null,
@@ -933,16 +789,5 @@ fn stringify(content: &Value) -> String {
     match content {
         Value::String(s) => s.clone(),
         other => other.to_string(),
-    }
-}
-
-fn summary_text(output: &ModelOutput) -> String {
-    if !output.text.is_empty() {
-        return output.text.clone();
-    }
-    if output.tool_calls.is_empty() {
-        String::new()
-    } else {
-        serde_json::to_string(&output.tool_calls).unwrap_or_default()
     }
 }

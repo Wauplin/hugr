@@ -12,32 +12,6 @@ use crate::event::{SteerMode, VersionRef};
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
-/// Inclusive range of log entries covered by a durable summary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct SeqRange {
-    pub start: Seq,
-    pub end: Seq,
-}
-
-impl SeqRange {
-    pub fn new(start: Seq, end: Seq) -> Self {
-        Self { start, end }
-    }
-
-    pub fn contains(&self, seq: Seq) -> bool {
-        self.start <= seq && seq <= self.end
-    }
-}
-
-/// How completely a summary covers its source span.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum SummaryCoverage {
-    Complete,
-    Partial { reason: String },
-}
-
 /// One ordered, timestamped entry in the append-only log. Prefer constructing
 /// via [`LogEntry::new`] (ARCHITECTURE §2.4).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -106,28 +80,6 @@ pub enum Record {
         est_tokens: u32,
     },
 
-    /// A durable, non-destructive compaction summary over an exact log span.
-    /// The original records stay in the log; later projections use this record
-    /// to evict covered entries to references (ARCHITECTURE §3.4).
-    Summary {
-        /// The model op that produced the summary.
-        op: OpId,
-        /// Human/model-readable summary text.
-        text: String,
-        /// Exact inclusive source span.
-        summary_of: SeqRange,
-        /// Whether the summary fully covers the span.
-        coverage: SummaryCoverage,
-        /// Tier used to produce the summary, e.g. `small`.
-        tier: ModelSelector,
-        /// Sum of host-recorded token estimates for the source span.
-        #[serde(default)]
-        est_tokens_in: u32,
-        /// Host/provider estimate for the summary text.
-        #[serde(default)]
-        est_tokens_out: u32,
-    },
-
     /// An operation ended; carries per-op metadata (timing, cost, selector) so
     /// latency and spend are queryable from the trace itself (ARCHITECTURE §4.1).
     OpEnded {
@@ -145,7 +97,6 @@ impl Record {
         match self {
             Record::ModelOutput { op, .. }
             | Record::ToolResult { op, .. }
-            | Record::Summary { op, .. }
             | Record::OpEnded { op, .. } => Some(*op),
             Record::UserMessage { .. } => None,
         }
@@ -158,7 +109,6 @@ impl Record {
             Record::UserMessage { est_tokens, .. }
             | Record::ModelOutput { est_tokens, .. }
             | Record::ToolResult { est_tokens, .. } => Some(*est_tokens),
-            Record::Summary { est_tokens_out, .. } => Some(*est_tokens_out),
             Record::OpEnded { .. } => None,
         }
     }
