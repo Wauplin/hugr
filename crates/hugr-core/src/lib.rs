@@ -61,5 +61,5 @@ pub use model::{
 };
 pub use policy::{AgentSeed, CompactionTarget, StaticPolicy, TurnPolicy, decode_policy};
 pub use primitives::{ObjectKey, OpId, Seq, Timestamp, Value};
-pub use record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage, TodoItem};
+pub use record::{LogEntry, OpMeta, OpOutcome, Record, SeqRange, SummaryCoverage};
 pub use state::{BrainState, InflightOp, OpKind};

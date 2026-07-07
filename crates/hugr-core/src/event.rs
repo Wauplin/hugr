@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelDelta, ModelOutput, ModelSelector, Usage};
 use crate::primitives::{ObjectKey, OpId, Timestamp, Value};
-use crate::record::TodoItem;
 
 /// Host hook lifecycle phase (ROADMAP_2 D10). Hooks are host-side reactions
 /// reported into the pure brain as deterministic events.
@@ -47,20 +46,6 @@ pub enum Event {
     /// UI state.
     ModelOverride {
         selector: Option<ModelSelector>,
-    },
-    /// Host/user accepted or edited a short task plan. The accepted plan is
-    /// durable context for future turns (ROADMAP_2 D4).
-    PlanAccepted {
-        text: String,
-        #[serde(default)]
-        est_tokens: u32,
-    },
-    /// Host/user updated durable todo state. The latest snapshot is projected
-    /// into future context (ROADMAP_2 D5).
-    TodoUpdated {
-        items: Vec<TodoItem>,
-        #[serde(default)]
-        est_tokens: u32,
     },
     /// A host-side hook fired and produced an opaque result/warning/context.
     HookFired {

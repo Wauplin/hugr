@@ -98,14 +98,6 @@ impl Brain {
                 self.state.set_model_override(selector);
                 self.checkpoint();
             }
-            Event::PlanAccepted { text, est_tokens } => {
-                self.append(Record::Plan { text, est_tokens });
-                self.checkpoint();
-            }
-            Event::TodoUpdated { items, est_tokens } => {
-                self.append(Record::TodoList { items, est_tokens });
-                self.checkpoint();
-            }
             Event::HookFired {
                 phase,
                 name,

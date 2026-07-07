@@ -317,8 +317,8 @@ impl TurnPolicy for StaticPolicy {
         let mut totals = ContextBudgetTotals::new();
         // One projected block: count it against the budget totals and record
         // the plan entry, in one step. The arms that deliberately do *not*
-        // count against the totals (superseded todo snapshots, `OpEnded`
-        // bookkeeping) push their entries directly instead of calling this.
+        // count against the totals (`OpEnded` bookkeeping) push their entries
+        // directly instead of calling this.
         fn push(
             totals: &mut ContextBudgetTotals,
             entries: &mut Vec<ContextPlanEntry>,
@@ -331,10 +331,6 @@ impl TurnPolicy for StaticPolicy {
             entries.push(ContextPlanEntry::new(source, est_tokens, disposition, note));
         }
         let summaries = complete_summaries(log);
-        let latest_todo_seq = log.iter().rev().find_map(|entry| match entry.record {
-            Record::TodoList { .. } => Some(entry.seq),
-            _ => None,
-        });
         if let Some(system) = &self.system {
             let disposition = ContextDisposition::included(ContextBlock::new(
                 Role::System,
@@ -514,66 +510,6 @@ impl TurnPolicy for StaticPolicy {
                         *est_tokens_out,
                         disposition,
                         "durable summary projection",
-                    );
-                }
-                Record::Plan { text, est_tokens } => {
-                    let disposition = ContextDisposition::included(ContextBlock::new(
-                        Role::System,
-                        vec![ContentPart::Text(format!(
-                            "Accepted task plan from durable log:{}:\n{}",
-                            entry.seq.0, text
-                        ))],
-                    ));
-                    push(
-                        &mut totals,
-                        &mut entries,
-                        ContextSource::log_entry(entry.seq),
-                        *est_tokens,
-                        disposition,
-                        "accepted task plan from durable record",
-                    );
-                }
-                Record::TodoList { items, est_tokens } => {
-                    if Some(entry.seq) != latest_todo_seq {
-                        let disposition = ContextDisposition::omitted();
-                        entries.push(ContextPlanEntry::new(
-                            ContextSource::log_entry(entry.seq),
-                            *est_tokens,
-                            disposition,
-                            "superseded by a later durable todo snapshot",
-                        ));
-                        continue;
-                    }
-                    let done = items.iter().filter(|item| item.done).count();
-                    let rendered = items
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, item)| {
-                            format!(
-                                "{}. [{}] {}",
-                                idx + 1,
-                                if item.done { "x" } else { " " },
-                                item.text
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let disposition = ContextDisposition::included(ContextBlock::new(
-                        Role::System,
-                        vec![ContentPart::Text(format!(
-                            "Durable todo progress from log:{} ({done}/{} done):\n{}",
-                            entry.seq.0,
-                            items.len(),
-                            rendered
-                        ))],
-                    ));
-                    push(
-                        &mut totals,
-                        &mut entries,
-                        ContextSource::log_entry(entry.seq),
-                        *est_tokens,
-                        disposition,
-                        "latest durable todo snapshot",
                     );
                 }
                 Record::Hook {
@@ -805,16 +741,6 @@ fn default_render_summary_record(seq: Seq, record: &Record) -> Option<String> {
             Some(format!("log:{} tool {}: {}", seq.0, name, result))
         }
         Record::Summary { text, .. } => Some(format!("log:{} summary: {}", seq.0, text)),
-        Record::Plan { text, .. } => Some(format!("log:{} accepted plan: {}", seq.0, text)),
-        Record::TodoList { items, .. } => Some(format!(
-            "log:{} todo state: {}",
-            seq.0,
-            items
-                .iter()
-                .map(|item| format!("[{}] {}", if item.done { "x" } else { " " }, item.text))
-                .collect::<Vec<_>>()
-                .join("; ")
-        )),
         Record::Hook {
             phase,
             name,
@@ -848,8 +774,6 @@ fn is_compactable_record(record: &Record) -> bool {
         Record::UserMessage { .. }
             | Record::ModelOutput { .. }
             | Record::ToolResult { .. }
-            | Record::Plan { .. }
-            | Record::TodoList { .. }
             | Record::Hook { .. }
     )
 }
