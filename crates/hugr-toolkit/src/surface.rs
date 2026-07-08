@@ -51,7 +51,8 @@ struct SurfaceArgs {
     /// Print the agent card (name, tools, privileges, tiers, pricing, limits).
     #[arg(long)]
     describe: bool,
-    /// Print the effective configuration with provenance and redaction.
+    /// Print the parsed manifest as JSON (the API key env *name* is shown;
+    /// the secret value never is).
     #[arg(long)]
     config: bool,
     /// Print the stored traces (header-only, with lineage).
@@ -67,7 +68,6 @@ struct SurfaceArgs {
 enum Mode {
     Ask,
     Describe,
-    Config,
     Traces,
 }
 
@@ -79,10 +79,22 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
     let started = Instant::now();
     let pretty = !args.json; // default pretty; --json forces compact
 
+    // `--config` needs only the parsed manifest, not an assembled agent.
+    if args.config {
+        return match prepare_home(bundle_bytes)
+            .map_err(LoadError::Home)
+            .and_then(|home| Ok(AgentDefinition::load(&home)?))
+        {
+            Ok(def) => print_json_or_die(&config_json(&def), pretty),
+            Err(err) => {
+                eprintln!("error: {err}");
+                1
+            }
+        };
+    }
+
     let mode = if args.describe {
         Mode::Describe
-    } else if args.config {
-        Mode::Config
     } else if args.traces {
         Mode::Traces
     } else {
@@ -108,7 +120,6 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
-        Mode::Config => print_json_or_die(&agent.config(), pretty),
         Mode::Traces => match agent.traces() {
             Ok(heads) => print_json_or_die(&heads, pretty),
             Err(err) => {
@@ -168,6 +179,30 @@ pub async fn run_ask(
         Ok(answer) => print_answer(&answer, pretty),
         Err(err) => print_answer(&error_answer(err.to_string(), started), pretty),
     }
+}
+
+/// The `--config` view: the parsed manifest as JSON. The API key env *name*
+/// is shown, and whether it currently resolves — the secret value never is.
+pub fn config_json(def: &AgentDefinition) -> serde_json::Value {
+    serde_json::json!({
+        "agent": def.agent,
+        "models": {
+            "base_url": def.models.base_url,
+            "api_key_env": def.models.api_key_env,
+            "api_key_resolved": def.models.api_key_env.as_deref()
+                .map(|var| std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false)),
+            "default": def.default_tier(),
+            "tiers": def.models.tiers,
+        },
+        "tools": def.tools.iter().map(|grant| serde_json::json!({
+            "name": grant.name,
+            "kind": grant.kind,
+            "scope": grant.config,
+        })).collect::<Vec<_>>(),
+        "limits": def.limits,
+        "scratchpad": def.scratchpad,
+        "traces": def.traces,
+    })
 }
 
 /// Build an inbound [`BlobHandle`] from a local path, guessing its media type
@@ -387,6 +422,19 @@ mod tests {
         }
         let bytes = bundle::pack(&root, &[".hugr-traces", ".scratch"]).unwrap();
         (bytes, root)
+    }
+
+    #[test]
+    fn config_json_shows_key_env_name_but_never_the_secret() {
+        unsafe { std::env::set_var("HUGR_CFG_TEST_KEY", "super-secret-value") };
+        let src = "[agent]\nname = \"x\"\n[models]\napi_key_env = \"HUGR_CFG_TEST_KEY\"\n[models.medium]\nmodel = \"m\"\n[tools.fs_read]\nroot = \"./policies\"\n";
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let cfg = config_json(&def);
+        assert_eq!(cfg["models"]["api_key_env"], "HUGR_CFG_TEST_KEY");
+        assert_eq!(cfg["models"]["api_key_resolved"], true);
+        assert_eq!(cfg["tools"][0]["name"], "fs_read");
+        assert!(!cfg.to_string().contains("super-secret-value"));
+        unsafe { std::env::remove_var("HUGR_CFG_TEST_KEY") };
     }
 
     #[test]

@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_agent::{
-    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, ConfigEntry,
-    ConfigProvenance, Pricing, TraceStore, depth_exceeded_resolver,
+    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, Pricing, TraceStore,
+    depth_exceeded_resolver,
 };
 use hugr_core::{ModelSelector, SamplingParams};
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
@@ -208,147 +208,7 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
         agent.scratch_root = resolve(&base_dir, root);
     }
 
-    // Effective config with real provenance + redaction for `--config` (T3.5).
-    agent.config_entries = Some(effective_config(def, &base_dir));
-
     Ok((agent, warnings))
-}
-
-/// Build the effective configuration with per-key provenance and secret
-/// redaction (ROADMAP T3.5) — the machine-readable audit surface behind
-/// `<agent> --config`. Values present in the manifest are tagged `Manifest`;
-/// values that fall back are `Default`; the provider secret is resolved from
-/// its env var (`Env`) and **redacted** — the manifest only ever carries the
-/// var *name*, never the key. Deterministic order (identity → models → tools →
-/// limits → scratch/traces → answer).
-pub fn effective_config(def: &AgentDefinition, base_dir: &Path) -> Vec<ConfigEntry> {
-    use ConfigProvenance::{Default, Env, Manifest};
-    let manifest_or_default = |present: bool| if present { Manifest } else { Default };
-
-    let mut entries = Vec::new();
-
-    // Identity.
-    entries.push(ConfigEntry::visible(
-        "agent.name",
-        def.agent.name.clone(),
-        Manifest,
-    ));
-    entries.push(ConfigEntry::visible(
-        "agent.version",
-        if def.agent.version.trim().is_empty() {
-            "0.0.0".to_string()
-        } else {
-            def.agent.version.clone()
-        },
-        manifest_or_default(!def.agent.version.trim().is_empty()),
-    ));
-    entries.push(ConfigEntry::visible(
-        "agent.description",
-        def.agent.description.clone(),
-        manifest_or_default(!def.agent.description.is_empty()),
-    ));
-
-    // Models: base_url, api key (name from manifest, secret from env/redacted),
-    // default tier, and one entry per declared tier.
-    if let Some(base) = &def.models.base_url {
-        entries.push(ConfigEntry::visible(
-            "models.base_url",
-            base.clone(),
-            Manifest,
-        ));
-    }
-    if let Some(var) = &def.models.api_key_env {
-        // The env var *name* is not a secret — surface it (Manifest).
-        entries.push(ConfigEntry::visible(
-            "models.api_key_env",
-            var.clone(),
-            Manifest,
-        ));
-        // Whether it resolved is useful, non-secret audit info (Env).
-        entries.push(ConfigEntry::visible(
-            "models.api_key_resolved",
-            std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false),
-            Env,
-        ));
-        // The secret itself is redacted and never printed.
-        entries.push(ConfigEntry::redacted("models.api_key", Env));
-    }
-    entries.push(ConfigEntry::visible(
-        "models.default",
-        def.default_tier().unwrap_or("").to_string(),
-        manifest_or_default(def.models.default.is_some()),
-    ));
-    for (tier_name, tier) in &def.models.tiers {
-        entries.push(ConfigEntry::visible(
-            format!("models.{tier_name}"),
-            serde_json::json!({
-                "model": tier.model,
-                "input_usd_per_m_tokens": tier.input_usd_per_m_tokens,
-                "output_usd_per_m_tokens": tier.output_usd_per_m_tokens,
-                "temperature": tier.temperature,
-                "max_tokens": tier.max_tokens,
-            }),
-            Manifest,
-        ));
-    }
-
-    // Tools (kind + scope) — the audit surface for blast radius.
-    for grant in &def.tools {
-        entries.push(ConfigEntry::visible(
-            format!("tools.{}", grant.name),
-            serde_json::json!({
-                "kind": format!("{:?}", grant.kind).to_lowercase(),
-                "scope": grant.config,
-            }),
-            Manifest,
-        ));
-    }
-
-    // Limits.
-    let any_limit = def.limits.max_turns.is_some()
-        || def.limits.max_model_calls.is_some()
-        || def.limits.max_cost_micro_usd.is_some()
-        || def.limits.timeout_s.is_some();
-    entries.push(ConfigEntry::visible(
-        "limits",
-        serde_json::json!({
-            "max_turns": def.limits.max_turns,
-            "max_model_calls": def.limits.max_model_calls,
-            "max_cost_micro_usd": def.limits.max_cost_micro_usd,
-            "timeout_s": def.limits.timeout_s,
-        }),
-        manifest_or_default(any_limit),
-    ));
-
-    // Scratch + trace locations (resolved paths).
-    let scratch = def
-        .scratchpad
-        .root
-        .as_deref()
-        .map(|r| resolve(base_dir, r).display().to_string());
-    entries.push(ConfigEntry::visible(
-        "scratchpad.root",
-        scratch
-            .clone()
-            .unwrap_or_else(|| "<store>/.scratch".to_string()),
-        manifest_or_default(scratch.is_some()),
-    ));
-    let store = def
-        .traces
-        .store
-        .as_deref()
-        .map(|s| resolve(base_dir, s).display().to_string());
-    entries.push(ConfigEntry::visible(
-        "traces.store",
-        store.clone().unwrap_or_else(|| {
-            resolve(base_dir, DEFAULT_TRACE_DIRNAME)
-                .display()
-                .to_string()
-        }),
-        manifest_or_default(store.is_some()),
-    ));
-
-    entries
 }
 
 /// Extract `command` (required) and `args` (optional string array) from an
@@ -582,59 +442,6 @@ root = "."
         assert!(tool_names.contains(&"fs_search"));
         assert!(tool_names.contains(&"scratch_write"));
         assert!(warnings.is_empty(), "{warnings:?}");
-    }
-
-    #[test]
-    fn effective_config_has_provenance_and_redacts_the_secret() {
-        let src = r#"
-[agent]
-name = "policy-docs"
-version = "0.2.0"
-[models]
-api_key_env = "HUGR_T35_TEST_KEY"
-[models.medium]
-model = "m"
-[tools.fs_read]
-root = "./policies"
-[limits]
-max_model_calls = 7
-"#;
-        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        let entries = effective_config(&def, Path::new("/agent"));
-        let by_key = |k: &str| entries.iter().find(|e| e.key == k).expect(k);
-
-        // Manifest-declared values are tagged Manifest.
-        assert_eq!(by_key("agent.name").provenance, ConfigProvenance::Manifest);
-        assert_eq!(
-            by_key("agent.version").provenance,
-            ConfigProvenance::Manifest
-        );
-        assert_eq!(by_key("limits").provenance, ConfigProvenance::Manifest);
-        assert_eq!(
-            by_key("tools.fs_read").provenance,
-            ConfigProvenance::Manifest
-        );
-
-        // A value that falls back is Default (no description declared).
-        assert_eq!(
-            by_key("agent.description").provenance,
-            ConfigProvenance::Default
-        );
-
-        // The env var *name* is surfaced (Manifest), but the secret itself is
-        // redacted and env-provenanced — the key value must never appear.
-        assert_eq!(
-            by_key("models.api_key_env").value,
-            serde_json::json!("HUGR_T35_TEST_KEY")
-        );
-        let secret = by_key("models.api_key");
-        assert!(secret.redacted, "the provider key must be redacted");
-        assert_eq!(secret.provenance, ConfigProvenance::Env);
-        assert_ne!(secret.value, serde_json::json!("HUGR_T35_TEST_KEY"));
-        // No entry anywhere leaks a real key value (there is none set here).
-        for e in &entries {
-            assert_ne!(e.value.as_str(), Some("super-secret-value"));
-        }
     }
 
     /// Write a minimal definition folder and return its path.

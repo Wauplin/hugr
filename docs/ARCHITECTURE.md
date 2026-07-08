@@ -43,7 +43,7 @@ A subagent is **(1) a system prompt and (2) a list of tools with associated priv
 1. **A scratchpad** — a private filesystem subtree the agent can freely read/write without permission round-trips and without escaping its root.
 2. **Traces** — every run is stored as a replayable trace with a `trace_id`; follow-up questions resume it; older ids fork it (§5).
 3. **The brain** — the same `hugr-core` reducer: turn loop, context projection, deterministic replay (Part III).
-4. **A common API** — invocation (`ask`) plus introspection (`--describe`: name, tools, tiers, pricing, limits; `--config`: effective settings with secrets redacted; `--traces`: stored lineage).
+4. **A common API** — invocation (`ask`) plus introspection (`--describe`: name, tools, tiers, pricing, limits; `--config`: the parsed manifest as JSON with secrets redacted; `--traces`: stored lineage).
 5. **Blob exchange** — a caller can hand the agent files and receive files back; large payloads ride the content-addressed blob store.
 6. **Accounting** — every answer carries cost (from per-tier pricing config) and duration, folded from the trace's per-op metadata.
 7. **Composition** — any built Hugr agent can be granted to another as an ordinary tool (§8); the child's cost folds into the caller's answer.

@@ -84,11 +84,6 @@ pub struct Agent {
     /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
     pub pricing: Pricing,
     pub limits: AgentLimits,
-    /// Effective config with real provenance, supplied by the layer that knows
-    /// where values came from (the toolkit's `build_agent`: manifest/env/flag,
-    /// secrets redacted — ROADMAP T3.5). When `None`, [`Agent::config`] derives a
-    /// builder/default-tagged view from its own fields.
-    pub config_entries: Option<Vec<ConfigEntry>>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities
     /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
     /// invocation's child cost folds into this ask's `AnswerMeta`.
@@ -122,7 +117,6 @@ impl Agent {
             blob_store,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
-            config_entries: None,
             agent_tools: Vec::new(),
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
@@ -192,97 +186,6 @@ impl Agent {
             model_tiers: self.model_tiers(),
             limits: self.limits.clone(),
         }
-    }
-
-    /// Return the effective runtime configuration that built this agent, with
-    /// stable provenance and redaction slots for future manifest/env/flag
-    /// sources (ARCHITECTURE §18.2).
-    pub fn config(&self) -> AgentConfig {
-        // The toolkit supplies provenance-annotated entries (manifest/env/flag,
-        // secrets redacted — T3.5). Absent that, derive a builder/default view.
-        if let Some(entries) = &self.config_entries {
-            return AgentConfig {
-                entries: entries.clone(),
-            };
-        }
-        let mut entries = vec![
-            ConfigEntry::visible("agent.name", self.name.clone(), ConfigProvenance::Builder),
-            ConfigEntry::visible(
-                "agent.version",
-                self.version.clone(),
-                ConfigProvenance::Builder,
-            ),
-            ConfigEntry::visible(
-                "agent.description",
-                self.description.clone(),
-                if self.description.is_empty() {
-                    ConfigProvenance::Default
-                } else {
-                    ConfigProvenance::Builder
-                },
-            ),
-            ConfigEntry::visible(
-                "traces.store_root",
-                self.store.root().display().to_string(),
-                ConfigProvenance::Builder,
-            ),
-            ConfigEntry::visible(
-                "scratchpad.root",
-                self.scratch_root.display().to_string(),
-                ConfigProvenance::Builder,
-            ),
-            ConfigEntry::visible(
-                "models.default",
-                self.default_model
-                    .as_ref()
-                    .map(selector_name)
-                    .unwrap_or_else(|| {
-                        self.models
-                            .first()
-                            .map(|(selector, _)| selector_name(selector))
-                            .unwrap_or_else(|| "medium".to_string())
-                    }),
-                if self.default_model.is_some() {
-                    ConfigProvenance::Builder
-                } else {
-                    ConfigProvenance::Default
-                },
-            ),
-            ConfigEntry::visible(
-                "limits",
-                serde_json::to_value(&self.limits).expect("limits serialize"),
-                if self.limits == AgentLimits::default() {
-                    ConfigProvenance::Default
-                } else {
-                    ConfigProvenance::Builder
-                },
-            ),
-        ];
-
-        for tier in self.model_tiers() {
-            entries.push(ConfigEntry::visible(
-                format!("models.{}", tier.selector),
-                json!({
-                    "selector": tier.selector,
-                    "default": tier.default,
-                    "pricing": tier.pricing,
-                }),
-                ConfigProvenance::Builder,
-            ));
-        }
-        for tool in &self.describe().tools {
-            entries.push(ConfigEntry::visible(
-                format!("tools.{}", tool.name),
-                json!({
-                    "privilege": tool.privilege,
-                    "runs_in_background": tool.runs_in_background,
-                    "scope": tool.scope.clone(),
-                }),
-                ConfigProvenance::Builder,
-            ));
-        }
-
-        AgentConfig { entries }
     }
 
     /// List stored trace headers for this agent. This is the same cheap
@@ -626,59 +529,6 @@ impl AgentLimits {
         self.timeout_ms = Some(timeout_ms);
         self
     }
-}
-
-/// Effective configuration with value provenance and redaction.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct AgentConfig {
-    pub entries: Vec<ConfigEntry>,
-}
-
-/// One effective configuration value.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct ConfigEntry {
-    pub key: String,
-    pub value: Value,
-    pub provenance: ConfigProvenance,
-    pub redacted: bool,
-}
-
-impl ConfigEntry {
-    pub fn visible(
-        key: impl Into<String>,
-        value: impl Serialize,
-        provenance: ConfigProvenance,
-    ) -> Self {
-        Self {
-            key: key.into(),
-            value: serde_json::to_value(value).expect("config values serialize"),
-            provenance,
-            redacted: false,
-        }
-    }
-
-    pub fn redacted(key: impl Into<String>, provenance: ConfigProvenance) -> Self {
-        Self {
-            key: key.into(),
-            value: Value::String("<redacted>".to_string()),
-            provenance,
-            redacted: true,
-        }
-    }
-}
-
-/// Where an effective configuration value came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ConfigProvenance {
-    Default,
-    Builder,
-    Manifest,
-    Env,
-    Flag,
 }
 
 /// Per-tier token prices used by [`Agent`] cost accounting (ROADMAP T0.6).

@@ -1,5 +1,5 @@
-//! Introspection API (ROADMAP T0.7): describe/config/traces expose the same
-//! stable data every surface will print.
+//! Introspection API (ROADMAP T0.7): describe/traces expose the same stable
+//! data every surface will print.
 
 use std::sync::Arc;
 
@@ -72,7 +72,7 @@ fn agent(store: TraceStore) -> Agent {
 }
 
 #[test]
-fn describe_and_config_are_serde_stable_and_redacted_ready() {
+fn describe_is_serde_stable() {
     let dir = tempdir();
     let agent = agent(TraceStore::new(dir.path()));
 
@@ -174,24 +174,6 @@ fn describe_and_config_are_serde_stable_and_redacted_ready() {
                 "max_cost_micro_usd": 50000
             }
         })
-    );
-
-    let config = serde_json::to_value(agent.config()).unwrap();
-    let entries = config["entries"].as_array().unwrap();
-    assert!(entries.iter().any(|entry| {
-        entry["key"] == "agent.description"
-            && entry["value"] == "Answers documentation questions."
-            && entry["provenance"] == "builder"
-            && entry["redacted"] == false
-    }));
-    assert!(entries.iter().any(|entry| {
-        entry["key"] == "models.default"
-            && entry["value"] == "medium"
-            && entry["provenance"] == "builder"
-    }));
-    assert!(
-        !serde_json::to_string(&config).unwrap().contains("secret"),
-        "config output should be redaction-ready and contain no implicit secrets"
     );
 }
 
