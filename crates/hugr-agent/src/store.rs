@@ -67,8 +67,7 @@ pub struct TraceHead {
 }
 
 impl TraceHead {
-    /// Construct a head (external tooling/surfaces need this since the struct is
-    /// `#[non_exhaustive]`; the store produces heads via [`TraceStore::head`]).
+    /// Construct a head (the store produces heads via [`TraceStore::head`]).
     pub fn new(
         trace_id: TraceId,
         depends_on: Option<TraceId>,
