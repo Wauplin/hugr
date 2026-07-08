@@ -141,6 +141,52 @@ fn real_build_produces_a_runnable_binary() {
     let ask_out = run_binary(&binary, &["hi there"], &home);
     assert!(ask_out.contains("\"status\": \"error\""), "{ask_out}");
 
+    // Runtime args declared by a definition are accepted by a compiled binary
+    // and applied before tool registration.
+    let docs_src = out.join("runtime-src");
+    let _ = std::fs::remove_dir_all(&docs_src);
+    for file in scaffold_files("runtime-docs", Template::Docs) {
+        let path = docs_src.join(&file.rel_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, file.contents).unwrap();
+    }
+    let mut manifest = std::fs::read_to_string(docs_src.join("hugr.toml")).unwrap();
+    manifest.push_str(
+        r#"
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+"#,
+    );
+    std::fs::write(docs_src.join("hugr.toml"), manifest).unwrap();
+    let docs_def = AgentDefinition::load(&docs_src).unwrap();
+    let docs_binary = build(
+        &docs_def,
+        &BuildOptions {
+            out_dir: out.join("runtime-dist"),
+            release: false,
+        },
+    )
+    .expect("runtime build")
+    .binary;
+    let docs_home = out.join("runtime-home");
+    let docs_arg = src.to_string_lossy();
+    let runtime_out = run_binary(
+        &docs_binary,
+        &[docs_arg.as_ref(), "hi from runtime docs", "--json"],
+        &docs_home,
+    );
+    assert!(
+        !runtime_out.contains("configuring library tool `fs_read`"),
+        "{runtime_out}"
+    );
+    assert!(
+        runtime_out.contains("\"status\":\"error\"")
+            || runtime_out.contains("\"status\": \"error\""),
+        "{runtime_out}"
+    );
+
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }

@@ -90,7 +90,6 @@ pub const AGENT_DEPTH_ENV: &str = "HUGR_AGENT_DEPTH";
 /// against the definition's `source_dir` (else the process cwd). This is the
 /// one assembly path (`hugr run`, the built binary, `--mcp-serve`, hugr-docs).
 pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), RuntimeError> {
-    let provider_api_key = def.provider_api_key.clone();
     let mut warnings = Vec::new();
     let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
@@ -111,15 +110,13 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
 
     // The provider API key rides an env var (§20.1) — never the manifest. When
     // unset, the adapter gets an empty key and the run fails as an error answer.
-    let api_key = provider_api_key.clone().unwrap_or_else(|| {
-        def.models
-            .api_key_env
-            .as_deref()
-            .and_then(|var| std::env::var(var).ok())
-            .unwrap_or_default()
-    });
-    if provider_api_key.is_none()
-        && let Some(var) = &def.models.api_key_env
+    let api_key = def
+        .models
+        .api_key_env
+        .as_deref()
+        .and_then(|var| std::env::var(var).ok())
+        .unwrap_or_default();
+    if let Some(var) = &def.models.api_key_env
         && api_key.is_empty()
     {
         warnings.push(format!(

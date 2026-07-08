@@ -62,8 +62,8 @@ crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore
 crates/hugr-toolkit/    # definitions (hugr.toml + SYSTEM.md), the tool library
                         #   (fs_read, http_fetch, sqlite_query), and the `hugr`
                         #   CLI: new / run / build / traces / replay / verify
-crates/hugr-docs/       # the reference subagent (docs Q&A): definition folder +
-                        #   thin CLI/PyO3 packaging over the shared runtime
+crates/hugr-docs/       # the reference subagent (docs Q&A): definition folder only,
+                        #   run/buildable by hugr-toolkit
 ```
 
 `hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.

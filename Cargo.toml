@@ -4,7 +4,6 @@ members = [
     "crates/hugr-core",
     "crates/hugr-host",
     "crates/hugr-providers",
-    "crates/hugr-docs",
     "crates/hugr-replay",
     "crates/hugr-agent",
     "crates/hugr-toolkit",

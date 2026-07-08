@@ -16,51 +16,35 @@
 //! The audit sub-commands (`--describe`/`--config`/`--traces`) are inspection
 //! surfaces: they print JSON and exit non-zero on failure.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use clap::Parser;
+use clap::{Arg, ArgAction, Command};
 use hugr_agent::{Agent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId};
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
 use crate::runtime::build_agent;
+use crate::runtime_args::{RuntimeArgError, RuntimeValues, apply_runtime_values};
 
 /// The file inside a bundle that carries the manifest (used to resolve the
 /// agent home before a full unpack).
 const MANIFEST_NAME: &str = "hugr.toml";
 
-/// Parsed universal-CLI arguments. `argv[0]` is the agent's own binary name.
-#[derive(Parser, Debug)]
-#[command(about = "A Hugr subagent. Ask it a question; errors are status:error answers.")]
-struct SurfaceArgs {
-    /// The question to ask (omit when using --describe/--config/--traces).
+/// Parsed universal + definition-specific CLI arguments. `argv[0]` is the
+/// agent's own binary name.
+#[derive(Debug)]
+pub struct SurfaceArgs {
     question: Option<String>,
-    /// Resume/fork from an existing trace id (writes a new child trace).
-    #[arg(long)]
     trace: Option<String>,
-    /// Emit compact single-line JSON (default is pretty-printed).
-    #[arg(long)]
     json: bool,
-    /// Pretty-print the JSON answer (the default).
-    #[arg(long)]
-    pretty: bool,
-    /// Hand a local file in as an inbound blob (repeatable).
-    #[arg(long = "blob")]
     blobs: Vec<PathBuf>,
-    /// Print the agent card (name, tools, privileges, tiers, pricing, limits).
-    #[arg(long)]
     describe: bool,
-    /// Print the parsed manifest as JSON (the API key env *name* is shown;
-    /// the secret value never is).
-    #[arg(long)]
     config: bool,
-    /// Print the stored traces (header-only, with lineage).
-    #[arg(long)]
     traces: bool,
-    /// Run as a stdio MCP server exposing an `ask` tool (ARCHITECTURE §21.4).
-    #[arg(long = "mcp-serve")]
     mcp_serve: bool,
+    runtime: RuntimeValues,
 }
 
 /// Which audit view, if any, was requested.
@@ -75,22 +59,28 @@ enum Mode {
 /// runs the requested operation, prints to stdout, and returns the process exit
 /// code. The ask path always returns 0.
 pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
-    let args = SurfaceArgs::parse();
     let started = Instant::now();
+    match prepare_definition(bundle_bytes) {
+        Ok(def) => run_definition_args(def, std::env::args_os().skip(1), started).await,
+        Err(err) => print_answer(&error_answer(err.to_string(), started), true),
+    }
+}
+
+/// Run the universal surface for an already-loaded definition and an argument
+/// iterator. Used by built binaries, embedded Rust agents, and `hugr run`.
+pub async fn run_definition_args<I, T>(base_def: AgentDefinition, argv: I, started: Instant) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let args = parse_surface_args(&base_def, argv);
     let pretty = !args.json; // default pretty; --json forces compact
+    let mut def = base_def.clone();
 
     // `--config` needs only the parsed manifest, not an assembled agent.
     if args.config {
-        return match prepare_home(bundle_bytes)
-            .map_err(LoadError::Home)
-            .and_then(|home| Ok(AgentDefinition::load(&home)?))
-        {
-            Ok(def) => print_json_or_die(&config_json(&def), pretty),
-            Err(err) => {
-                eprintln!("error: {err}");
-                1
-            }
-        };
+        let _ = apply_runtime_values(&mut def, &args.runtime);
+        return print_json_or_die(&config_json(&def), pretty);
     }
 
     let mode = if args.describe {
@@ -101,22 +91,35 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
         Mode::Ask
     };
 
-    // Unpack the embedded definition and assemble the agent (shared with the
-    // crate surface, T2.2). Warnings go to stderr.
-    let agent = match load_agent(bundle_bytes).await {
-        Ok(loaded) => {
-            for warning in &loaded.warnings {
+    // MCP serve mode is long-lived. Runtime arguments are accepted per ask via
+    // the advertised tool schema, so required args are not enforced at startup.
+    if args.mcp_serve {
+        if let Err(err) = apply_optional_runtime_values(&mut def, &args.runtime) {
+            eprintln!("error: {err}");
+            return 1;
+        }
+        return crate::mcp_serve::serve_definition(def).await;
+    }
+
+    let runtime_result = if mode == Mode::Ask {
+        apply_runtime_values(&mut def, &args.runtime)
+    } else {
+        apply_optional_runtime_values(&mut def, &args.runtime)
+    };
+    if let Err(err) = runtime_result {
+        return audit_or_answer_error(mode, err.to_string(), started, pretty);
+    }
+
+    // Assemble the agent. Warnings go to stderr.
+    let agent = match build_agent(&def).await {
+        Ok((agent, warnings)) => {
+            for warning in &warnings {
                 eprintln!("warning: {warning}");
             }
-            loaded.agent
+            agent
         }
         Err(err) => return audit_or_answer_error(mode, err.to_string(), started, pretty),
     };
-
-    // MCP serve mode is a long-lived runtime mode, not a one-shot audit/ask.
-    if args.mcp_serve {
-        return crate::mcp_serve::serve(&agent, &agent.describe()).await;
-    }
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
@@ -139,6 +142,149 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
             .await
         }
     }
+}
+
+fn prepare_definition(bundle_bytes: &[u8]) -> Result<AgentDefinition, LoadError> {
+    let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
+    Ok(AgentDefinition::load(&home)?)
+}
+
+fn parse_surface_args<I, T>(def: &AgentDefinition, argv: I) -> SurfaceArgs
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let matches = surface_command(def).get_matches_from(
+        std::iter::once(OsString::from(def.agent.name.clone()))
+            .chain(argv.into_iter().map(Into::into)),
+    );
+    let runtime = def
+        .runtime
+        .args
+        .iter()
+        .filter_map(|arg| {
+            matches
+                .get_one::<String>(&runtime_id(&arg.name))
+                .map(|value| (arg.name.clone(), value.clone()))
+        })
+        .collect();
+    SurfaceArgs {
+        question: matches.get_one::<String>("question").cloned(),
+        trace: matches.get_one::<String>("trace").cloned(),
+        json: matches.get_flag("json"),
+        blobs: matches
+            .get_many::<PathBuf>("blob")
+            .map(|paths| paths.cloned().collect())
+            .unwrap_or_default(),
+        describe: matches.get_flag("describe"),
+        config: matches.get_flag("config"),
+        traces: matches.get_flag("traces"),
+        mcp_serve: matches.get_flag("mcp-serve"),
+        runtime,
+    }
+}
+
+fn surface_command(def: &AgentDefinition) -> Command {
+    let mut command = Command::new(leak_str(def.agent.name.clone()))
+        .about("A Hugr subagent. Ask it a question; errors are status:error answers.")
+        .arg(
+            Arg::new("trace")
+                .long("trace")
+                .help("Resume/fork from an existing trace id (writes a new child trace).")
+                .value_name("ID"),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Emit compact single-line JSON (default is pretty-printed).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("pretty")
+                .long("pretty")
+                .help("Pretty-print JSON output (the default).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("blob")
+                .long("blob")
+                .help("Hand a local file in as an inbound blob (repeatable).")
+                .value_name("PATH")
+                .value_parser(clap::value_parser!(PathBuf))
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("describe")
+                .long("describe")
+                .help("Print the agent card (name, tools, privileges, tiers, pricing, limits).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("config")
+                .long("config")
+                .help("Print the parsed manifest as JSON; secret values are never shown.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("traces")
+                .long("traces")
+                .help("Print the stored traces (header-only, with lineage).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("mcp-serve")
+                .long("mcp-serve")
+                .help("Run as a stdio MCP server exposing an ask tool.")
+                .action(ArgAction::SetTrue),
+        );
+
+    let mut index = 1;
+    for runtime in &def.runtime.args {
+        let id = runtime_id(&runtime.name);
+        let help = runtime.help.clone();
+        let mut arg = Arg::new(leak_str(id.clone()))
+            .help(help)
+            .value_name(leak_str(runtime.name.to_ascii_uppercase()));
+        if runtime.positional {
+            arg = arg.index(index);
+            index += 1;
+        } else {
+            arg = arg.long(leak_str(
+                runtime
+                    .flag
+                    .as_deref()
+                    .unwrap_or(&runtime.name)
+                    .replace('_', "-"),
+            ));
+        }
+        command = command.arg(arg);
+    }
+    command.arg(
+        Arg::new("question")
+            .help("The question to ask (omit when using --describe/--config/--traces).")
+            .index(index),
+    )
+}
+
+fn runtime_id(name: &str) -> String {
+    format!("runtime:{name}")
+}
+
+fn leak_str(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
+}
+
+fn apply_optional_runtime_values(
+    def: &mut AgentDefinition,
+    explicit: &RuntimeValues,
+) -> Result<(), RuntimeArgError> {
+    let mut optional_def = def.clone();
+    for arg in &mut optional_def.runtime.args {
+        arg.required = false;
+    }
+    apply_runtime_values(&mut optional_def, explicit)?;
+    *def = optional_def;
+    Ok(())
 }
 
 /// Run one ask and print its answer. Missing question, blob problems, and infra
@@ -201,6 +347,7 @@ pub fn config_json(def: &AgentDefinition) -> serde_json::Value {
             "kind": grant.kind,
             "scope": grant.config,
         })).collect::<Vec<_>>(),
+        "runtime": def.runtime,
         "limits": def.limits,
         "scratchpad": def.scratchpad,
         "traces": def.traces,
@@ -431,6 +578,27 @@ mod tests {
         assert_eq!(cfg["tools"][0]["name"], "fs_read");
         assert!(!cfg.to_string().contains("super-secret-value"));
         unsafe { std::env::remove_var("HUGR_CFG_TEST_KEY") };
+    }
+
+    #[test]
+    fn runtime_positional_is_parsed_before_question() {
+        let src = r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[tools.fs_read]
+root = "."
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let args = parse_surface_args(&def, ["./manual", "what changed?", "--json"]);
+        assert_eq!(args.runtime["docs_path"], "./manual");
+        assert_eq!(args.question.as_deref(), Some("what changed?"));
+        assert!(args.json);
     }
 
     #[test]

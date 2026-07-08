@@ -10,7 +10,7 @@ A **subagent** is, at its essence, a system prompt plus a set of tools with decl
 - **Token-efficient by design.** A handful of domain tools and a focused prompt, not fifty generic ones. Small agents are cheaper, faster, and more reliable — and an orchestrator pays one tool call to use them.
 - **Agents compose.** A built Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and it's called like any capability — delegation never widens privileges, and the child's cost folds into the caller's answer.
 
-The reference agent, [`hugr-docs`](crates/hugr-docs/) (a self-contained docs-Q&A agent with a CLI and Python binding), runs on a checked-in definition folder over the shared runtime.
+The reference agent, [`hugr-docs`](crates/hugr-docs/), is a checked-in docs-Q&A definition folder run and built by `hugr-toolkit`.
 
 There are exactly two docs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (design, architecture, threat model — the spec) and [`docs/ROADMAP.md`](docs/ROADMAP.md) (progress log + work plan).
 
@@ -48,6 +48,17 @@ output_usd_per_m_tokens = 1.5
 root = "./policies"        # read-only, jailed to this folder
 ```
 
+Runtime invocation config can patch manifest targets before the agent is assembled. For example, `hugr-docs` declares `docs_path` once and the toolkit exposes it in both the CLI and MCP `ask` schema:
+
+```toml
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+env = "HUGR_DOCS_PATH"
+help = "Folder containing the documentation to search."
+```
+
 Auditable by reading: the manifest *is* the blast radius. Unknown keys are hard errors, so a typo can't silently widen or narrow it. The tool library today: `fs_read` (six read-only `fs_*` tools), `http_fetch`, `sqlite_query`, the scratchpad — plus `[tools.mcp.<name>]` (the one external-process escape hatch) and `[tools.agent.<name>]` (another built agent as a tool).
 
 ## The core underneath
@@ -82,8 +93,8 @@ crates/
                       #   cost accounting, agent-as-tool (subprocess).
   hugr-toolkit/       # definitions (hugr.toml + SYSTEM.md), the tool library,
                       #   and the `hugr` CLI: new/run/build/traces/replay/verify.
-  hugr-docs/          # the reference subagent (docs Q&A): definition folder +
-                      #   thin CLI/PyO3 packaging over the shared runtime.
+  hugr-docs/          # the reference subagent (docs Q&A): definition folder
+                      #   only; run/build it with hugr-toolkit.
 ```
 
 ## The reference subagent: `hugr-docs`
@@ -92,19 +103,19 @@ One folder in, one question in, one JSON answer out — with cost metadata. No s
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
-cargo run -p hugr-docs -- ./docs "What is the narrow-waist rule?" | jq
+cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "What is the narrow-waist rule?" | jq
 ```
 
 ```json
 {
   "status": "success",
-  "message": "By default, you'll be watching all the organizations you are a member of...",
-  "related_documents": ["hub/notifications.md"],
-  "metadata": { "elapsed_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "estimated_cost_micro_usd": 1300, "model_calls": 2, "tool_calls": 3, "...": "..." }
+  "message": "{\"answer\":\"The narrow-waist rule is ...\",\"related_documents\":[\"docs/ARCHITECTURE.md\"]}",
+  "trace_id": "1e4f7d0a9b2c3d44",
+  "metadata": { "duration_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "cost_micro_usd": 1300, "model_calls": 2, "tool_calls": 3 }
 }
 ```
 
-It also ships a Python binding: `hugr_docs.answer("...", docs_path="...")` returns the same dict and never raises for run failures. See [`crates/hugr-docs/README.md`](crates/hugr-docs/README.md).
+The docs root is runtime config, not a compiled-in scope: `hugr run crates/hugr-docs/definition ./docs "..."` and `hugr run crates/hugr-docs/definition ./other-docs "..."` use the same definition with different read jails. Build it with `hugr build crates/hugr-docs/definition`; Python and other languages consume the built binary via subprocess or `--mcp-serve`.
 
 ## Building & testing
 

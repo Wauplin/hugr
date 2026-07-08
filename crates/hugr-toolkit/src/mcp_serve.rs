@@ -11,11 +11,17 @@
 //! just another `ask` carrying the previous answer's `trace_id`. We never use
 //! MCP sampling; the agent owns its provider.
 
+use std::collections::BTreeMap;
+
 use hugr_agent::{Agent, AgentCard, Ask, BlobHandle, TraceId};
 use hugr_host::framing;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncWriteExt, BufReader};
+
+use crate::manifest::AgentDefinition;
+use crate::runtime::build_agent;
+use crate::runtime_args::{RuntimeValues, apply_runtime_values};
 
 /// The protocol version we advertise when the client doesn't pin one.
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -24,6 +30,28 @@ const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 /// process exit code (0 on clean EOF). The agent is assembled once and reused
 /// across `tools/call`s, so `trace_id` resume works within the session.
 pub async fn serve(agent: &Agent, card: &AgentCard) -> i32 {
+    serve_with(ServeMode::Agent { agent, card }).await
+}
+
+/// Run the stdio MCP server against a definition. Unlike [`serve`], this can
+/// apply runtime arguments per `ask` call before assembling the agent, which is
+/// how a single docs binary can narrow its `fs_read` jail to a different folder
+/// on each invocation.
+pub async fn serve_definition(def: AgentDefinition) -> i32 {
+    serve_with(ServeMode::Definition { def: Box::new(def) }).await
+}
+
+enum ServeMode<'a> {
+    Agent {
+        agent: &'a Agent,
+        card: &'a AgentCard,
+    },
+    Definition {
+        def: Box<AgentDefinition>,
+    },
+}
+
+async fn serve_with(mode: ServeMode<'_>) -> i32 {
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = tokio::io::AsyncBufReadExt::lines(stdin);
     let mut stdout = tokio::io::stdout();
@@ -39,7 +67,7 @@ pub async fn serve(agent: &Agent, card: &AgentCard) -> i32 {
         };
 
         // Notifications (no `id`) get no response — just observe and continue.
-        let Some(response) = handle_message(agent, card, &message).await else {
+        let Some(response) = handle_message_for(&mode, &message).await else {
             continue;
         };
 
@@ -50,6 +78,13 @@ pub async fn serve(agent: &Agent, card: &AgentCard) -> i32 {
         if stdout.flush().await.is_err() {
             return 1;
         }
+    }
+}
+
+async fn handle_message_for(mode: &ServeMode<'_>, message: &Value) -> Option<Value> {
+    match mode {
+        ServeMode::Agent { agent, card } => handle_message(agent, card, message).await,
+        ServeMode::Definition { def } => handle_definition_message(def, message).await,
     }
 }
 
@@ -70,9 +105,39 @@ pub(crate) async fn handle_message(
             &id,
             initialize_result(&card.name, &card.version, &card.description, &params),
         ),
-        "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema()] })),
+        "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema(None)] })),
         "ping" => ok(&id, json!({})),
         "tools/call" => match tools_call(agent, params).await {
+            Ok(result) => ok(&id, result),
+            Err(err) => rpc_error(&id, -32602, &err),
+        },
+        other => rpc_error(&id, -32601, &format!("method not found: {other}")),
+    };
+    Some(response)
+}
+
+async fn handle_definition_message(def: &AgentDefinition, message: &Value) -> Option<Value> {
+    let id = message.get("id").cloned()?;
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    let params = message.get("params").cloned().unwrap_or(Value::Null);
+
+    let response = match method {
+        "initialize" => ok(
+            &id,
+            initialize_result(
+                &def.agent.name,
+                if def.agent.version.is_empty() {
+                    "0.0.0"
+                } else {
+                    &def.agent.version
+                },
+                &def.agent.description,
+                &params,
+            ),
+        ),
+        "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema(Some(def))] })),
+        "ping" => ok(&id, json!({})),
+        "tools/call" => match tools_call_definition(def, params).await {
             Ok(result) => ok(&id, result),
             Err(err) => rpc_error(&id, -32602, &err),
         },
@@ -89,6 +154,8 @@ struct AskArgs {
     trace_id: Option<String>,
     #[serde(default)]
     blobs: Vec<BlobHandle>,
+    #[serde(flatten)]
+    runtime: BTreeMap<String, Value>,
 }
 
 /// Handle a `tools/call`: only `ask` is exposed. The [`Answer`] rides back as
@@ -121,6 +188,52 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
     }))
 }
 
+async fn tools_call_definition(def: &AgentDefinition, params: Value) -> Result<Value, String> {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    if name != "ask" {
+        return Err(format!("unknown tool: {name}"));
+    }
+    let args: AskArgs =
+        serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid `ask` arguments: {e}"))?;
+    let runtime = runtime_values_from_mcp(def, &args.runtime)?;
+    let mut def = def.clone();
+    apply_runtime_values(&mut def, &runtime).map_err(|e| e.to_string())?;
+    let (agent, warnings) = build_agent(&def).await.map_err(|e| e.to_string())?;
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+    let ask = Ask {
+        question: args.question,
+        trace_id: args.trace_id.map(TraceId::new),
+        blobs: args.blobs,
+        ..Ask::default()
+    };
+    let answer = agent.ask(ask).await.map_err(|e| e.to_string())?;
+    let structured = serde_json::to_value(&answer).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "content": [{ "type": "text", "text": answer.message }],
+        "structuredContent": structured,
+        "isError": false,
+    }))
+}
+
+fn runtime_values_from_mcp(
+    def: &AgentDefinition,
+    raw: &BTreeMap<String, Value>,
+) -> Result<RuntimeValues, String> {
+    let mut values = RuntimeValues::new();
+    for arg in &def.runtime.args {
+        if let Some(value) = raw.get(&arg.name) {
+            let Some(value) = value.as_str() else {
+                return Err(format!("runtime argument `{}` must be a string", arg.name));
+            };
+            values.insert(arg.name.clone(), value.to_string());
+        }
+    }
+    Ok(values)
+}
+
 /// The `initialize` result: capabilities + server info from the card.
 fn initialize_result(name: &str, version: &str, description: &str, params: &Value) -> Value {
     let protocol = params
@@ -136,22 +249,47 @@ fn initialize_result(name: &str, version: &str, description: &str, params: &Valu
 }
 
 /// The JSON schema advertised for the `ask` tool.
-fn ask_tool_schema() -> Value {
+fn ask_tool_schema(def: Option<&AgentDefinition>) -> Value {
+    let mut properties = serde_json::Map::from_iter([
+        (
+            "question".to_string(),
+            json!({ "type": "string", "description": "The question to ask." }),
+        ),
+        (
+            "trace_id".to_string(),
+            json!({ "type": "string", "description": "Resume/fork from this stored trace id." }),
+        ),
+        (
+            "blobs".to_string(),
+            json!({
+                "type": "array",
+                "description": "Inbound file handles (contract BlobHandle JSON).",
+                "items": { "type": "object" }
+            }),
+        ),
+    ]);
+    let mut required = vec!["question".to_string()];
+    if let Some(def) = def {
+        for arg in &def.runtime.args {
+            properties.insert(
+                arg.name.clone(),
+                json!({
+                    "type": "string",
+                    "description": arg.help,
+                }),
+            );
+            if arg.required {
+                required.push(arg.name.clone());
+            }
+        }
+    }
     json!({
         "name": "ask",
         "description": "Ask this Hugr subagent a question. Pass the previous answer's trace_id to resume/fork the thread.",
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "question": { "type": "string", "description": "The question to ask." },
-                "trace_id": { "type": "string", "description": "Resume/fork from this stored trace id." },
-                "blobs": {
-                    "type": "array",
-                    "description": "Inbound file handles (contract BlobHandle JSON).",
-                    "items": { "type": "object" }
-                }
-            },
-            "required": ["question"]
+            "properties": properties,
+            "required": required
         }
     })
 }
@@ -170,13 +308,40 @@ mod tests {
 
     #[test]
     fn ask_schema_requires_question_and_advertises_resume() {
-        let schema = ask_tool_schema();
+        let schema = ask_tool_schema(None);
         assert_eq!(schema["name"], "ask");
         assert_eq!(schema["inputSchema"]["required"][0], "question");
         assert!(
             schema["inputSchema"]["properties"]
                 .get("trace_id")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn ask_schema_includes_runtime_args() {
+        let def = AgentDefinition::parse(
+            r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+required = true
+help = "Docs root."
+"#,
+            "hugr.toml",
+        )
+        .unwrap();
+        let schema = ask_tool_schema(Some(&def));
+        assert_eq!(
+            schema["inputSchema"]["properties"]["docs_path"]["description"],
+            "Docs root."
+        );
+        assert_eq!(
+            schema["inputSchema"]["required"],
+            json!(["question", "docs_path"])
         );
     }
 

@@ -11,8 +11,8 @@
 //! flagged.
 //!
 //! The typed shape mirrors the pieces an agent runtime declares (system prompt,
-//! model tiers + pricing, granted tools, limits); T1.3 (`hugr run`) assembles a
-//! `hugr-agent` runtime from it.
+//! model tiers + pricing, granted tools, limits, runtime arguments); T1.3
+//! (`hugr run`) assembles a `hugr-agent` runtime from it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -46,14 +46,12 @@ pub struct AgentDefinition {
     pub scratchpad: ScratchpadConfig,
     /// Trace-store configuration (`[traces]`).
     pub traces: TracesConfig,
+    /// Runtime arguments whose values patch the definition for one invocation.
+    pub runtime: RuntimeConfig,
     /// The `SYSTEM.md` system prompt, if present beside the manifest.
     pub system_prompt: Option<String>,
     /// The folder the definition was loaded from ([`AgentDefinition::load`]).
     pub source_dir: Option<PathBuf>,
-    /// An explicit provider API key supplied by an embedding host (e.g. the
-    /// docs Python binding), taking precedence over `[models].api_key_env`.
-    /// In-memory only — never parsed from or written to a manifest.
-    pub provider_api_key: Option<String>,
 }
 
 /// The `[agent]` identity block.
@@ -158,6 +156,43 @@ pub struct TracesConfig {
     pub store: Option<String>,
 }
 
+/// Runtime invocation arguments declared by the definition.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RuntimeConfig {
+    /// Arguments, deterministically ordered by manifest key.
+    pub args: Vec<RuntimeArg>,
+}
+
+/// One runtime argument. It is surfaced as a CLI argument and an MCP `ask`
+/// argument; its value is copied to `target` before the agent is assembled.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeArg {
+    /// Stable argument id, taken from `[runtime.args.<name>]`.
+    #[serde(skip)]
+    pub name: String,
+    /// Manifest path to patch, e.g. `tools.fs_read.root`.
+    pub target: String,
+    /// Help text for generated surfaces.
+    #[serde(default)]
+    pub help: String,
+    /// Expose as a positional before `question` instead of as `--<name>`.
+    #[serde(default)]
+    pub positional: bool,
+    /// Whether the ask path requires a value.
+    #[serde(default)]
+    pub required: bool,
+    /// Optional environment fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// Optional default fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// Optional long flag name. Defaults to `name` with `_` replaced by `-`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
+}
+
 /// Failure to load or parse a definition. Run failures are *answers* (§18.1);
 /// these are strictly load-time problems.
 #[derive(Debug, thiserror::Error)]
@@ -237,6 +272,7 @@ impl AgentDefinition {
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
         let traces: TracesConfig = parse_section(&table, "traces", path)?;
+        let runtime = parse_runtime(&table, path)?;
 
         Ok(Self {
             agent,
@@ -245,9 +281,9 @@ impl AgentDefinition {
             limits,
             scratchpad,
             traces,
+            runtime,
             system_prompt: None,
             source_dir: None,
-            provider_api_key: None,
         })
     }
 
@@ -385,6 +421,108 @@ fn parse_tools(table: &toml::Table, path: &Path) -> Result<Vec<ToolGrant>, Manif
     Ok(grants)
 }
 
+fn parse_runtime(table: &toml::Table, path: &Path) -> Result<RuntimeConfig, ManifestError> {
+    let Some(value) = table.get("runtime") else {
+        return Ok(RuntimeConfig::default());
+    };
+    let runtime = value.as_table().ok_or_else(|| ManifestError::Validate {
+        path: path.to_path_buf(),
+        message: "[runtime] must be a table".to_string(),
+    })?;
+    for key in runtime.keys() {
+        if key != "args" {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!("unknown [runtime] key `{key}`"),
+            });
+        }
+    }
+    let Some(args_value) = runtime.get("args") else {
+        return Ok(RuntimeConfig::default());
+    };
+    let args_table = args_value
+        .as_table()
+        .ok_or_else(|| ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: "[runtime.args] must be a table".to_string(),
+        })?;
+    let mut args = Vec::new();
+    for (name, value) in args_table {
+        validate_runtime_name(name, path)?;
+        let mut arg: RuntimeArg =
+            value
+                .clone()
+                .try_into()
+                .map_err(|err: toml::de::Error| ManifestError::Validate {
+                    path: path.to_path_buf(),
+                    message: format!("[runtime.args.{name}]: {}", err.message()),
+                })?;
+        arg.name = name.clone();
+        validate_runtime_arg(&arg, path)?;
+        args.push(arg);
+    }
+    args.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(RuntimeConfig { args })
+}
+
+fn validate_runtime_name(name: &str, path: &Path) -> Result<(), ManifestError> {
+    let ok = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!(
+                "[runtime.args.{name}] names must contain only ASCII letters, digits, `_`, or `-`"
+            ),
+        })
+    }
+}
+
+fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestError> {
+    if arg.target.trim().is_empty() {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!("[runtime.args.{}].target is required", arg.name),
+        });
+    }
+    if matches!(
+        arg.name.as_str(),
+        "question"
+            | "trace"
+            | "json"
+            | "pretty"
+            | "blob"
+            | "describe"
+            | "config"
+            | "traces"
+            | "mcp-serve"
+    ) {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!(
+                "[runtime.args.{}] conflicts with a built-in surface argument",
+                arg.name
+            ),
+        });
+    }
+    if let Some(flag) = &arg.flag
+        && (flag.is_empty() || flag.starts_with('-'))
+    {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!(
+                "[runtime.args.{}].flag must not be empty or start with `-`",
+                arg.name
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// Parse a fixed-schema optional section into `T` — unknown keys are hard
 /// errors via each section type's `deny_unknown_fields`.
 fn parse_section<T>(table: &toml::Table, section: &str, path: &Path) -> Result<T, ManifestError>
@@ -406,7 +544,15 @@ where
 /// An unrecognized top-level section is a hard error, matching the
 /// `deny_unknown_fields` posture of the fixed-schema sections.
 fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), ManifestError> {
-    const KNOWN: &[&str] = &["agent", "models", "tools", "limits", "scratchpad", "traces"];
+    const KNOWN: &[&str] = &[
+        "agent",
+        "models",
+        "tools",
+        "limits",
+        "scratchpad",
+        "traces",
+        "runtime",
+    ];
     for key in table.keys() {
         if !KNOWN.contains(&key.as_str()) {
             return Err(ManifestError::Validate {
@@ -573,5 +719,31 @@ artifact = "./receipts"
             .find(|t| t.kind == ToolKind::Agent)
             .unwrap();
         assert_eq!(agent.name, "receipts");
+    }
+
+    #[test]
+    fn runtime_args_parse() {
+        let src = r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[tools.fs_read]
+root = "."
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+env = "DOCS_PATH"
+help = "Docs folder."
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        assert_eq!(def.runtime.args.len(), 1);
+        let arg = &def.runtime.args[0];
+        assert_eq!(arg.name, "docs_path");
+        assert_eq!(arg.target, "tools.fs_read.root");
+        assert!(arg.positional);
+        assert!(arg.required);
+        assert_eq!(arg.env.as_deref(), Some("DOCS_PATH"));
     }
 }

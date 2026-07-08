@@ -13,9 +13,9 @@ use clap::{Parser, Subcommand};
 use hugr_agent::TraceId;
 use hugr_toolkit::AgentDefinition;
 use hugr_toolkit::build::{BuildOptions, build as run_build};
-use hugr_toolkit::runtime::{build_agent, trace_store_for};
+use hugr_toolkit::runtime::trace_store_for;
 use hugr_toolkit::scaffold::{Template, write_scaffold};
-use hugr_toolkit::surface::{error_answer, print_answer, run_ask};
+use hugr_toolkit::surface::{error_answer, print_answer, run_definition_args};
 use hugr_toolkit::traces::render_lineage;
 
 #[derive(Parser)]
@@ -102,15 +102,9 @@ struct NewArgs {
 struct RunArgs {
     /// Path to the agent definition folder (containing hugr.toml).
     agent_dir: PathBuf,
-    /// The question to ask.
-    question: String,
-    /// Resume/fork from an existing trace id (writes a new child trace).
-    #[arg(long)]
-    trace: Option<String>,
-    /// Emit compact single-line JSON (default is pretty-printed), matching the
-    /// built binary's flag.
-    #[arg(long)]
-    json: bool,
+    /// Arguments passed to the agent's generated surface.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
 }
 
 #[tokio::main]
@@ -277,7 +271,7 @@ fn build(args: BuildArgs) {
 
 async fn run(args: RunArgs) {
     let started = Instant::now();
-    let pretty = !args.json;
+    let pretty = !args.args.iter().any(|arg| arg == "--json");
 
     // A bad manifest is an error answer, not a panic (§21.1) — shared with the
     // built binary via `surface::error_answer`/`print_answer`.
@@ -288,25 +282,7 @@ async fn run(args: RunArgs) {
             return;
         }
     };
-    let (agent, warnings) = match build_agent(&def).await {
-        Ok(built) => built,
-        Err(err) => {
-            print_answer(&error_answer(err.to_string(), started), pretty);
-            return;
-        }
-    };
-    for warning in &warnings {
-        eprintln!("warning: {warning}");
-    }
-
-    // The same run path as the built binary (ARCHITECTURE §21.1).
-    run_ask(
-        &agent,
-        Some(args.question),
-        args.trace,
-        &[],
-        started,
-        pretty,
-    )
-    .await;
+    // The same generated surface as the built binary (ARCHITECTURE §21.1),
+    // including definition-specific runtime arguments.
+    run_definition_args(def, args.args, started).await;
 }
