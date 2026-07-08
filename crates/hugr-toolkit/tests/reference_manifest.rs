@@ -34,10 +34,4 @@ fn reference_manifest_parses_without_warnings() {
 
     assert_eq!(def.limits.max_model_calls, Some(20));
     assert_eq!(def.limits.timeout_s, Some(120));
-
-    assert!(
-        def.warnings.is_empty(),
-        "reference manifest must have no unknown-key warnings: {:?}",
-        def.warnings
-    );
 }

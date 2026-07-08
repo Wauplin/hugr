@@ -19,16 +19,3 @@ root = "."
 
 [traces]
 store = ".hugr-docs-traces"
-
-[answer.extra_schema]
-type = "object"
-required = ["answer", "related_documents"]
-
-[answer.extra_schema.properties.answer]
-type = "string"
-
-[answer.extra_schema.properties.related_documents]
-type = "array"
-
-[answer.extra_schema.properties.related_documents.items]
-type = "string"

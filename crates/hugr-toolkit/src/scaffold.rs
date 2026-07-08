@@ -218,12 +218,6 @@ mod tests {
             });
             assert_eq!(def.agent.name, "my-agent");
             assert_eq!(def.default_tier(), Some("medium"));
-            assert!(
-                def.warnings.is_empty(),
-                "template {} has warnings: {:?}",
-                template.as_str(),
-                def.warnings
-            );
             // SYSTEM.md carries the template vars for hugr run to substitute.
             assert!(files[1].contents.contains("{{agent_name}}"));
         }

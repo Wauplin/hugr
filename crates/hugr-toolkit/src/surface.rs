@@ -273,14 +273,8 @@ pub enum LoadError {
 pub async fn load_agent(bundle_bytes: &[u8]) -> Result<LoadedAgent, LoadError> {
     let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
     let def = AgentDefinition::load(&home)?;
-    let def_warnings: Vec<String> = def.warnings.iter().map(|w| w.message.clone()).collect();
-    let (agent, mut warnings) = build_agent(&def).await?;
-    let mut all = def_warnings;
-    all.append(&mut warnings);
-    Ok(LoadedAgent {
-        agent,
-        warnings: all,
-    })
+    let (agent, warnings) = build_agent(&def).await?;
+    Ok(LoadedAgent { agent, warnings })
 }
 
 /// Resolve the per-agent home directory and unpack the embedded definition into

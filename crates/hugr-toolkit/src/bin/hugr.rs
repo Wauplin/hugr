@@ -309,10 +309,6 @@ fn build(args: BuildArgs) {
             std::process::exit(1);
         }
     };
-    for warning in &def.warnings {
-        eprintln!("warning: {}", warning.message);
-    }
-
     let out_dir = args.out.unwrap_or_else(|| args.agent_dir.join("dist"));
     let opts = BuildOptions {
         out_dir,
@@ -352,10 +348,6 @@ async fn run(args: RunArgs) {
             return;
         }
     };
-    for warning in &def.warnings {
-        eprintln!("warning: {}", warning.message);
-    }
-
     let (agent, warnings) = match build_agent(&def).await {
         Ok(built) => built,
         Err(err) => {

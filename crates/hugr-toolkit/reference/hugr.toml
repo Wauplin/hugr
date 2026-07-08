@@ -36,12 +36,12 @@ model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0     # optional: feeds AnswerMeta.cost_micro_usd
 output_usd_per_m_tokens = 1.5
 temperature = 0.2                # optional sampling knobs
-top_p = 0.95
 max_tokens = 2048
 
 # ---------------------------------------------------------------------------
 # [tools.<name>] — grants from the predefined tool library (§20.2). The scope
-# keys are tool-specific (and never unknown-key-checked). A tool is jailed to
+# keys are tool-specific (and never unknown-key-checked). Elsewhere, unknown
+# keys are hard errors. A tool is jailed to
 # the scope declared here.
 # ---------------------------------------------------------------------------
 [tools.fs_read]

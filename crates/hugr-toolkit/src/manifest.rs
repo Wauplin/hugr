@@ -2,18 +2,13 @@
 //!
 //! A subagent definition is an auditable *folder*, not a Rust project: a
 //! `hugr.toml` manifest plus a `SYSTEM.md` system prompt beside it. This module
-//! parses that folder into a typed [`AgentDefinition`] with:
+//! parses that folder into a typed [`AgentDefinition`].
 //!
-//! - **Precise error spans.** Syntax errors carry the TOML byte range resolved
-//!   to line/column ([`ManifestError::Parse`]); semantic errors (a missing
-//!   name, a tier with no model) point at the offending key
-//!   ([`ManifestError::Validate`]).
-//! - **Unknown-key warnings, not failures.** A typo in a fixed-schema section
-//!   (`[agent]`, `[limits]`, `[scratchpad]`, `[traces]`) or an unrecognized
-//!   top-level table is collected into [`AgentDefinition::warnings`] rather than
-//!   rejected — reviewers still get a parse, and the definition still runs.
-//!   Tier names under `[models]` and scope keys under `[tools.<name>]` are
-//!   caller-defined, so they are never flagged.
+//! Unknown keys are **hard errors** (`deny_unknown_fields` on every
+//! fixed-schema section, plus a top-level check) — a typo in a manifest fails
+//! the parse instead of silently doing nothing. Tier names under `[models]`
+//! and scope keys under `[tools.<name>]` are caller-defined, so they are never
+//! flagged.
 //!
 //! The typed shape mirrors the pieces an agent runtime declares (system prompt,
 //! model tiers + pricing, granted tools, limits); T1.3 (`hugr run`) assembles a
@@ -60,13 +55,11 @@ pub struct AgentDefinition {
     /// docs Python binding), taking precedence over `[models].api_key_env`.
     /// In-memory only — never parsed from or written to a manifest.
     pub provider_api_key: Option<String>,
-    /// Non-fatal diagnostics (unknown keys). Surfaces print these; `hugr run`
-    /// still proceeds.
-    pub warnings: Vec<Warning>,
 }
 
 /// The `[agent]` identity block.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct AgentMeta {
     // `default` so a missing name surfaces our located "name is required"
@@ -98,6 +91,7 @@ pub struct ModelsConfig {
 
 /// One `[models.<tier>]` entry.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct TierConfig {
     /// Provider model id (required per tier).
@@ -108,8 +102,6 @@ pub struct TierConfig {
     pub output_usd_per_m_tokens: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
 }
@@ -143,6 +135,7 @@ pub enum ToolKind {
 
 /// The `[limits]` block. Enforcement is ROADMAP T3.1; T1.1 only parses it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct LimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,6 +150,7 @@ pub struct LimitsConfig {
 
 /// The `[scratchpad]` block (ARCHITECTURE §19.3).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ScratchpadConfig {
     /// Override the per-lineage scratch root; defaults to a hidden subtree of
@@ -167,37 +161,12 @@ pub struct ScratchpadConfig {
 
 /// The `[traces]` block (ARCHITECTURE §19.1).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct TracesConfig {
     /// Directory the immutable trace store lives in; defaults per surface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<String>,
-}
-
-/// A non-fatal diagnostic (an unknown key). Carries a resolved source location
-/// when the offending key could be located in the manifest text.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub struct Warning {
-    pub message: String,
-    pub span: Option<Span>,
-}
-
-/// A resolved source location in the manifest: byte range plus 1-based
-/// line/column of the range start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub column: usize,
-}
-
-impl std::fmt::Display for Span {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}, column {}", self.line, self.column)
-    }
 }
 
 /// Failure to load or parse a definition. Run failures are *answers* (§18.1);
@@ -215,34 +184,14 @@ pub enum ManifestError {
         #[source]
         source: std::io::Error,
     },
-    /// The manifest is not valid TOML.
-    #[error("{path}: TOML syntax error at {span}: {message}", span = fmt_span(*span))]
-    Parse {
-        path: PathBuf,
-        message: String,
-        span: Option<Span>,
-    },
-    /// The manifest is valid TOML but semantically incomplete/invalid.
-    #[error("{path}: {message}{}", fmt_at(*span))]
-    Validate {
-        path: PathBuf,
-        message: String,
-        span: Option<Span>,
-    },
-}
-
-fn fmt_span(span: Option<Span>) -> String {
-    match span {
-        Some(s) => s.to_string(),
-        None => "unknown location".to_string(),
-    }
-}
-
-fn fmt_at(span: Option<Span>) -> String {
-    match span {
-        Some(s) => format!(" (at {s})"),
-        None => String::new(),
-    }
+    /// The manifest is not valid TOML (the message carries toml's own
+    /// line/column rendering).
+    #[error("{path}: {message}")]
+    Parse { path: PathBuf, message: String },
+    /// The manifest is valid TOML but semantically incomplete/invalid — a
+    /// missing required key, an unknown key, a dangling default tier.
+    #[error("{path}: {message}")]
+    Validate { path: PathBuf, message: String },
 }
 
 impl AgentDefinition {
@@ -290,21 +239,16 @@ impl AgentDefinition {
         let path = path.as_ref();
         let table: toml::Table = toml::from_str(src).map_err(|err| ManifestError::Parse {
             path: path.to_path_buf(),
-            message: err.message().to_string(),
-            span: err.span().map(|range| Span::resolve(src, range)),
+            message: err.to_string(),
         })?;
 
-        let mut warnings = Vec::new();
-
-        let agent = parse_agent(&table, src, path, &mut warnings)?;
-        let models = parse_models(&table, src, path, &mut warnings)?;
-        let tools = parse_tools(&table, src, path)?;
-        let limits: LimitsConfig = parse_section(&table, "limits", src, path, &mut warnings)?;
-        let scratchpad: ScratchpadConfig =
-            parse_section(&table, "scratchpad", src, path, &mut warnings)?;
-        let traces: TracesConfig = parse_section(&table, "traces", src, path, &mut warnings)?;
-
-        warn_unknown_top_level(&table, src, &mut warnings);
+        reject_unknown_top_level(&table, path)?;
+        let agent = parse_agent(&table, path)?;
+        let models = parse_models(&table, path)?;
+        let tools = parse_tools(&table, path)?;
+        let limits: LimitsConfig = parse_section(&table, "limits", path)?;
+        let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
+        let traces: TracesConfig = parse_section(&table, "traces", path)?;
 
         Ok(Self {
             agent,
@@ -316,7 +260,6 @@ impl AgentDefinition {
             system_prompt: None,
             source_dir: None,
             provider_api_key: None,
-            warnings,
         })
     }
 
@@ -333,70 +276,11 @@ impl AgentDefinition {
     }
 }
 
-impl Span {
-    /// Resolve a byte range in `src` to a span with 1-based line/column of the
-    /// range start.
-    fn resolve(src: &str, range: std::ops::Range<usize>) -> Self {
-        let start = range.start.min(src.len());
-        let mut line = 1;
-        let mut column = 1;
-        for (idx, ch) in src.char_indices() {
-            if idx >= start {
-                break;
-            }
-            if ch == '\n' {
-                line += 1;
-                column = 1;
-            } else {
-                column += 1;
-            }
-        }
-        Span {
-            start: range.start,
-            end: range.end,
-            line,
-            column,
-        }
-    }
-}
-
-/// Locate the byte offset of a top-level `key = ` / `[key]` assignment for
-/// diagnostics. Best-effort: returns the first occurrence.
-fn locate_key(src: &str, key: &str) -> Option<Span> {
-    for (line_no, line) in src.lines().enumerate() {
-        let trimmed = line.trim_start();
-        let bare = trimmed.trim_start_matches('[');
-        if bare.starts_with(key) && bare[key.len()..].trim_start().starts_with(['=', ']', '.']) {
-            let column = line.len() - trimmed.len() + 1;
-            // Byte offset of this line start.
-            let start: usize = src
-                .lines()
-                .take(line_no)
-                .map(|l| l.len() + 1)
-                .sum::<usize>()
-                + (line.len() - trimmed.len());
-            return Some(Span {
-                start,
-                end: start + key.len(),
-                line: line_no + 1,
-                column,
-            });
-        }
-    }
-    None
-}
-
-fn parse_agent(
-    table: &toml::Table,
-    src: &str,
-    path: &Path,
-    warnings: &mut Vec<Warning>,
-) -> Result<AgentMeta, ManifestError> {
+fn parse_agent(table: &toml::Table, path: &Path) -> Result<AgentMeta, ManifestError> {
     let Some(value) = table.get("agent") else {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
             message: "missing required [agent] section".to_string(),
-            span: None,
         });
     };
     let agent: AgentMeta =
@@ -406,38 +290,21 @@ fn parse_agent(
             .map_err(|err: toml::de::Error| ManifestError::Validate {
                 path: path.to_path_buf(),
                 message: format!("[agent]: {}", err.message()),
-                span: err.span().map(|r| Span::resolve(src, r)),
             })?;
     if agent.name.trim().is_empty() {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
             message: "[agent].name is required and must not be empty".to_string(),
-            span: locate_key(src, "agent"),
         });
-    }
-    if let Some(t) = value.as_table() {
-        warn_unknown_keys(
-            t,
-            &["name", "version", "description"],
-            "agent",
-            src,
-            warnings,
-        );
     }
     Ok(agent)
 }
 
-fn parse_models(
-    table: &toml::Table,
-    src: &str,
-    path: &Path,
-    warnings: &mut Vec<Warning>,
-) -> Result<ModelsConfig, ManifestError> {
+fn parse_models(table: &toml::Table, path: &Path) -> Result<ModelsConfig, ManifestError> {
     let Some(value) = table.get("models").and_then(toml::Value::as_table) else {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
             message: "missing required [models] section with at least one tier".to_string(),
-            span: None,
         });
     };
 
@@ -468,30 +335,12 @@ fn parse_models(
             .map_err(|err: toml::de::Error| ManifestError::Validate {
                 path: path.to_path_buf(),
                 message: format!("[models.{key}]: {}", err.message()),
-                span: err.span().map(|r| Span::resolve(src, r)),
             })?;
         if tier.model.trim().is_empty() {
             return Err(ManifestError::Validate {
                 path: path.to_path_buf(),
                 message: format!("[models.{key}].model is required"),
-                span: locate_key(src, key),
             });
-        }
-        if let Some(t) = tier_value.as_table() {
-            warn_unknown_keys(
-                t,
-                &[
-                    "model",
-                    "input_usd_per_m_tokens",
-                    "output_usd_per_m_tokens",
-                    "temperature",
-                    "top_p",
-                    "max_tokens",
-                ],
-                &format!("models.{key}"),
-                src,
-                warnings,
-            );
         }
         models.tiers.insert(key.clone(), tier);
     }
@@ -500,7 +349,6 @@ fn parse_models(
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
             message: "[models] must declare at least one tier, e.g. [models.medium]".to_string(),
-            span: locate_key(src, "models"),
         });
     }
     if let Some(default) = &models.default
@@ -509,18 +357,13 @@ fn parse_models(
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
             message: format!("[models].default = \"{default}\" names no declared tier"),
-            span: locate_key(src, "models"),
         });
     }
 
     Ok(models)
 }
 
-fn parse_tools(
-    table: &toml::Table,
-    src: &str,
-    path: &Path,
-) -> Result<Vec<ToolGrant>, ManifestError> {
+fn parse_tools(table: &toml::Table, path: &Path) -> Result<Vec<ToolGrant>, ManifestError> {
     let Some(tools_table) = table.get("tools").and_then(toml::Value::as_table) else {
         return Ok(Vec::new());
     };
@@ -533,7 +376,6 @@ fn parse_tools(
                 return Err(ManifestError::Validate {
                     path: path.to_path_buf(),
                     message: format!("[tools.{key}] must be a table of named instances"),
-                    span: locate_key(src, key),
                 });
             };
             for (instance, cfg) in instances {
@@ -555,82 +397,37 @@ fn parse_tools(
     Ok(grants)
 }
 
-/// Parse a fixed-schema optional section into `T`, warning on unknown keys.
-fn parse_section<T>(
-    table: &toml::Table,
-    section: &str,
-    src: &str,
-    path: &Path,
-    warnings: &mut Vec<Warning>,
-) -> Result<T, ManifestError>
+/// Parse a fixed-schema optional section into `T` — unknown keys are hard
+/// errors via each section type's `deny_unknown_fields`.
+fn parse_section<T>(table: &toml::Table, section: &str, path: &Path) -> Result<T, ManifestError>
 where
-    T: Default + serde::de::DeserializeOwned + KnownKeys,
+    T: Default + serde::de::DeserializeOwned,
 {
     let Some(value) = table.get(section) else {
         return Ok(T::default());
     };
-    let parsed: T =
-        value
-            .clone()
-            .try_into()
-            .map_err(|err: toml::de::Error| ManifestError::Validate {
-                path: path.to_path_buf(),
-                message: format!("[{section}]: {}", err.message()),
-                span: err.span().map(|r| Span::resolve(src, r)),
-            })?;
-    if let Some(t) = value.as_table() {
-        warn_unknown_keys(t, T::KNOWN_KEYS, section, src, warnings);
-    }
-    Ok(parsed)
+    value
+        .clone()
+        .try_into()
+        .map_err(|err: toml::de::Error| ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!("[{section}]: {}", err.message()),
+        })
 }
 
-/// Known top-level keys of a fixed-schema section, for unknown-key warnings.
-trait KnownKeys {
-    const KNOWN_KEYS: &'static [&'static str];
-}
-
-impl KnownKeys for LimitsConfig {
-    const KNOWN_KEYS: &'static [&'static str] = &[
-        "max_turns",
-        "max_model_calls",
-        "max_cost_micro_usd",
-        "timeout_s",
-    ];
-}
-impl KnownKeys for ScratchpadConfig {
-    const KNOWN_KEYS: &'static [&'static str] = &["root"];
-}
-impl KnownKeys for TracesConfig {
-    const KNOWN_KEYS: &'static [&'static str] = &["store"];
-}
-
-fn warn_unknown_keys(
-    table: &toml::Table,
-    known: &[&str],
-    section: &str,
-    src: &str,
-    warnings: &mut Vec<Warning>,
-) {
-    for key in table.keys() {
-        if !known.contains(&key.as_str()) {
-            warnings.push(Warning {
-                message: format!("unknown key `{key}` in [{section}] (ignored)"),
-                span: locate_key(src, key),
-            });
-        }
-    }
-}
-
-fn warn_unknown_top_level(table: &toml::Table, src: &str, warnings: &mut Vec<Warning>) {
+/// An unrecognized top-level section is a hard error, matching the
+/// `deny_unknown_fields` posture of the fixed-schema sections.
+fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), ManifestError> {
     const KNOWN: &[&str] = &["agent", "models", "tools", "limits", "scratchpad", "traces"];
     for key in table.keys() {
         if !KNOWN.contains(&key.as_str()) {
-            warnings.push(Warning {
-                message: format!("unknown top-level section `[{key}]` (ignored)"),
-                span: locate_key(src, key),
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!("unknown top-level section `[{key}]`"),
             });
         }
     }
+    Ok(())
 }
 
 /// Convert a parsed TOML value into `serde_json::Value` for downstream
@@ -656,7 +453,6 @@ model = "google/gemma-4-31B-it"
         let def = AgentDefinition::parse(MINIMAL, "hugr.toml").unwrap();
         assert_eq!(def.agent.name, "policy-docs");
         assert_eq!(def.default_tier(), Some("medium"));
-        assert!(def.warnings.is_empty());
         assert!(def.tools.is_empty());
     }
 
@@ -680,40 +476,36 @@ model = "google/gemma-4-31B-it"
     fn syntax_error_carries_line_and_column() {
         let src = "[agent]\nname = \n";
         let err = AgentDefinition::parse(src, "hugr.toml").unwrap_err();
-        match err {
-            ManifestError::Parse {
-                span: Some(span), ..
-            } => {
-                assert_eq!(span.line, 2);
-            }
-            other => panic!("expected Parse error with span, got {other:?}"),
-        }
+        assert!(matches!(err, ManifestError::Parse { .. }));
+        assert!(err.to_string().contains("line 2"), "{err}");
     }
 
     #[test]
-    fn unknown_keys_warn_but_do_not_fail() {
-        let src = r#"
-[agent]
-name = "x"
-descriptn = "typo"
-
-[models.medium]
-model = "m"
-
-[limits]
-max_turns = 5
-maxturns = 6
-
-[bogus]
-whatever = true
-"#;
-        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        let msgs: Vec<_> = def.warnings.iter().map(|w| w.message.clone()).collect();
-        assert!(msgs.iter().any(|m| m.contains("descriptn")), "{msgs:?}");
-        assert!(msgs.iter().any(|m| m.contains("maxturns")), "{msgs:?}");
-        assert!(msgs.iter().any(|m| m.contains("bogus")), "{msgs:?}");
-        // Known keys are not flagged, and parsing still succeeded.
-        assert_eq!(def.limits.max_turns, Some(5));
+    fn unknown_keys_are_hard_errors() {
+        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        for (src, needle) in [
+            (
+                format!("{base}[limits]\nmaxturns = 6\n"),
+                "maxturns".to_string(),
+            ),
+            (
+                "[agent]\nname = \"x\"\ndescriptn = \"typo\"\n[models.medium]\nmodel = \"m\"\n"
+                    .to_string(),
+                "descriptn".to_string(),
+            ),
+            (
+                format!("{base}[bogus]\nwhatever = true\n"),
+                "bogus".to_string(),
+            ),
+            (
+                format!("{base}top_p = 0.9\n"),
+                "top_p".to_string(), // deleted knob: now unknown
+            ),
+        ] {
+            let err = AgentDefinition::parse(&src, "hugr.toml").unwrap_err();
+            assert!(matches!(err, ManifestError::Validate { .. }), "{src}");
+            assert!(err.to_string().contains(&needle), "{err}");
+        }
     }
 
     #[test]
@@ -748,7 +540,6 @@ temperature = 0.2
         assert_eq!(big.model, "big-m");
         assert_eq!(big.input_usd_per_m_tokens, Some(1.0));
         assert_eq!(big.temperature, Some(0.2));
-        assert!(def.warnings.is_empty(), "{:?}", def.warnings);
     }
 
     #[test]
