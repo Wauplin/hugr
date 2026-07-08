@@ -2,57 +2,74 @@
 //!
 //! Three layers of pinning:
 //! 1. serde round-trips for minimal and fully-populated values;
-//! 2. exact wire-JSON snapshots (field names and enum strings are the
+//! 2. exact wire-JSON snapshots (field names and status strings are the
 //!    contract — renaming a field is a breaking change and must fail here);
 //! 3. the committed JSON schema files stay structurally in lock-step with the
 //!    Rust types (property sets match what serde actually emits).
 
 use hugr_agent::{
-    Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,
+    Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, STATUS_SUCCESS, TierSpend, TraceId,
 };
 use serde_json::{Value, json};
 
 fn full_ask() -> Ask {
-    Ask::new("Which expenses violate policy?")
-        .with_trace_id(TraceId::new("tr-parent"))
-        .with_blobs(vec![
-            BlobHandle::new(
-                BlobRef::Bytes {
+    Ask {
+        question: "Which expenses violate policy?".into(),
+        trace_id: Some(TraceId::new("tr-parent")),
+        blobs: vec![
+            BlobHandle {
+                blob_ref: BlobRef::Bytes {
                     base64: "aGVsbG8=".into(),
                 },
-                "text/plain",
-            )
-            .with_name("note.txt"),
-            BlobHandle::new(
-                BlobRef::Sha256 {
+                media_type: "text/plain".into(),
+                name: Some("note.txt".into()),
+            },
+            BlobHandle {
+                blob_ref: BlobRef::Sha256 {
                     sha256: "ab".repeat(32),
                 },
-                "application/pdf",
-            )
-            .with_perms(BlobPerms::new(true, true, false)),
-        ])
-        .with_extra(json!({"caller": "orchestrator-1"}))
+                media_type: "application/pdf".into(),
+                name: None,
+            },
+        ],
+        extra: json!({"caller": "orchestrator-1"}),
+    }
 }
 
 fn full_answer() -> Answer {
-    let meta = AnswerMeta::new()
-        .with_duration_ms(1234)
-        .with_tool_calls(3)
-        .with_tier(TierSpend::new("medium", 2, 1500, 300, 42))
-        .with_tier(TierSpend::new("small", 1, 200, 50, 1));
-    Answer::new(
-        AnswerStatus::Success,
-        "Two expenses exceed the hotel cap.",
-        TraceId::new("tr-child"),
-        meta,
-    )
-    .with_blobs(vec![BlobHandle::new(
-        BlobRef::Path {
-            path: "report.md".into(),
-        },
-        "text/markdown",
-    )])
-    .with_extra(json!({"related_documents": ["travel.md"]}))
+    let mut metadata = AnswerMeta {
+        duration_ms: 1234,
+        tool_calls: 3,
+        ..AnswerMeta::default()
+    };
+    metadata.add_tier(TierSpend {
+        selector: "medium".into(),
+        model_calls: 2,
+        tokens_in: 1500,
+        tokens_out: 300,
+        cost_micro_usd: 42,
+    });
+    metadata.add_tier(TierSpend {
+        selector: "small".into(),
+        model_calls: 1,
+        tokens_in: 200,
+        tokens_out: 50,
+        cost_micro_usd: 1,
+    });
+    Answer {
+        status: STATUS_SUCCESS.to_string(),
+        message: "Two expenses exceed the hotel cap.".into(),
+        trace_id: TraceId::new("tr-child"),
+        blobs: vec![BlobHandle {
+            blob_ref: BlobRef::Path {
+                path: "report.md".into(),
+            },
+            media_type: "text/markdown".into(),
+            name: None,
+        }],
+        metadata,
+        extra: json!({"related_documents": ["travel.md"]}),
+    }
 }
 
 #[test]
@@ -82,7 +99,7 @@ fn minimal_ask_wire_form_is_question_only() {
 
 #[test]
 fn full_wire_snapshots_are_pinned() {
-    // Field names and enum strings ARE the contract. If this test fails, you
+    // Field names and status strings ARE the contract. If this test fails, you
     // changed the wire format: bump/version the committed schemas instead.
     assert_eq!(
         serde_json::to_value(full_ask()).unwrap(),
@@ -93,13 +110,11 @@ fn full_wire_snapshots_are_pinned() {
                 {
                     "ref": {"kind": "bytes", "base64": "aGVsbG8="},
                     "media_type": "text/plain",
-                    "perms": {"read": true, "write": false, "execute": false},
                     "name": "note.txt"
                 },
                 {
                     "ref": {"kind": "sha256", "sha256": "ab".repeat(32)},
-                    "media_type": "application/pdf",
-                    "perms": {"read": true, "write": true, "execute": false}
+                    "media_type": "application/pdf"
                 }
             ],
             "extra": {"caller": "orchestrator-1"}
@@ -115,8 +130,7 @@ fn full_wire_snapshots_are_pinned() {
             "blobs": [
                 {
                     "ref": {"kind": "path", "path": "report.md"},
-                    "media_type": "text/markdown",
-                    "perms": {"read": true, "write": false, "execute": false}
+                    "media_type": "text/markdown"
                 }
             ],
             "metadata": {
@@ -137,29 +151,14 @@ fn full_wire_snapshots_are_pinned() {
 }
 
 #[test]
-fn status_strings_are_pinned() {
-    for (status, wire) in [
-        (AnswerStatus::Success, "success"),
-        (AnswerStatus::OffTopic, "off_topic"),
-        (AnswerStatus::Error, "error"),
-    ] {
-        assert_eq!(serde_json::to_value(status).unwrap(), json!(wire));
-        assert_eq!(
-            serde_json::from_value::<AnswerStatus>(json!(wire)).unwrap(),
-            status
-        );
-    }
-}
-
-#[test]
 fn errors_are_answers_with_mandatory_zeroed_meta() {
     // An error before any model call still serializes full accounting.
-    let answer = Answer::new(
-        AnswerStatus::Error,
-        "model endpoint unreachable",
-        TraceId::new("tr-err"),
-        AnswerMeta::new(),
-    );
+    let answer = Answer {
+        status: STATUS_ERROR.to_string(),
+        message: "model endpoint unreachable".into(),
+        trace_id: TraceId::new("tr-err"),
+        ..Answer::default()
+    };
     let wire = serde_json::to_value(&answer).unwrap();
     assert_eq!(wire["status"], "error");
     assert_eq!(wire["metadata"]["cost_micro_usd"], 0);
@@ -183,14 +182,6 @@ fn old_wire_forms_keep_loading() {
     }))
     .unwrap();
     assert!(answer.blobs.is_empty() && answer.metadata.per_tier.is_empty());
-
-    // Perms omitted on a blob handle default to read-only.
-    let handle: BlobHandle = serde_json::from_value(json!({
-        "ref": {"kind": "path", "path": "x"},
-        "media_type": "text/plain"
-    }))
-    .unwrap();
-    assert_eq!(handle.perms, BlobPerms::read_only());
 }
 
 // --- schema pinning -------------------------------------------------------
@@ -244,12 +235,8 @@ fn committed_schemas_match_the_rust_types() {
         property_names(&ask_schema["$defs"]["blob_handle"]),
         sorted_keys(&serde_json::to_value(full_ask()).unwrap()["blobs"][0])
     );
-    assert_eq!(
-        property_names(&ask_schema["$defs"]["blob_perms"]),
-        vec!["execute", "read", "write"]
-    );
 
-    // Required fields and enum strings are pinned.
+    // Required fields and status strings are pinned.
     assert_eq!(ask_schema["required"], json!(["question"]));
     assert_eq!(
         answer_schema["required"],
@@ -257,7 +244,7 @@ fn committed_schemas_match_the_rust_types() {
     );
     assert_eq!(
         answer_schema["properties"]["status"]["enum"],
-        json!(["success", "off_topic", "error"])
+        json!(["success", "error"])
     );
     // The three blob-ref variants, tagged by "kind".
     let kinds: Vec<&str> = ask_schema["$defs"]["blob_ref"]["oneOf"]

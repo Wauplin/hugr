@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hugr_agent::{AnswerStatus, Ask};
+use hugr_agent::{Ask, STATUS_ERROR};
 use hugr_toolkit::bundle;
 use hugr_toolkit::manifest::AgentDefinition;
 use hugr_toolkit::runtime::build_agent;
@@ -56,7 +56,7 @@ async fn embedded_definition_answers_and_resumes_from_a_temp_home() {
     // No API key / unreachable endpoint → the model call fails, so this is an
     // *error answer* (exit 0 semantics), but it still persists a root trace.
     let answer = agent.ask(Ask::new("What is the setup?")).await.unwrap();
-    assert_eq!(answer.status, AnswerStatus::Error);
+    assert_eq!(answer.status, STATUS_ERROR);
     assert!(
         !answer.trace_id.as_str().is_empty(),
         "a trace was persisted"
@@ -65,7 +65,10 @@ async fn embedded_definition_answers_and_resumes_from_a_temp_home() {
     // Resume by that trace id → a child trace with depends_on set. Proves the
     // trace store persisted in the home dir is resumable across "invocations".
     let follow = agent
-        .ask(Ask::new("And after that?").with_trace_id(answer.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(answer.trace_id.clone()),
+            ..Ask::new("And after that?")
+        })
         .await
         .unwrap();
     assert_ne!(

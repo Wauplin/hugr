@@ -90,11 +90,17 @@ fn reference_result(def: &AgentDefinition, home: &Path) -> Normalized {
 
         let a1 = agent.ask(Ask::new("q1")).await.unwrap();
         let a2 = agent
-            .ask(Ask::new("q2").with_trace_id(a1.trace_id.clone()))
+            .ask(Ask {
+                trace_id: Some(a1.trace_id.clone()),
+                ..Ask::new("q2")
+            })
             .await
             .unwrap();
         let a3 = agent
-            .ask(Ask::new("q3").with_trace_id(a1.trace_id.clone()))
+            .ask(Ask {
+                trace_id: Some(a1.trace_id.clone()),
+                ..Ask::new("q3")
+            })
             .await
             .unwrap();
         // Serialize through the wire form so the reference compares field-for-

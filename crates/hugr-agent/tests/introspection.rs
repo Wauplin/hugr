@@ -185,7 +185,10 @@ async fn traces_lists_header_lineage() {
 
     let root = agent.ask(Ask::new("root?")).await.unwrap();
     let child = agent
-        .ask(Ask::new("child?").with_trace_id(root.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(root.trace_id.clone()),
+            ..Ask::new("child?")
+        })
         .await
         .unwrap();
 

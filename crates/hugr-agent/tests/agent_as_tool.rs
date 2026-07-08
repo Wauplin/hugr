@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, AgentToolResolver, AgentToolSpec, AnswerStatus, Ask, Pricing, TraceStore};
+use hugr_agent::{
+    Agent, AgentToolResolver, AgentToolSpec, Ask, Pricing, STATUS_SUCCESS, TraceStore,
+};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, ToolCall, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 use serde_json::json;
@@ -130,7 +132,7 @@ async fn parent_delegates_to_child_and_folds_cost() {
 
     let answer = parent.ask(Ask::new("delegate please")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Success);
+    assert_eq!(answer.status, STATUS_SUCCESS);
     assert_eq!(answer.message, "parent done");
 
     // Cost folds: parent 58 + child 20 = 78; tokens 14+5 in, 6+2 out; model
@@ -149,10 +151,13 @@ async fn parent_delegates_to_child_and_folds_cost() {
     // A child trace was produced; a follow-up via its trace_id resumes it.
     let child_id = child_ids.lock().unwrap()[0].clone();
     let follow_up = child
-        .ask(Ask::new("and more?").with_trace_id(child_id.clone()))
+        .ask(Ask {
+            trace_id: Some(child_id.clone()),
+            ..Ask::new("and more?")
+        })
         .await
         .unwrap();
-    assert_eq!(follow_up.status, AnswerStatus::Success);
+    assert_eq!(follow_up.status, STATUS_SUCCESS);
     assert_eq!(follow_up.message, "child follow-up");
     assert_ne!(
         follow_up.trace_id, child_id,

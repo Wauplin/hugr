@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, AnswerStatus, Ask, Pricing, TraceId, TraceStore};
+use hugr_agent::{Agent, Ask, Pricing, STATUS_SUCCESS, TraceId, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 
@@ -95,7 +95,7 @@ async fn fresh_ask_persists_a_root_trace() {
 
     let answer = agent.ask(Ask::new("Capital of France?")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Success);
+    assert_eq!(answer.status, STATUS_SUCCESS);
     assert_eq!(answer.message, "Paris.");
 
     let head = store.head(&answer.trace_id).unwrap();
@@ -123,7 +123,10 @@ async fn follow_up_writes_a_child_and_leaves_the_parent_untouched() {
     let parent_bytes = raw_bytes(&store, &root.trace_id);
 
     let child = agent
-        .ask(Ask::new("And its population?").with_trace_id(root.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(root.trace_id.clone()),
+            ..Ask::new("And its population?")
+        })
         .await
         .unwrap();
 
@@ -154,7 +157,10 @@ async fn pricing_cost_is_folded_from_only_the_new_trace_slice() {
 
     let root = agent.ask(Ask::new("root question")).await.unwrap();
     let child = agent
-        .ask(Ask::new("child question").with_trace_id(root.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(root.trace_id.clone()),
+            ..Ask::new("child question")
+        })
         .await
         .unwrap();
 
@@ -187,18 +193,27 @@ async fn three_way_fork_root_t1_t2a_t2b() {
 
     let root = agent.ask(Ask::new("root question")).await.unwrap();
     let t1 = agent
-        .ask(Ask::new("t1 question").with_trace_id(root.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(root.trace_id.clone()),
+            ..Ask::new("t1 question")
+        })
         .await
         .unwrap();
 
     // Fork: ask the SAME parent (t1) twice → two independent siblings.
     let t2a = agent
-        .ask(Ask::new("what-if A").with_trace_id(t1.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(t1.trace_id.clone()),
+            ..Ask::new("what-if A")
+        })
         .await
         .unwrap();
     let t1_bytes_after_first_fork = raw_bytes(&store, &t1.trace_id);
     let t2b = agent
-        .ask(Ask::new("what-if B").with_trace_id(t1.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(t1.trace_id.clone()),
+            ..Ask::new("what-if B")
+        })
         .await
         .unwrap();
 
@@ -252,7 +267,10 @@ async fn missing_parent_is_an_infrastructure_error() {
     let agent = agent(store.clone(), vec!["unused"]);
 
     let err = agent
-        .ask(Ask::new("q").with_trace_id(TraceId::new("does-not-exist")))
+        .ask(Ask {
+            trace_id: Some(TraceId::new("does-not-exist")),
+            ..Ask::new("q")
+        })
         .await
         .unwrap_err();
 

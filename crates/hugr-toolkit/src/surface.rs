@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Parser;
-use hugr_agent::{Agent, Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobRef, TraceId};
+use hugr_agent::{Agent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId};
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
@@ -170,10 +170,12 @@ pub async fn run_ask(
         }
     }
 
-    let mut ask = Ask::new(question).with_blobs(blobs);
-    if let Some(trace) = trace {
-        ask = ask.with_trace_id(TraceId::new(trace));
-    }
+    let ask = Ask {
+        question,
+        trace_id: trace.map(TraceId::new),
+        blobs,
+        ..Ask::default()
+    };
 
     match agent.ask(ask).await {
         Ok(answer) => print_answer(&answer, pretty),
@@ -213,16 +215,16 @@ pub fn blob_handle_from_path(path: &Path) -> Result<BlobHandle, String> {
         .to_str()
         .ok_or_else(|| format!("blob path is not valid UTF-8: {}", path.display()))?;
     let media = media_type_for(path);
-    let mut handle = BlobHandle::new(
-        BlobRef::Path {
+    Ok(BlobHandle {
+        blob_ref: BlobRef::Path {
             path: path_str.to_string(),
         },
-        media,
-    );
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        handle = handle.with_name(name);
-    }
-    Ok(handle)
+        media_type: media.to_string(),
+        name: path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string),
+    })
 }
 
 /// A best-effort media type from a file extension.
@@ -363,13 +365,15 @@ fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: 
 /// An error-status [`Answer`] stamped with the elapsed duration. Shared by
 /// every surface that must turn a failure into an answer (§18.1).
 pub fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
-    let meta = AnswerMeta::new().with_duration_ms(started.elapsed().as_millis() as u64);
-    Answer::new(
-        AnswerStatus::Error,
-        message.into(),
-        TraceId::new(String::new()),
-        meta,
-    )
+    Answer {
+        status: STATUS_ERROR.to_string(),
+        message: message.into(),
+        metadata: AnswerMeta {
+            duration_ms: started.elapsed().as_millis() as u64,
+            ..AnswerMeta::default()
+        },
+        ..Answer::default()
+    }
 }
 
 /// Print one JSON answer to stdout. The ask path always exits 0 — errors are

@@ -220,10 +220,11 @@ async fn answer_question_inner(
         .await
         .context("building docs agent from definition")?;
 
-    let mut ask = Ask::new(user_prompt(question));
-    if let Some(trace_id) = &config.trace_id {
-        ask = ask.with_trace_id(TraceId::new(trace_id.clone()));
-    }
+    let ask = Ask {
+        question: user_prompt(question),
+        trace_id: config.trace_id.clone().map(TraceId::new),
+        ..Ask::default()
+    };
     let agent_answer = agent.ask(ask).await?;
     let trace = store.get(&agent_answer.trace_id)?;
 
@@ -238,7 +239,7 @@ async fn answer_question_inner(
             answer.metadata.tool_calls = agent_answer.metadata.tool_calls as usize;
             answer
         })?;
-    if agent_answer.status == hugr_agent::AnswerStatus::Error {
+    if agent_answer.status == hugr_agent::STATUS_ERROR {
         docs_answer.status = DocsStatus::Error;
         docs_answer.message = agent_answer.message;
     }

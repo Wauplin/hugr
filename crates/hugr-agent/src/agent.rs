@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use crate::agent_tool::{AgentTool, AgentToolSpec};
 use crate::blobs::{self, BlobError};
-use crate::contract::{Answer, AnswerMeta, AnswerStatus, Ask, TraceId};
+use crate::contract::{Answer, AnswerMeta, Ask, STATUS_ERROR, STATUS_SUCCESS, TraceId};
 use crate::limits::{LimitState, LimitedAdapter};
 use crate::scratch::{ScratchDir, copy_tree, scratch_tool_schemas};
 use crate::store::{
@@ -324,7 +324,7 @@ impl Agent {
         // model output is the answer (§18.1).
         let trip = limit_state.trip();
         let (status, message, extra) = match &trip {
-            Some(trip) => (AnswerStatus::Error, trip.message(), trip.extra()),
+            Some(trip) => (STATUS_ERROR.to_string(), trip.message(), trip.extra()),
             None => {
                 let (status, message) = final_answer(log);
                 (status, message, Value::Null)
@@ -346,12 +346,7 @@ impl Agent {
         for child_meta in child_spend.lock().unwrap().iter() {
             metadata.merge_child(child_meta);
         }
-        let mut header = TraceHeader::new(
-            &self.name,
-            &self.version,
-            &ask.question,
-            status_wire(status),
-        );
+        let mut header = TraceHeader::new(&self.name, &self.version, &ask.question, &status);
         if let Some(parent_id) = parent {
             header = header.with_depends_on(parent_id);
         }
@@ -368,11 +363,14 @@ impl Agent {
         // never recorded, so this move happens after the trace is persisted.
         self.finalize_scratch(&working_dir, &trace_id)?;
 
-        let mut answer = Answer::new(status, message, trace_id, metadata).with_blobs(out_blobs);
-        if !extra.is_null() {
-            answer = answer.with_extra(extra);
-        }
-        Ok(answer)
+        Ok(Answer {
+            status,
+            message,
+            trace_id,
+            blobs: out_blobs,
+            metadata,
+            extra,
+        })
     }
 
     /// Create this ask's working scratch directory (a fresh `.pending/<n>`
@@ -634,7 +632,7 @@ impl AskError {
 /// answering — an error *answer* (§18.1), with the terminal error surfaced.
 /// Off-topic classification is agent-specific and lives above this layer
 /// (`Answer.extra` / the docs port, T0.8).
-fn final_answer(log: &[LogEntry]) -> (AnswerStatus, String) {
+fn final_answer(log: &[LogEntry]) -> (String, String) {
     let final_text = log.iter().rev().find_map(|entry| match &entry.record {
         Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {
             Some(output.text.clone())
@@ -642,9 +640,9 @@ fn final_answer(log: &[LogEntry]) -> (AnswerStatus, String) {
         _ => None,
     });
     match final_text {
-        Some(text) => (AnswerStatus::Success, text),
+        Some(text) => (STATUS_SUCCESS.to_string(), text),
         None => (
-            AnswerStatus::Error,
+            STATUS_ERROR.to_string(),
             missing_final_answer_message(log).to_string(),
         ),
     }
@@ -716,17 +714,19 @@ struct SpendAggregate {
 
 impl SpendAggregate {
     fn into_meta(self, duration_ms: u64) -> AnswerMeta {
-        let mut meta = AnswerMeta::new()
-            .with_duration_ms(duration_ms)
-            .with_tool_calls(self.tool_calls);
+        let mut meta = AnswerMeta {
+            duration_ms,
+            tool_calls: self.tool_calls,
+            ..AnswerMeta::default()
+        };
         for tier in self.tiers.into_values() {
-            meta = meta.with_tier(crate::contract::TierSpend::new(
-                tier.selector,
-                tier.model_calls,
-                tier.tokens_in,
-                tier.tokens_out,
-                tier.cost_micro_usd,
-            ));
+            meta.add_tier(crate::contract::TierSpend {
+                selector: tier.selector,
+                model_calls: tier.model_calls,
+                tokens_in: tier.tokens_in,
+                tokens_out: tier.tokens_out,
+                cost_micro_usd: tier.cost_micro_usd,
+            });
         }
         meta
     }
@@ -749,20 +749,6 @@ impl TierAccumulator {
             tokens_out: 0,
             cost_micro_usd: 0,
         }
-    }
-}
-
-/// The wire string of an [`AnswerStatus`] as stamped into trace headers —
-/// matches the contract's serde `snake_case` form.
-fn status_wire(status: AnswerStatus) -> &'static str {
-    match status {
-        AnswerStatus::Success => "success",
-        AnswerStatus::OffTopic => "off_topic",
-        AnswerStatus::Error => "error",
-        // `AnswerStatus` is #[non_exhaustive]; new variants must add a wire
-        // string here alongside the contract change.
-        #[allow(unreachable_patterns)]
-        _ => "error",
     }
 }
 

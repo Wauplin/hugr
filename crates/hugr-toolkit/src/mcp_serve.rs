@@ -103,10 +103,12 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
         serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
             .map_err(|e| format!("invalid `ask` arguments: {e}"))?;
 
-    let mut ask = Ask::new(args.question).with_blobs(args.blobs);
-    if let Some(id) = args.trace_id {
-        ask = ask.with_trace_id(TraceId::new(id));
-    }
+    let ask = Ask {
+        question: args.question,
+        trace_id: args.trace_id.map(TraceId::new),
+        blobs: args.blobs,
+        ..Ask::default()
+    };
 
     // Infra `AskError` (unknown parent id, store write) surfaces as an MCP error
     // result; run failures are already answers.

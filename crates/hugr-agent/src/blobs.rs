@@ -1,4 +1,4 @@
-//! Blob exchange with permissions (ARCHITECTURE §18.3, ROADMAP T0.5).
+//! Blob exchange (ARCHITECTURE §18.3, ROADMAP T0.5).
 //!
 //! An orchestrator hands files **in** on [`Ask::blobs`] and gets produced files
 //! **out** on [`Answer::blobs`]. The mechanism is deliberately file-shaped so a
@@ -6,8 +6,7 @@
 //!
 //! - **Inbound.** Before the turn starts, each [`BlobHandle`] on the ask is
 //!   materialized into the ask's scratch working directory (§19.3) as a plain
-//!   file with the declared [`BlobPerms`] applied as unix mode bits, so
-//!   `scratch_read`/`scratch_list` see it like any other note. All three
+//!   file, so `scratch_read`/`scratch_list` see it like any other note. All three
 //!   [`BlobRef`] kinds are supported: `Bytes` (base64-decoded), `Path` (read
 //!   from an orchestrator-local file), and `Sha256` (loaded from the
 //!   [`BlobStore`]). Inbound files land at the scratch root under the handle's
@@ -24,12 +23,6 @@
 //! The `sha256` carried on a `BlobRef::Sha256` is the store's full content
 //! address string (`"sha256:<hex>"`), so it resolves directly via
 //! [`BlobStore::get`] — inbound and outbound speak the same address form.
-//!
-//! Enforcement is v1 per the roadmap: materialize-with-mode-bits inside the
-//! jail. The mode bits are honest owner permissions on unix (a `read`-only
-//! blob is written `0o400`); on non-unix targets the perms are advisory and the
-//! file is written with the platform default. Anything stronger (bind mounts,
-//! seccomp) is a host upgrade behind the same [`BlobHandle`] type (§18.3).
 
 use std::path::{Component, Path, PathBuf};
 
@@ -37,7 +30,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use hugr_replay::{BlobStore, TraceError};
 
-use crate::contract::{BlobHandle, BlobPerms, BlobRef};
+use crate::contract::{BlobHandle, BlobRef};
 
 /// Subdirectory of the ask's scratch working directory swept for outbound
 /// blobs after the turn. The agent writes files here (e.g. `out/report.md`) to
@@ -74,7 +67,7 @@ pub enum BlobError {
 }
 
 /// Materialize every inbound blob into `working` (the ask's scratch working
-/// directory) with its declared perms, before the turn starts (§18.3).
+/// directory) before the turn starts (§18.3).
 pub(crate) fn materialize_inbound(
     working: &Path,
     blobs: &[BlobHandle],
@@ -91,7 +84,6 @@ pub(crate) fn materialize_inbound(
             std::fs::remove_file(&dest)?;
         }
         std::fs::write(&dest, &bytes)?;
-        apply_perms(&dest, handle.perms)?;
     }
     Ok(())
 }
@@ -119,15 +111,13 @@ pub(crate) fn sweep_outbound(
         // Content-addressed put — dedup by hash lives in the store (§3.3).
         let stored = store.put(&bytes, media.clone())?;
         let rel = rel_name(&out_root, &path);
-        handles.push(
-            BlobHandle::new(
-                BlobRef::Sha256 {
-                    sha256: stored.hash,
-                },
-                media,
-            )
-            .with_name(rel),
-        );
+        handles.push(BlobHandle {
+            blob_ref: BlobRef::Sha256 {
+                sha256: stored.hash,
+            },
+            media_type: media,
+            name: Some(rel),
+        });
     }
     Ok(handles)
 }
@@ -181,29 +171,6 @@ fn sanitize_name(hint: &str) -> Result<String, BlobError> {
         return Err(bad());
     };
     part.to_str().map(str::to_string).ok_or_else(bad)
-}
-
-/// Apply [`BlobPerms`] as owner mode bits on unix; a no-op elsewhere (advisory,
-/// documented — enforcement v1 is materialize-with-mode-bits, §18.3).
-#[cfg(unix)]
-fn apply_perms(path: &Path, perms: BlobPerms) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut mode = 0o000;
-    if perms.read {
-        mode |= 0o400;
-    }
-    if perms.write {
-        mode |= 0o200;
-    }
-    if perms.execute {
-        mode |= 0o100;
-    }
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-}
-
-#[cfg(not(unix))]
-fn apply_perms(_path: &Path, _perms: BlobPerms) -> std::io::Result<()> {
-    Ok(())
 }
 
 /// Recursively collect regular files under `dir` into `out`.

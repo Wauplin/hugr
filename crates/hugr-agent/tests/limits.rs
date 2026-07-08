@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, AgentLimits, AnswerStatus, Ask, Pricing, TraceStore};
+use hugr_agent::{Agent, AgentLimits, Ask, Pricing, STATUS_ERROR, STATUS_SUCCESS, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, ToolCall, ToolSchema, Usage};
 use hugr_host::{Capability, ChunkSink, Clock, ModelAdapter, ModelSink};
 use serde_json::{Value, json};
@@ -139,7 +139,7 @@ async fn max_model_calls_trips_cleanly_and_the_partial_trace_replays() {
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Error);
+    assert_eq!(answer.status, STATUS_ERROR);
     assert_eq!(limit_reason(&answer), ("max_model_calls".to_string(), 2));
     // Exactly two model calls were billed before the third was refused.
     assert_eq!(answer.metadata.model_calls, 2);
@@ -157,7 +157,7 @@ async fn max_turns_trips_cleanly() {
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Error);
+    assert_eq!(answer.status, STATUS_ERROR);
     assert_eq!(limit_reason(&answer), ("max_turns".to_string(), 1));
     assert_eq!(answer.metadata.model_calls, 1);
     hugr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
@@ -176,7 +176,7 @@ async fn max_cost_trips_after_the_running_total_crosses_the_bound() {
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Error);
+    assert_eq!(answer.status, STATUS_ERROR);
     assert_eq!(
         limit_reason(&answer),
         ("max_cost_micro_usd".to_string(), 40)
@@ -203,7 +203,7 @@ async fn timeout_trips_and_persists_a_replayable_partial_trace() {
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Error);
+    assert_eq!(answer.status, STATUS_ERROR);
     assert_eq!(limit_reason(&answer), ("timeout_ms".to_string(), 50));
 
     let head = store.head(&answer.trace_id).unwrap();
@@ -229,7 +229,7 @@ async fn no_limits_leaves_behavior_unchanged() {
 
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
-    assert_eq!(answer.status, AnswerStatus::Success);
+    assert_eq!(answer.status, STATUS_SUCCESS);
     assert_eq!(answer.message, "done");
     assert!(answer.extra.is_null(), "no limit trip → no extra reason");
     assert_eq!(answer.metadata.model_calls, 1);

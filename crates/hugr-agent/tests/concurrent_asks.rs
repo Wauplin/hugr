@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, AnswerStatus, Ask, TraceStore};
+use hugr_agent::{Agent, Ask, STATUS_SUCCESS, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 
@@ -89,7 +89,10 @@ async fn n_parallel_asks_mixed_fresh_and_forked_produce_n_valid_traces() {
             let ask = if i % 2 == 0 {
                 Ask::new(format!("fresh-{i}"))
             } else {
-                Ask::new(format!("fork-{i}")).with_trace_id(parent)
+                Ask {
+                    trace_id: Some(parent),
+                    ..Ask::new(format!("fork-{i}"))
+                }
             };
             (i, agent.ask(ask).await.unwrap())
         }));
@@ -104,7 +107,7 @@ async fn n_parallel_asks_mixed_fresh_and_forked_produce_n_valid_traces() {
     let mut ids = std::collections::BTreeSet::new();
     ids.insert(root.trace_id.clone());
     for (_, answer) in &answers {
-        assert_eq!(answer.status, AnswerStatus::Success);
+        assert_eq!(answer.status, STATUS_SUCCESS);
         assert!(
             ids.insert(answer.trace_id.clone()),
             "each concurrent ask gets a distinct trace id — no collision"

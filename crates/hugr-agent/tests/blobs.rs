@@ -1,4 +1,4 @@
-//! Blob exchange with permissions end-to-end (ROADMAP T0.5, ARCHITECTURE §18.3).
+//! Blob exchange end-to-end (ROADMAP T0.5, ARCHITECTURE §18.3).
 //!
 //! Drives the real tokio [`Engine`] through [`Agent::ask`] with a scripted mock
 //! model (same pattern as `scratchpad.rs`/`resume_fork.rs`), exercising the full
@@ -6,7 +6,6 @@
 //! - an orchestrator hands a file **in** (Bytes and Path), the agent reads it
 //!   via `scratch_read`, and produces a file that comes back **out** as an
 //!   `Answer.blob` with a `sha256` ref that resolves in the [`BlobStore`];
-//! - materialized inbound perms are applied (mode bits, unix);
 //! - identical outbound blobs dedupe to one stored object / one hash.
 
 use std::collections::VecDeque;
@@ -16,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hugr_agent::{Agent, Ask, BlobHandle, BlobPerms, BlobRef, TraceStore};
+use hugr_agent::{Agent, Ask, BlobHandle, BlobRef, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, ToolCall, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 
@@ -70,6 +69,14 @@ fn agent(store: TraceStore, outputs: Vec<ModelOutput>) -> Agent {
     }
 }
 
+fn handle(blob_ref: BlobRef, media_type: &str, name: &str) -> BlobHandle {
+    BlobHandle {
+        blob_ref,
+        media_type: media_type.to_string(),
+        name: Some(name.to_string()),
+    }
+}
+
 fn read_call(id: &str, path: &str) -> ToolCall {
     ToolCall::new(id, "scratch_read", serde_json::json!({ "path": path }))
 }
@@ -99,15 +106,16 @@ async fn file_handed_in_as_bytes_is_read_then_produced_out_as_a_sha256_blob() {
     );
 
     let payload = b"hello from the orchestrator";
-    let ask = Ask::new("process this").with_blobs(vec![
-        BlobHandle::new(
+    let ask = Ask {
+        blobs: vec![handle(
             BlobRef::Bytes {
                 base64: BASE64.encode(payload),
             },
             "text/plain",
-        )
-        .with_name("input.txt"),
-    ]);
+            "input.txt",
+        )],
+        ..Ask::new("process this")
+    };
 
     let answer = agent.ask(ask).await.unwrap();
 
@@ -147,15 +155,16 @@ async fn file_handed_in_as_path_is_materialized_and_read() {
         ],
     );
 
-    let ask = Ask::new("read the path blob").with_blobs(vec![
-        BlobHandle::new(
+    let ask = Ask {
+        blobs: vec![handle(
             BlobRef::Path {
                 path: src.to_string_lossy().into_owned(),
             },
             "text/plain",
-        )
-        .with_name("handed-in.txt"),
-    ]);
+            "handed-in.txt",
+        )],
+        ..Ask::new("read the path blob")
+    };
 
     let answer = agent.ask(ask).await.unwrap();
     let reads = tool_results(&store, &answer.trace_id, "scratch_read");
@@ -163,57 +172,6 @@ async fn file_handed_in_as_path_is_materialized_and_read() {
         reads[0]["content"],
         serde_json::json!("local file contents")
     );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn inbound_perms_are_applied_as_mode_bits() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = tempdir();
-    let store = TraceStore::new(dir.path());
-    let agent = agent(
-        store.clone(),
-        vec![
-            // List so the ask finalizes the scratch subtree under the trace id,
-            // where we can then inspect the materialized files' mode bits.
-            ModelOutput::tool_calls(vec![ToolCall::new(
-                "c1",
-                "scratch_list",
-                serde_json::json!({}),
-            )]),
-            ModelOutput::text("done"),
-        ],
-    );
-
-    let ask = Ask::new("perms").with_blobs(vec![
-        // read-only (the default).
-        BlobHandle::new(
-            BlobRef::Bytes {
-                base64: BASE64.encode(b"ro"),
-            },
-            "text/plain",
-        )
-        .with_name("ro.txt"),
-        // read+write+execute.
-        BlobHandle::new(
-            BlobRef::Bytes {
-                base64: BASE64.encode(b"rwx"),
-            },
-            "text/plain",
-        )
-        .with_perms(BlobPerms::new(true, true, true))
-        .with_name("rwx.txt"),
-    ]);
-
-    let answer = agent.ask(ask).await.unwrap();
-
-    // The finalized scratch subtree lives at <scratch_root>/<trace_id>.
-    let scratch = dir.path().join(".scratch").join(answer.trace_id.as_str());
-    let ro = std::fs::metadata(scratch.join("ro.txt")).unwrap();
-    let rwx = std::fs::metadata(scratch.join("rwx.txt")).unwrap();
-    assert_eq!(ro.permissions().mode() & 0o777, 0o400, "read-only → 0o400");
-    assert_eq!(rwx.permissions().mode() & 0o777, 0o700, "rwx → 0o700");
 }
 
 #[tokio::test]

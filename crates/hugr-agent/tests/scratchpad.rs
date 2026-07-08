@@ -114,7 +114,10 @@ async fn note_written_in_one_ask_is_reread_across_a_resumed_ask() {
 
     let first = agent.ask(Ask::new("take a note")).await.unwrap();
     let second = agent
-        .ask(Ask::new("what did I note?").with_trace_id(first.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(first.trace_id.clone()),
+            ..Ask::new("what did I note?")
+        })
         .await
         .unwrap();
 
@@ -188,20 +191,32 @@ async fn fork_writes_do_not_leak_into_the_sibling() {
     let parent = agent.ask(Ask::new("start")).await.unwrap();
     // Fork the same parent twice → two independent copy-on-fork subtrees.
     let fork_a = agent
-        .ask(Ask::new("branch A").with_trace_id(parent.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(parent.trace_id.clone()),
+            ..Ask::new("branch A")
+        })
         .await
         .unwrap();
     let fork_b = agent
-        .ask(Ask::new("branch B").with_trace_id(parent.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(parent.trace_id.clone()),
+            ..Ask::new("branch B")
+        })
         .await
         .unwrap();
 
     let read_a = agent
-        .ask(Ask::new("recall A").with_trace_id(fork_a.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(fork_a.trace_id.clone()),
+            ..Ask::new("recall A")
+        })
         .await
         .unwrap();
     let read_b = agent
-        .ask(Ask::new("recall B").with_trace_id(fork_b.trace_id.clone()))
+        .ask(Ask {
+            trace_id: Some(fork_b.trace_id.clone()),
+            ..Ask::new("recall B")
+        })
         .await
         .unwrap();
 

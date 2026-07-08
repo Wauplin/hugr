@@ -32,7 +32,7 @@ pub use agent::{
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
 pub use blobs::BlobError;
 pub use contract::{
-    Answer, AnswerMeta, AnswerStatus, Ask, BlobHandle, BlobPerms, BlobRef, TierSpend, TraceId,
+    Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, STATUS_SUCCESS, TierSpend, TraceId,
 };
 pub use limits::LimitKind;
 pub use store::{
