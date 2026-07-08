@@ -11,8 +11,8 @@
 //! flagged.
 //!
 //! The typed shape mirrors the pieces an agent runtime declares (system prompt,
-//! model tiers + pricing, granted tools, limits, runtime arguments); T1.3
-//! (`hugr run`) assembles a `hugr-agent` runtime from it.
+//! model tiers + pricing, granted tools, limits, runtime arguments, response
+//! schema); T1.3 (`hugr run`) assembles a `hugr-agent` runtime from it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +48,10 @@ pub struct AgentDefinition {
     pub traces: TracesConfig,
     /// Runtime arguments whose values patch the definition for one invocation.
     pub runtime: RuntimeConfig,
+    /// Optional response contract (`[response]`).
+    pub response: ResponseConfig,
+    /// Parsed JSON Schema loaded from [`ResponseConfig::schema`], if present.
+    pub response_schema: Option<serde_json::Value>,
     /// The `SYSTEM.md` system prompt, if present beside the manifest.
     pub system_prompt: Option<String>,
     /// The folder the definition was loaded from ([`AgentDefinition::load`]).
@@ -193,6 +197,16 @@ pub struct RuntimeArg {
     pub flag: Option<String>,
 }
 
+/// Optional response-shape config. Hugr itself only requires `Answer.response`
+/// to be an object; this schema lets a definition enforce a narrower shape.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseConfig {
+    /// Path to a JSON Schema file, relative to the definition folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+}
+
 /// Failure to load or parse a definition. Run failures are *answers* (§18.1);
 /// these are strictly load-time problems.
 #[derive(Debug, thiserror::Error)]
@@ -253,6 +267,21 @@ impl AgentDefinition {
             }
         }
 
+        if let Some(schema) = &def.response.schema {
+            let schema_path = resolve_def_path(dir, schema);
+            let schema_src =
+                std::fs::read_to_string(&schema_path).map_err(|source| ManifestError::Io {
+                    path: schema_path.clone(),
+                    source,
+                })?;
+            let schema_json =
+                serde_json::from_str(&schema_src).map_err(|err| ManifestError::Validate {
+                    path: schema_path,
+                    message: format!("response schema is not valid JSON: {err}"),
+                })?;
+            def.response_schema = Some(schema_json);
+        }
+
         def.source_dir = Some(dir.to_path_buf());
         Ok(def)
     }
@@ -273,6 +302,7 @@ impl AgentDefinition {
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
         let traces: TracesConfig = parse_section(&table, "traces", path)?;
         let runtime = parse_runtime(&table, path)?;
+        let response: ResponseConfig = parse_section(&table, "response", path)?;
 
         Ok(Self {
             agent,
@@ -282,6 +312,8 @@ impl AgentDefinition {
             scratchpad,
             traces,
             runtime,
+            response,
+            response_schema: None,
             system_prompt: None,
             source_dir: None,
         })
@@ -322,6 +354,15 @@ fn parse_agent(table: &toml::Table, path: &Path) -> Result<AgentMeta, ManifestEr
         });
     }
     Ok(agent)
+}
+
+fn resolve_def_path(base: &Path, path: &str) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
 }
 
 fn parse_models(table: &toml::Table, path: &Path) -> Result<ModelsConfig, ManifestError> {
@@ -552,6 +593,7 @@ fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), Mani
         "scratchpad",
         "traces",
         "runtime",
+        "response",
     ];
     for key in table.keys() {
         if !KNOWN.contains(&key.as_str()) {
@@ -745,5 +787,73 @@ help = "Docs folder."
         assert!(arg.positional);
         assert!(arg.required);
         assert_eq!(arg.env.as_deref(), Some("DOCS_PATH"));
+    }
+
+    #[test]
+    fn response_schema_config_parses() {
+        let src = r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[response]
+schema = "response.schema.json"
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        assert_eq!(def.response.schema.as_deref(), Some("response.schema.json"));
+        assert!(def.response_schema.is_none());
+    }
+
+    #[test]
+    fn response_schema_file_loads_relative_to_definition() {
+        let dir = tempdir();
+        std::fs::write(
+            dir.path().join("hugr.toml"),
+            r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[response]
+schema = "schemas/response.json"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("schemas")).unwrap();
+        std::fs::write(
+            dir.path().join("schemas/response.json"),
+            r#"{"type":"object","required":["response"]}"#,
+        )
+        .unwrap();
+
+        let def = AgentDefinition::load(dir.path()).unwrap();
+        assert_eq!(
+            def.response_schema.as_ref().unwrap()["required"],
+            serde_json::json!(["response"])
+        );
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn tempdir() -> TempDir {
+        let path =
+            std::env::temp_dir().join(format!("hugr-toolkit-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        TempDir { path }
     }
 }

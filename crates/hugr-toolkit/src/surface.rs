@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use clap::{Arg, ArgAction, Command};
 use hugr_agent::{Agent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId};
+use serde_json::json;
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
@@ -348,6 +349,10 @@ pub fn config_json(def: &AgentDefinition) -> serde_json::Value {
             "scope": grant.config,
         })).collect::<Vec<_>>(),
         "runtime": def.runtime,
+        "response": {
+            "schema": def.response.schema,
+            "schema_loaded": def.response_schema.is_some(),
+        },
         "limits": def.limits,
         "scratchpad": def.scratchpad,
         "traces": def.traces,
@@ -512,7 +517,7 @@ fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: 
 pub fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
     Answer {
         status: STATUS_ERROR.to_string(),
-        message: message.into(),
+        response: json!({ "error": message.into() }),
         metadata: AnswerMeta {
             duration_ms: started.elapsed().as_millis() as u64,
             ..AnswerMeta::default()

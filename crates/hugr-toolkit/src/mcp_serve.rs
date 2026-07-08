@@ -181,8 +181,9 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
     // result; run failures are already answers.
     let answer = agent.ask(ask).await.map_err(|e| e.to_string())?;
     let structured = serde_json::to_value(&answer).map_err(|e| e.to_string())?;
+    let text = answer_text(&answer.response);
     Ok(json!({
-        "content": [{ "type": "text", "text": answer.message }],
+        "content": [{ "type": "text", "text": text }],
         "structuredContent": structured,
         "isError": false,
     }))
@@ -211,11 +212,28 @@ async fn tools_call_definition(def: &AgentDefinition, params: Value) -> Result<V
     };
     let answer = agent.ask(ask).await.map_err(|e| e.to_string())?;
     let structured = serde_json::to_value(&answer).map_err(|e| e.to_string())?;
+    let text = answer_text(&answer.response);
     Ok(json!({
-        "content": [{ "type": "text", "text": answer.message }],
+        "content": [{ "type": "text", "text": text }],
         "structuredContent": structured,
         "isError": false,
     }))
+}
+
+fn answer_text(response: &Value) -> String {
+    if let Some(error) = response.get("error").and_then(Value::as_str) {
+        return error.to_string();
+    }
+    if let Some(text) = response.get("text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    if let Some(value) = response.get("response") {
+        if let Some(summary) = value.get("summary").and_then(Value::as_str) {
+            return summary.to_string();
+        }
+        return serde_json::to_string(value).unwrap_or_default();
+    }
+    serde_json::to_string(response).unwrap_or_default()
 }
 
 fn runtime_values_from_mcp(

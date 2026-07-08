@@ -24,6 +24,6 @@ pub mod tools;
 pub mod traces;
 
 pub use manifest::{
-    AgentDefinition, AgentMeta, LimitsConfig, ManifestError, ModelsConfig, RuntimeArg,
-    RuntimeConfig, ScratchpadConfig, TierConfig, ToolGrant, ToolKind, TracesConfig,
+    AgentDefinition, AgentMeta, LimitsConfig, ManifestError, ModelsConfig, ResponseConfig,
+    RuntimeArg, RuntimeConfig, ScratchpadConfig, TierConfig, ToolGrant, ToolKind, TracesConfig,
 };

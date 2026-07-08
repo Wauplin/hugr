@@ -23,7 +23,12 @@ The output is the standard Hugr `Answer` JSON:
 ```json
 {
   "status": "success",
-  "message": "{\"answer\":\"...\",\"related_documents\":[\"docs/ARCHITECTURE.md\"]}",
+  "response": {
+    "response": {
+      "summary": "..."
+    },
+    "related_documents": ["docs/ARCHITECTURE.md"]
+  },
   "trace_id": "1e4f7d0a9b2c3d44",
   "blobs": [],
   "metadata": {
@@ -38,7 +43,7 @@ The output is the standard Hugr `Answer` JSON:
 }
 ```
 
-The system prompt asks the model to put docs-specific structure (`answer`, `related_documents`) in the final message as JSON. Hugr itself keeps one universal wire contract.
+The definition declares `[response] schema = "response.schema.json"`, so the binary parses the final model text as JSON and enforces the docs-specific shape before emitting the standard Hugr `Answer`. Hugr itself keeps one universal wire contract: `Answer.response` is a structured object.
 
 ## Runtime Args
 
@@ -52,6 +57,9 @@ positional = true
 required = true
 env = "HUGR_DOCS_PATH"
 help = "Folder containing the documentation to search."
+
+[response]
+schema = "response.schema.json"
 ```
 
 The toolkit uses that block to generate the CLI argument and the MCP `ask` schema. For MCP, `docs_path` is an `ask` argument, so one long-running server can answer against different docs folders on different calls.

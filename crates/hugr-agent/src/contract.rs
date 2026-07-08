@@ -7,7 +7,7 @@
 //! `schemas/answer.schema.json`) are pinned by `tests/contract.rs`.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Opaque identifier of one immutable stored trace (ARCHITECTURE §19.1).
 ///
@@ -101,7 +101,7 @@ impl Ask {
 /// because nothing here branches beyond success-vs-not (§14).
 pub const STATUS_SUCCESS: &str = "success";
 /// `Answer.status` when the run failed (limits, transport, no final answer,
-/// …); `message` carries the human-readable reason. Errors are answers —
+/// …); `response.error` carries the human-readable reason. Errors are answers —
 /// still a full [`Answer`], exit code 0 on a CLI.
 pub const STATUS_ERROR: &str = "error";
 
@@ -139,12 +139,13 @@ impl AnswerMeta {
 }
 
 /// The uniform result of one ask (ARCHITECTURE §18.1).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
     /// Outcome to branch on: [`STATUS_SUCCESS`] or [`STATUS_ERROR`].
     pub status: String,
-    /// The answer text (or the error text when `status` is `"error"`).
-    pub message: String,
+    /// Structured response object. Hugr only requires this to be a JSON object;
+    /// a definition may provide a response schema to enforce a narrower shape.
+    pub response: Value,
     /// The **new** trace this run persisted (§19.2) — the anchor for
     /// follow-ups and forks.
     pub trace_id: TraceId,
@@ -156,4 +157,17 @@ pub struct Answer {
     /// Agent-specific structured extras; never load-bearing for the contract.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub extra: Value,
+}
+
+impl Default for Answer {
+    fn default() -> Self {
+        Self {
+            status: String::new(),
+            response: json!({}),
+            trace_id: TraceId::default(),
+            blobs: Vec::new(),
+            metadata: AnswerMeta::default(),
+            extra: Value::Null,
+        }
+    }
 }

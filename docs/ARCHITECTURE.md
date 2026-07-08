@@ -6,7 +6,7 @@
 
 ### 1. Vision
 
-Hugr builds **domain-specific subagents**: small, specialized agents that do one thing well — answer questions about a docs folder, read PDFs, query a SQLite database — and that an orchestrator (a human, a script, or a bigger agent) calls through **one uniform contract**: a question in, an answer out, with cost, duration, and a resumable trace id attached.
+Hugr builds **domain-specific subagents**: small, specialized agents that do one thing well — answer questions about a docs folder, read PDFs, query a SQLite database — and that an orchestrator (a human, a script, or a bigger agent) calls through **one uniform contract**: a question in, a structured response out, with cost, duration, and a resumable trace id attached.
 
 The pitch in one sentence: **a subagent is a system prompt plus a set of tools with privileges; Hugr turns that definition into a self-contained binary** — with traces, forking, sandboxing, and cost accounting built in.
 
@@ -23,7 +23,7 @@ Goals:
 
 - **Trivial to define.** A new subagent is a human-readable, auditable config folder: a manifest, a system prompt, tool selections from a predefined library. No Rust required.
 - **Self-contained to ship.** `hugr build` produces one standalone CLI binary per agent; the same binary is an MCP server via `--mcp-serve`. There is exactly one artifact kind.
-- **One invocation contract.** Every subagent accepts a question + optional metadata and returns an answer + mandatory metadata (status, cost, duration, tokens, trace id). Orchestrators never learn per-agent APIs.
+- **One invocation contract.** Every subagent accepts a question + optional metadata and returns a structured response + mandatory metadata (status, cost, duration, tokens, trace id). Orchestrators never learn per-agent APIs.
 - **Resumable and forkable by default.** Every run persists an immutable trace with a `trace_id` and an optional `depends_on` parent. Passing a `trace_id` back resumes that context; passing an older one forks a sibling branch.
 - **Sandboxed by default.** A subagent gets a private scratchpad and exactly the tools it declares. Blob exchange with the caller is explicit.
 - **Deterministic and replayable.** Any session can be replayed bit-for-bit for testing, debugging, and resume — a property of the sans-IO core (Part III).
@@ -45,8 +45,8 @@ A subagent is **(1) a system prompt and (2) a list of tools with associated priv
 3. **The brain** — the same `hugr-core` reducer: turn loop, context projection, deterministic replay (Part III).
 4. **A common API** — invocation (`ask`) plus introspection (`--describe`: name, tools, tiers, pricing, limits; `--config`: the parsed manifest as JSON with secrets redacted; `--traces`: stored lineage).
 5. **Blob exchange** — a caller can hand the agent files and receive files back; large payloads ride the content-addressed blob store.
-6. **Accounting** — every answer carries cost (from per-tier pricing config) and duration, folded from the trace's per-op metadata.
-7. **Composition** — any built Hugr agent can be granted to another as an ordinary tool (§8); the child's cost folds into the caller's answer.
+6. **Accounting** — every response carries cost (from per-tier pricing config) and duration, folded from the trace's per-op metadata.
+7. **Composition** — any built Hugr agent can be granted to another as an ordinary tool (§8); the child's cost folds into the caller's metadata.
 
 The definition is data; the infrastructure is the toolkit.
 
@@ -86,11 +86,11 @@ pub struct Ask {
 
 pub struct Answer {
     pub status: String,              // "success" | "error" (open string set; nothing branches on it internally)
-    pub message: String,             // the answer text (or error text)
+    pub response: Value,             // structured response object; error answers use response.error
     pub trace_id: TraceId,           // the NEW trace this run persisted
     pub blobs: Vec<BlobHandle>,      // outbound files, content-addressed
     pub metadata: AnswerMeta,        // MANDATORY accounting
-    pub extra: Value,                // agent-specific structured extras, opaque to the contract
+    pub extra: Value,                // non-answer extras, opaque to the contract
 }
 
 pub struct AnswerMeta {
@@ -101,7 +101,7 @@ pub struct AnswerMeta {
 }
 ```
 
-Design rules: `AnswerMeta` is never optional — an orchestrator can always account for a call. `extra` is the escape hatch: agent-specific structure rides there and is never load-bearing for the contract. `BlobHandle { ref: Bytes | Path | Sha256, media_type }` — inbound blobs are materialized into the scratchpad before the turn starts; outbound blobs are returned by content-addressed ref into the blob store (dedup by hash).
+Design rules: `AnswerMeta` is never optional — an orchestrator can always account for a call. `response` is always a JSON object; without a declared schema, plain model text is wrapped as `{ "text": ... }`, while a definition may enforce a narrower shape with `[response].schema`. `extra` is only for non-answer extras and is never load-bearing for the contract. `BlobHandle { ref: Bytes | Path | Sha256, media_type }` — inbound blobs are materialized into the scratchpad before the turn starts; outbound blobs are returned by content-addressed ref into the blob store (dedup by hash).
 
 The orchestration model:
 
@@ -138,6 +138,9 @@ required = true
 env = "POLICY_DOCS_PATH"
 help = "Folder containing policies to search."
 
+[response]                            # optional final-output contract
+schema = "response.schema.json"       # relative to the definition folder
+
 [tools.mcp.github]                    # external tools: an MCP server (the one escape hatch)
 command = "gh-mcp"
 
@@ -150,7 +153,7 @@ max_cost_micro_usd = 50000
 timeout_s = 120
 ```
 
-`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
+`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].schema` is an optional JSON Schema file loaded from the definition folder and enforced by the built binary against the final model output before it becomes `Answer.response`; Hugr itself only requires the top-level response to be an object. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
 
 ### 7. The tool library
 
@@ -195,7 +198,7 @@ Dependency rules: **`hugr-core` depends on nothing environmental** (verify with 
 
 - **MCP** is how a Hugr agent is exposed *as a tool* to orchestrators (Claude Code and most frameworks speak it): every built binary serves `--mcp-serve` with one `ask` tool whose structured result carries the full `Answer`. Session continuity rides our `trace_id` in the tool arguments, not MCP session state; we never use MCP sampling (deprecated) — the agent owns its provider.
 - **A2A** is the surviving agent↔agent standard for *remote* orchestration; an adapter is possible later (our `describe()` output is card-shaped) but is deliberately not a foundation.
-- **The gap Hugr fills**, verified unowned: (a) a cross-process **forkable session contract** (`trace_id`/`depends_on` with bit-for-bit deterministic replay); (b) **mandatory cost/duration metadata on every answer**; (c) **single-binary agent packaging**. That combination is the product.
+- **The gap Hugr fills**, verified unowned: (a) a cross-process **forkable session contract** (`trace_id`/`depends_on` with bit-for-bit deterministic replay); (b) **mandatory cost/duration metadata on every response**; (c) **single-binary agent packaging**. That combination is the product.
 
 ## Part II — The runtime seen from the outside
 
@@ -417,7 +420,7 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Brain / core** — the pure, sans-IO state machine (`hugr-core`).
 - **Host** — the environment-specific layer that performs IO and drives the brain (`hugr-host`).
 - **Agent definition** — the auditable config folder (`hugr.toml`, `SYSTEM.md`).
-- **Ask / Answer** — the uniform invocation contract: question + metadata in; message + mandatory metadata out.
+- **Ask / Answer** — the uniform invocation contract: question + metadata in; structured response + mandatory metadata out.
 - **Trace** — the durable, replayable event log of one session; identified by `trace_id`, optionally rooted on a parent via `depends_on`.
 - **Fork** — starting a new session from an existing trace's log; the parent is immutable.
 - **Scratchpad** — the agent's private filesystem subtree, writable without gates, jailed to its root.

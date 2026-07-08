@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use hugr_agent::{Agent, Ask, Pricing, STATUS_SUCCESS, TraceId, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
+use serde_json::{Value, json};
 
 /// A scripted model: pops the next queued reply per call. Text-only replies
 /// (no tool calls) end the turn, which is all these fork tests need.
@@ -96,7 +97,7 @@ async fn fresh_ask_persists_a_root_trace() {
     let answer = agent.ask(Ask::new("Capital of France?")).await.unwrap();
 
     assert_eq!(answer.status, STATUS_SUCCESS);
-    assert_eq!(answer.message, "Paris.");
+    assert_eq!(text_response(&answer.response), "Paris.");
 
     let head = store.head(&answer.trace_id).unwrap();
     assert_eq!(head.depends_on, None, "a fresh ask is a root trace");
@@ -111,6 +112,37 @@ async fn fresh_ask_persists_a_root_trace() {
 
     // The persisted trace replays bit-for-bit.
     hugr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn response_schema_enforces_structured_final_output() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let mut agent = agent(
+        store,
+        vec![
+            "```json\n{\"response\":{\"summary\":\"Paris.\"},\"related_documents\":[\"guide.md\"]}\n```",
+            "{\"answer\":\"Paris.\",\"related_documents\":[\"guide.md\"]}",
+        ],
+    );
+    agent.response_schema = Some(json!({
+        "type": "object",
+        "required": ["response", "related_documents"],
+        "additionalProperties": false,
+        "properties": {
+            "response": { "type": "object" },
+            "related_documents": { "type": "array", "items": { "type": "string" } }
+        }
+    }));
+
+    let ok = agent.ask(Ask::new("capital?")).await.unwrap();
+    assert_eq!(ok.status, STATUS_SUCCESS);
+    assert_eq!(ok.response["response"]["summary"], "Paris.");
+    assert_eq!(ok.response["related_documents"], json!(["guide.md"]));
+
+    let bad = agent.ask(Ask::new("capital again?")).await.unwrap();
+    assert_eq!(bad.status, "error");
+    assert!(bad.response["error"].as_str().unwrap().contains("contract"));
 }
 
 #[tokio::test]
@@ -131,7 +163,7 @@ async fn follow_up_writes_a_child_and_leaves_the_parent_untouched() {
         .unwrap();
 
     assert_ne!(child.trace_id, root.trace_id, "follow-up is a NEW trace");
-    assert_eq!(child.message, "About 2.1 million.");
+    assert_eq!(text_response(&child.response), "About 2.1 million.");
 
     let child_head = store.head(&child.trace_id).unwrap();
     assert_eq!(child_head.depends_on, Some(root.trace_id.clone()));
@@ -248,9 +280,9 @@ async fn three_way_fork_root_t1_t2a_t2b() {
         hugr_replay::verify(&store.get(&head.trace_id).unwrap()).unwrap();
     }
 
-    // Each answer carries the right message from its own branch.
-    assert_eq!(t2a.message, "t2a-answer");
-    assert_eq!(t2b.message, "t2b-answer");
+    // Each answer carries the right response from its own branch.
+    assert_eq!(text_response(&t2a.response), "t2a-answer");
+    assert_eq!(text_response(&t2b.response), "t2b-answer");
 }
 
 #[tokio::test]
@@ -296,4 +328,8 @@ fn tempdir() -> TempDir {
     let path = std::env::temp_dir().join(format!("hugr-agent-test-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     TempDir { path }
+}
+
+fn text_response(response: &Value) -> &str {
+    response["text"].as_str().unwrap()
 }

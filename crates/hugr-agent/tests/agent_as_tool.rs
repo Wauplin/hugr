@@ -18,7 +18,7 @@ use hugr_agent::{
 };
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, ToolCall, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// A scripted model returning queued outputs with a fixed per-call usage.
 struct MockModel {
@@ -133,7 +133,7 @@ async fn parent_delegates_to_child_and_folds_cost() {
     let answer = parent.ask(Ask::new("delegate please")).await.unwrap();
 
     assert_eq!(answer.status, STATUS_SUCCESS);
-    assert_eq!(answer.message, "parent done");
+    assert_eq!(text_response(&answer.response), "parent done");
 
     // Cost folds: parent 58 + child 20 = 78; tokens 14+5 in, 6+2 out; model
     // calls 2 (parent) + 1 (child) = 3; the child was actually invoked once.
@@ -156,7 +156,7 @@ async fn parent_delegates_to_child_and_folds_cost() {
         .await
         .unwrap();
     assert_eq!(follow_up.status, STATUS_SUCCESS);
-    assert_eq!(follow_up.message, "child follow-up");
+    assert_eq!(text_response(&follow_up.response), "child follow-up");
     assert_ne!(
         follow_up.trace_id, child_id,
         "resume writes a new child trace"
@@ -195,4 +195,8 @@ fn tempdir() -> TempDir {
         std::env::temp_dir().join(format!("hugr-agent-agenttool-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     TempDir { path }
+}
+
+fn text_response(response: &Value) -> &str {
+    response["text"].as_str().unwrap()
 }

@@ -4,11 +4,11 @@
 
 A **subagent** is, at its essence, a system prompt plus a set of tools with declared privileges. Hugr turns that definition folder into **one self-contained binary** — which also serves MCP via `--mcp-serve` — with the shared infrastructure every subagent needs built in:
 
-- **One invocation contract.** A question (string) in; an answer (string) + mandatory metadata out — status, **cost**, **duration**, tokens, and a **trace id**. Every Hugr agent, every surface, same shape. Errors are answers (`status: "error"`, exit 0), so callers branch on data, not exceptions.
+- **One invocation contract.** A question (string) in; a structured response object + mandatory metadata out — status, **cost**, **duration**, tokens, and a **trace id**. Every Hugr agent, every surface, same shape. Errors are answers (`status: "error"`, exit 0), so callers branch on data, not exceptions.
 - **Resumable & forkable traces.** Every run persists an immutable trace. Pass its `trace_id` back to continue the conversation; pass an *older* id to fork a sibling branch. Orchestrators explore many directions without ever growing one shared context — replay is instant and bit-for-bit deterministic.
 - **Sandboxed by construction.** An agent registers exactly the tools its manifest grants. No shell granted = no shell exists in the binary (and the tool library is exec-free). Plus a private, jailed scratchpad and blob exchange with the caller.
 - **Token-efficient by design.** A handful of domain tools and a focused prompt, not fifty generic ones. Small agents are cheaper, faster, and more reliable — and an orchestrator pays one tool call to use them.
-- **Agents compose.** A built Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and it's called like any capability — delegation never widens privileges, and the child's cost folds into the caller's answer.
+- **Agents compose.** A built Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and it's called like any capability — delegation never widens privileges, and the child's cost folds into the caller's metadata.
 
 The reference agent, [`hugr-docs`](crates/hugr-docs/), is a checked-in docs-Q&A definition folder run and built by `hugr-toolkit`.
 
@@ -99,7 +99,7 @@ crates/
 
 ## The reference subagent: `hugr-docs`
 
-One folder in, one question in, one JSON answer out — with cost metadata. No shell, no writes, no network tool; the read-only, folder-jailed `fs_*` tools.
+One folder in, one question in, one JSON response out — with cost metadata. No shell, no writes, no network tool; the read-only, folder-jailed `fs_*` tools.
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
@@ -109,7 +109,12 @@ cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "
 ```json
 {
   "status": "success",
-  "message": "{\"answer\":\"The narrow-waist rule is ...\",\"related_documents\":[\"docs/ARCHITECTURE.md\"]}",
+  "response": {
+    "response": {
+      "summary": "The narrow-waist rule is ..."
+    },
+    "related_documents": ["docs/ARCHITECTURE.md"]
+  },
   "trace_id": "1e4f7d0a9b2c3d44",
   "metadata": { "duration_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "cost_micro_usd": 1300, "model_calls": 2, "tool_calls": 3 }
 }

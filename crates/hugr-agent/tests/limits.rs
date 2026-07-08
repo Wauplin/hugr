@@ -216,7 +216,7 @@ async fn no_limits_leaves_behavior_unchanged() {
     let answer = agent.ask(Ask::new("go")).await.unwrap();
 
     assert_eq!(answer.status, STATUS_SUCCESS);
-    assert_eq!(answer.message, "done");
+    assert_eq!(text_response(&answer.response), "done");
     assert!(answer.extra.is_null(), "no limit trip → no extra reason");
     assert_eq!(answer.metadata.model_calls, 1);
     hugr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
@@ -246,4 +246,8 @@ fn tempdir() -> TempDir {
     let path = std::env::temp_dir().join(format!("hugr-agent-limits-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     TempDir { path }
+}
+
+fn text_response(response: &Value) -> &str {
+    response["text"].as_str().unwrap()
 }

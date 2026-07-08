@@ -37,6 +37,10 @@ base64 = { workspace = true }
 # (hugr-core stays sans-IO).
 tokio = { workspace = true }
 anyhow = { workspace = true }
+# Definition-local response schemas are enforced at the agent boundary, not in
+# hugr-core. Default features stay off so validation does not fetch remote/file
+# references during an ask.
+jsonschema = { version = "0.46", default-features = false }
 
 [dev-dependencies]
 # The resume/fork tests (T0.3) drive the real tokio engine with a scripted

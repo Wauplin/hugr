@@ -47,7 +47,12 @@ fn full_answer() -> Answer {
     };
     Answer {
         status: STATUS_SUCCESS.to_string(),
-        message: "Two expenses exceed the hotel cap.".into(),
+        response: json!({
+            "response": {
+                "summary": "Two expenses exceed the hotel cap."
+            },
+            "related_documents": ["travel.md"]
+        }),
         trace_id: TraceId::new("tr-child"),
         blobs: vec![BlobHandle {
             blob_ref: BlobRef::Path {
@@ -57,7 +62,7 @@ fn full_answer() -> Answer {
             name: None,
         }],
         metadata,
-        extra: json!({"related_documents": ["travel.md"]}),
+        extra: json!({"caller_visible": true}),
     }
 }
 
@@ -114,7 +119,12 @@ fn full_wire_snapshots_are_pinned() {
         serde_json::to_value(full_answer()).unwrap(),
         json!({
             "status": "success",
-            "message": "Two expenses exceed the hotel cap.",
+            "response": {
+                "response": {
+                    "summary": "Two expenses exceed the hotel cap."
+                },
+                "related_documents": ["travel.md"]
+            },
             "trace_id": "tr-child",
             "blobs": [
                 {
@@ -130,7 +140,7 @@ fn full_wire_snapshots_are_pinned() {
                 "model_calls": 3,
                 "tool_calls": 3
             },
-            "extra": {"related_documents": ["travel.md"]}
+            "extra": {"caller_visible": true}
         })
     );
 }
@@ -140,7 +150,7 @@ fn errors_are_answers_with_mandatory_zeroed_meta() {
     // An error before any model call still serializes full accounting.
     let answer = Answer {
         status: STATUS_ERROR.to_string(),
-        message: "model endpoint unreachable".into(),
+        response: json!({"error": "model endpoint unreachable"}),
         trace_id: TraceId::new("tr-err"),
         ..Answer::default()
     };
@@ -150,14 +160,15 @@ fn errors_are_answers_with_mandatory_zeroed_meta() {
 }
 
 #[test]
-fn old_wire_forms_keep_loading() {
-    // Forward compat: serde defaults let sparse/older JSON deserialize.
+fn sparse_wire_forms_keep_loading() {
+    // Forward compat inside the current contract: serde defaults let sparse
+    // JSON deserialize, but renamed fields are intentionally breaking.
     let ask: Ask = serde_json::from_value(json!({"question": "q"})).unwrap();
     assert!(ask.trace_id.is_none() && ask.blobs.is_empty() && ask.extra.is_null());
 
     let answer: Answer = serde_json::from_value(json!({
         "status": "success",
-        "message": "m",
+        "response": {"text": "m"},
         "trace_id": "t",
         "metadata": {
             "duration_ms": 1, "cost_micro_usd": 0, "tokens_in": 0, "tokens_out": 0,
@@ -220,7 +231,7 @@ fn committed_schemas_match_the_rust_types() {
     assert_eq!(ask_schema["required"], json!(["question"]));
     assert_eq!(
         answer_schema["required"],
-        json!(["status", "message", "trace_id", "metadata"])
+        json!(["status", "response", "trace_id", "metadata"])
     );
     assert_eq!(
         answer_schema["properties"]["status"]["enum"],

@@ -154,6 +154,7 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
         agent.default_model = Some(ModelSelector::named(default.to_string()));
     }
     agent.pricing = pricing;
+    agent.response_schema = def.response_schema.clone();
 
     // System prompt (with template vars). A definition without SYSTEM.md gets a
     // minimal default so the agent still runs.

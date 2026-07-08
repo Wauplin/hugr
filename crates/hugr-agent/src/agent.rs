@@ -82,6 +82,9 @@ pub struct Agent {
     /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
     pub pricing: Pricing,
     pub limits: AgentLimits,
+    /// Optional response JSON Schema. When set, the final model text must parse
+    /// as a JSON object and validate before it becomes `Answer.response`.
+    pub response_schema: Option<Value>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities
     /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
     /// invocation's child cost folds into this ask's `AnswerMeta`.
@@ -115,6 +118,7 @@ impl Agent {
             blob_store,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
+            response_schema: None,
             agent_tools: Vec::new(),
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
@@ -300,11 +304,15 @@ impl Agent {
         // with a typed reason on `extra` (ROADMAP T3.1). Otherwise the final
         // model output is the answer (§18.1).
         let trip = limit_state.trip();
-        let (status, message, extra) = match &trip {
-            Some(trip) => (STATUS_ERROR.to_string(), trip.message(), trip.extra()),
+        let (status, response, extra) = match &trip {
+            Some(trip) => (
+                STATUS_ERROR.to_string(),
+                error_response(trip.message(), Value::Null),
+                trip.extra(),
+            ),
             None => {
-                let (status, message) = final_answer(log);
-                (status, message, Value::Null)
+                let (status, response) = final_response(log, self.response_schema.as_ref());
+                (status, response, Value::Null)
             }
         };
 
@@ -342,7 +350,7 @@ impl Agent {
 
         Ok(Answer {
             status,
-            message,
+            response,
             trace_id,
             blobs: out_blobs,
             metadata,
@@ -579,12 +587,10 @@ impl AskError {
     }
 }
 
-/// Extract the final answer from the durable log: the last model output with
+/// Extract the final response from the durable log: the last model output with
 /// no tool calls is the turn's answer. No text means the run failed before
 /// answering — an error *answer* (§18.1), with the terminal error surfaced.
-/// Off-topic classification is agent-specific and lives above this layer
-/// (`Answer.extra` / the docs port, T0.8).
-fn final_answer(log: &[LogEntry]) -> (String, String) {
+fn final_response(log: &[LogEntry], schema: Option<&Value>) -> (String, Value) {
     let final_text = log.iter().rev().find_map(|entry| match &entry.record {
         Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {
             Some(output.text.clone())
@@ -592,12 +598,71 @@ fn final_answer(log: &[LogEntry]) -> (String, String) {
         _ => None,
     });
     match final_text {
-        Some(text) => (STATUS_SUCCESS.to_string(), text),
+        Some(text) => match parse_model_response(&text, schema) {
+            Ok(response) => (STATUS_SUCCESS.to_string(), response),
+            Err(error) => (
+                STATUS_ERROR.to_string(),
+                error_response(
+                    format!("model response did not match the response contract: {error}"),
+                    json!({ "raw": text }),
+                ),
+            ),
+        },
         None => (
             STATUS_ERROR.to_string(),
-            missing_final_answer_message(log).to_string(),
+            error_response(missing_final_answer_message(log), Value::Null),
         ),
     }
+}
+
+fn parse_model_response(text: &str, schema: Option<&Value>) -> Result<Value, String> {
+    let trimmed = strip_json_fence(text.trim());
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(value) if value.is_object() => {
+            if let Some(schema) = schema {
+                validate_response_schema(schema, &value)?;
+            }
+            Ok(value)
+        }
+        Ok(_) => Err("final response JSON must be an object".to_string()),
+        Err(_) if schema.is_none() => Ok(json!({ "text": text.trim() })),
+        Err(error) => Err(format!("final response is not valid JSON: {error}")),
+    }
+}
+
+fn strip_json_fence(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix("```") else {
+        return text;
+    };
+    let rest = rest
+        .strip_prefix("json")
+        .or_else(|| rest.strip_prefix("JSON"))
+        .unwrap_or(rest)
+        .trim_start_matches(['\r', '\n']);
+    rest.strip_suffix("```").unwrap_or(rest).trim()
+}
+
+fn error_response(message: impl Into<String>, extra: Value) -> Value {
+    let message = message.into();
+    if extra.is_null() {
+        json!({ "error": message })
+    } else {
+        json!({ "error": message, "details": extra })
+    }
+}
+
+fn validate_response_schema(schema: &Value, value: &Value) -> Result<(), String> {
+    let validator =
+        jsonschema::validator_for(schema).map_err(|err| format!("schema is invalid: {err}"))?;
+    validator.validate(value).map_err(|err| {
+        let path = err.instance_path().to_string();
+        if path.is_empty() {
+            err.to_string()
+        } else {
+            format!("{err} at {path}")
+        }
+    })?;
+    Ok(())
 }
 
 fn missing_final_answer_message(log: &[LogEntry]) -> String {
