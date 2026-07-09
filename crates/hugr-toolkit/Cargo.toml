@@ -15,15 +15,6 @@ name = "hugr_toolkit"
 name = "hugr"
 path = "src/bin/hugr.rs"
 
-[features]
-default = []
-# `sqlite_query` (ROADMAP T1.2) needs rusqlite's bundled SQLite. It is an opt-in
-# feature: enable it AND uncomment the `rusqlite` dependency below to build the
-# tool. It is off by default so the crate builds in environments that cannot
-# vendor the C dependency; there the `sqlite_query` grant reports as unavailable
-# rather than failing to compile. In production, build with `--features sqlite`.
-sqlite = []
-
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -40,7 +31,7 @@ hugr-core = { workspace = true }
 hugr-host = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
-# http_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
+# web_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
 reqwest = { workspace = true }
 # `hugr run` (ROADMAP T1.3) assembles a hugr-agent runtime from an agent manifest and
 # executes one ask over the native engine with the OpenAI-compatible adapter.
@@ -53,12 +44,6 @@ clap = { workspace = true }
 hugr-replay = { workspace = true }
 # The MCP serve surface (ROADMAP T2.4) reuses the newline-delimited JSON-RPC
 # framing helpers (`write_json_line`/`read_json_line`) come from hugr-host.
-# sqlite_query (read-only, file-scoped) needs rusqlite. `bundled` compiles
-# SQLite in so agents need no system library; opened read-only, ATTACH is
-# rejected. Kept commented (with the matching `sqlite` feature declaring
-# `dep:rusqlite`) so the crate resolves where the C dependency cannot be
-# vendored; uncomment both to build the tool. See the [features] note above.
-# rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

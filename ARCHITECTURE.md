@@ -6,7 +6,7 @@
 
 ### 1. Vision
 
-Hugr builds **domain-specific subagents**: small, specialized agents that do one thing well — answer questions about a docs folder, read PDFs, query a SQLite database — and that an orchestrator (a human, a script, or a bigger agent) calls through **one uniform contract**: a question in, a structured response out, with cost, duration, and a resumable trace id attached.
+Hugr builds **domain-specific subagents**: small, specialized agents that do one thing well — answer questions about a docs folder, read PDFs, fetch live data from an allowlisted API — and that an orchestrator (a human, a script, or a bigger agent) calls through **one uniform contract**: a question in, a structured response out, with cost, duration, and a resumable trace id attached.
 
 The pitch in one sentence: **a subagent is a small Rust crate plus a system prompt and a set of tools with privileges; Hugr turns that crate folder into a self-contained binary** — with traces, forking, sandboxing, and cost accounting built in.
 
@@ -60,7 +60,7 @@ my-agent/
   src/lib.rs          # optional typed response / hooks / compile-in capability registration
 ```
 
-- `hugr new <name> [--template docs|sqlite|blank]` scaffolds a working agent crate folder.
+- `hugr new <name> [--template weather|blank]` scaffolds a working agent crate folder. The default `weather` template is the self-contained beginner example: it grants only the allowlisted `web_fetch` tool (scoped to the Open-Meteo API hosts) and needs no local data folder, so `hugr new` → set the provider key → `hugr run` answers immediately. `blank` is the tool-free starting point.
 - `hugr run <agent-dir> "question" [--trace <id>]` is the development loop. Agents with a Rust response contract compile and reuse a cached dev shim that links the current agent crate, then run the same generated surface as the built binary; legacy manifest-schema agents can still run directly.
 - `hugr build <agent-dir> [--surface cli|python]` embeds the manifest, prompt, and bundled agent files into a **single standalone binary** wrapping the shared runtime (the default `cli` surface), and can additionally emit a typed language binding (`--surface python`, §4.1). Building requires a Rust toolchain; running the CLI artifact requires nothing.
 - `hugr traces <agent-dir>` lists the trace lineage tree; `hugr replay` / `hugr verify` point the replay machinery at a stored trace.
@@ -138,7 +138,6 @@ base_url = "https://router.huggingface.co/v1"
 api_key_env = "POLICY_DOCS_API_KEY"
 [models.default]                      # tier names are free-form strings; one tier is the common case
 model = "google/gemma-4-31B-it:cerebras"
-temperature = 0.2
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
 
@@ -172,8 +171,7 @@ Vetted, parameterized capabilities selectable by manifest grant, each jailed to 
 
 - **`fs_read`** — root-jailed read-only family: `fs_list` / `fs_search` / `fs_read` / `fs_read_range` / `fs_read_many` / `fs_outline`.
 - **`scratchpad`** — ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime, always on).
-- **`http_fetch`** — host-allowlisted GET-only fetch, fail-closed on an empty allowlist, no automatic redirects.
-- **`sqlite_query`** — one read-only database file, row-capped, `ATTACH` blocked.
+- **`web_fetch`** — host-allowlisted GET-only fetch, fail-closed on an empty allowlist, no automatic redirects.
 
 The library is **exec-free**: no shell tool exists, and nothing in the library spawns a process except granted child agents. A sandboxed `code_exec` (pinned interpreter, cwd = scratchpad, no network, capped) is a designed future addition; a general `shell` never enters the library.
 
@@ -400,19 +398,12 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/hugr-agent/tests/scratchpad.rs`.
 - **Cross-ask / sibling leakage.** Each ask gets its own working copy, seeded copy-on-fork from the parent's finalized subtree — a fork sees ancestor notes but never a sibling's writes.
 
-**`http_fetch`** (network; host allowlist + GET-only default + byte cap; empty allowlist ⇒ fail-closed):
+**`web_fetch`** (network; host allowlist + GET-only default + byte cap; empty allowlist ⇒ fail-closed):
 
 - **Off-allowlist host.** The parsed host must equal an allowlisted host or be a dot-bounded subdomain. Userinfo tricks (`https://allowed@evil.com`) resolve to the real host and are rejected; suffix collisions (`notexample.com` vs `example.com`) are prevented by the `.` boundary.
 - **Redirect bypass (SSRF).** Automatic redirects are disabled (`redirect::Policy::none()`); a `3xx` is returned to the model as-is, and following it is a *new* call whose target is re-checked.
 - **Scheme confusion.** Only `http`/`https`; `file://` etc. cannot exfiltrate local files.
 - **DNS-rebinding / internal-IP SSRF.** Not defended at v1: allowlisting a host that resolves internally reaches it. Mitigation is operator-side; resolve-and-pin is future work.
-
-**`sqlite_query`** (one canonicalized db file, `SQLITE_OPEN_READ_ONLY`, per-call connection, row cap; behind the `sqlite` feature):
-
-- **`ATTACH` escape.** Even a read-only connection can `ATTACH` another readable file. Rejected before the query runs by a token-based check (`attach` as a whole SQL word, any casing/spacing); `attachment` as an identifier is not a false positive.
-- **Writes / DDL.** Fail at the engine because the connection is read-only, regardless of SQL text.
-- **Symlinked path.** The manifest `file` is canonicalized at construction; the tool binds to that one resolved path.
-- **Residual.** The `ATTACH` defense is a SQL-text guard, not an engine authorizer; an authorizer callback is possible future hardening.
 
 **External grants (`mcp`, `agent`).** `[tools.mcp.*]` runs an operator-declared external process; its jail is the process boundary plus whatever the server enforces — Hugr does not sandbox its filesystem/network. Granting one is equivalent to trusting that command; `--config` surfaces the command/args for audit. `[tools.agent.*]` spawns a built Hugr agent whose own manifest is its jail; privileges compose downward only.
 

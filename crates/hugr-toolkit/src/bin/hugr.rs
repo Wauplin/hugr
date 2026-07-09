@@ -101,8 +101,8 @@ struct BuildArgs {
 struct NewArgs {
     /// Name of the agent (also the folder created under the current directory).
     name: String,
-    /// Starting template: docs | sqlite | blank.
-    #[arg(long, default_value = "docs")]
+    /// Starting template: weather | blank.
+    #[arg(long, default_value = "weather")]
     template: String,
 }
 
@@ -221,7 +221,7 @@ fn event_kind(event: &hugr_core::Event) -> String {
 fn new(args: NewArgs) {
     let Some(template) = Template::parse(&args.template) else {
         eprintln!(
-            "error: unknown template `{}` (expected docs | sqlite | blank)",
+            "error: unknown template `{}` (expected weather | blank)",
             args.template
         );
         std::process::exit(2);

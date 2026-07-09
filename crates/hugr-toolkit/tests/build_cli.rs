@@ -41,14 +41,10 @@ fn unpack_home(bytes: &[u8], tag: &str) -> PathBuf {
 
 #[tokio::test]
 async fn embedded_definition_answers_and_resumes_from_a_temp_home() {
-    // The docs template ships a docs/ folder so fs_read's jail root exists once
-    // unpacked — proving the artifact carries its tool data, not just config.
-    let (bytes, src) = scaffold_bundle("bcli-docs", Template::Docs);
-    let home = unpack_home(&bytes, "docs");
-    assert!(
-        home.join("docs").is_dir(),
-        "tool data unpacked with the bundle"
-    );
+    // The self-contained weather template needs no local data folder — the
+    // bundle carries its config and the binary answers from a fresh temp home.
+    let (bytes, src) = scaffold_bundle("bcli-weather", Template::Weather);
+    let home = unpack_home(&bytes, "weather");
 
     let def = AgentDefinition::load(&home).unwrap();
     let (agent, _warnings) = build_agent(&def).await.unwrap();
@@ -142,10 +138,11 @@ fn real_build_produces_a_runnable_binary() {
     assert!(ask_out.contains("\"status\": \"error\""), "{ask_out}");
 
     // Runtime args declared by a definition are accepted by a compiled binary
-    // and applied before tool registration.
+    // and applied before tool registration. Build a small fs_read agent inline
+    // (the blank template ships the crate; we add the tool + runtime arg).
     let docs_src = out.join("runtime-src");
     let _ = std::fs::remove_dir_all(&docs_src);
-    for file in scaffold_files("runtime-docs", Template::Docs) {
+    for file in scaffold_files("runtime-docs", Template::Blank) {
         let path = docs_src.join(&file.rel_path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, file.contents).unwrap();
@@ -153,6 +150,9 @@ fn real_build_produces_a_runnable_binary() {
     let mut manifest = std::fs::read_to_string(docs_src.join("hugr.toml")).unwrap();
     manifest.push_str(
         r#"
+[tools.fs_read]
+root = "./docs"
+
 [runtime.args.docs_path]
 target = "tools.fs_read.root"
 positional = true

@@ -36,7 +36,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0     # optional: feeds AnswerMeta.cost_micro_usd
 output_usd_per_m_tokens = 1.5
-temperature = 0.2                # optional sampling knobs
 max_tokens = 2048
 
 # ---------------------------------------------------------------------------
@@ -48,10 +47,7 @@ max_tokens = 2048
 [tools.fs_read]
 root = "./policies"              # read/list/search jailed to this folder
 
-# [tools.sqlite_query]
-# file = "./expenses.db"         # read-only, file-scoped
-
-# [tools.http_fetch]
+# [tools.web_fetch]
 # allow_hosts = ["api.example.com"]   # GET-only, host-allowlisted
 
 # --- External tools (§20.3), in order of weight -----------------------------

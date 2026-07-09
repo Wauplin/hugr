@@ -6,16 +6,20 @@
 //! template creates the `docs/` folder its `fs_read` root points at). The goal
 //! (exit criterion): `hugr new` → edit one path → `hugr run` answers within
 //! minutes.
+//!
+//! The default `weather` template is the self-contained beginner example: it
+//! grants only the allowlisted `web_fetch` tool (scoped to the Open-Meteo API
+//! hosts in `hugr.toml`), so it needs no local data folder — `hugr new` → set
+//! the key → `hugr run` answers immediately.
 
 use std::path::{Path, PathBuf};
 
 /// A starting template selectable with `hugr new --template`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
-    /// A docs-Q&A agent: `fs_read` jailed to a `docs/` folder.
-    Docs,
-    /// A database-Q&A agent: read-only `sqlite_query` on one file.
-    Sqlite,
+    /// The self-contained beginner example: a weather assistant with only the
+    /// allowlisted `web_fetch` tool (no local data folder required).
+    Weather,
     /// No tools but the scratchpad — a blank starting point.
     Blank,
 }
@@ -24,8 +28,7 @@ impl Template {
     /// Parse the `--template` value.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
-            "docs" => Some(Self::Docs),
-            "sqlite" => Some(Self::Sqlite),
+            "weather" => Some(Self::Weather),
             "blank" => Some(Self::Blank),
             _ => None,
         }
@@ -34,8 +37,7 @@ impl Template {
     /// The template name (for diagnostics).
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Docs => "docs",
-            Self::Sqlite => "sqlite",
+            Self::Weather => "weather",
             Self::Blank => "blank",
         }
     }
@@ -86,12 +88,10 @@ pub fn scaffold_files(name: &str, template: Template) -> Vec<ScaffoldFile> {
             contents: system_for(name, template),
         },
     ];
-    if template == Template::Docs {
+    if template == Template::Weather {
         files.push(ScaffoldFile {
-            rel_path: PathBuf::from("docs/README.md"),
-            contents: format!(
-                "# {name} docs\n\nPut the documents this agent should answer from in this folder.\n"
-            ),
+            rel_path: PathBuf::from("README.md"),
+            contents: weather_readme(name),
         });
     }
     files
@@ -126,16 +126,13 @@ pub fn write_scaffold(
 
 fn tool_block(template: Template) -> &'static str {
     match template {
-        Template::Docs => {
-            "# Read-only, jailed to the docs/ folder beside this manifest.\n\
-             [tools.fs_read]\n\
-             root = \"./docs\"\n"
-        }
-        Template::Sqlite => {
-            "# Read-only, scoped to a single SQLite file. Point `file` at your db.\n\
-             # (Build the toolkit with `--features sqlite` to enable this tool.)\n\
-             [tools.sqlite_query]\n\
-             file = \"./data.db\"\n"
+        Template::Weather => {
+            // Network egress jailed to the Open-Meteo API hosts. Edit
+            // `allow_hosts` to point this agent at other APIs. `geocoding-api`
+            // is needed for the city -> lat/lon step; `api` for the forecast.
+            "# GET-only HTTP, jailed to an allowlist of hosts (the sandbox boundary).\n\
+             [tools.web_fetch]\n\
+             allow_hosts = [\"api.open-meteo.com\", \"geocoding-api.open-meteo.com\"]\n"
         }
         Template::Blank => {
             "# No external tools — this agent has only its scratchpad. Add a\n\
@@ -165,7 +162,6 @@ fn manifest_for(name: &str, template: Template) -> String {
          model = \"google/gemma-4-31B-it:cerebras\"\n\
          input_usd_per_m_tokens = 1.0\n\
          output_usd_per_m_tokens = 1.5\n\
-         # temperature = 0.2\n\
          \n\
          {tools}\n\
          [limits]\n\
@@ -232,26 +228,52 @@ fn sanitize_rust_name(name: &str, separator: char) -> String {
 }
 
 fn system_for(name: &str, template: Template) -> String {
-    let role = match template {
-        Template::Docs => {
-            "You answer questions using only the documents available through your read-only file tools. \
-             Search and read the sources you need before answering; if the docs lack the evidence, say so \
-             rather than guessing."
-        }
-        Template::Sqlite => {
-            "You answer questions about the data in your read-only SQLite database. Write SELECT queries \
-             with `sqlite_query` to gather the facts you need, then answer from the results."
-        }
-        Template::Blank => {
-            "You are a focused subagent. Answer the user's question. TODO: describe your task and how to \
-             use your tools."
-        }
-    };
+    if template == Template::Weather {
+        // The self-contained example prompt. Keeps the {{agent_name}}, {{tools}},
+        // and {{date}} template vars `hugr run` substitutes.
+        return format!(
+            "You are **{name}**, a simple weather assistant. When the user asks \
+             “what’s the weather in …?”, use the `web_fetch` tool to call the Open-Meteo API. \
+             First geocode the city with `https://geocoding-api.open-meteo.com/v1/search?name=<city>`, \
+             then fetch current weather with \
+             `https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&current=temperature_2m,weather_code,wind_speed_10m`. \
+             Reply in one short sentence with the city, temperature, conditions, and wind speed. \
+             If the city is missing or ambiguous, ask a short clarification.\n\n\
+             Available tools: {{{{tools}}}}.\n\
+             Today’s date is {{{{date}}}}.\n"
+        );
+    }
+    // Only the Blank template reaches here (Weather returned above).
+    let role = "You are a focused subagent. Answer the user's question. TODO: describe your task and how to \
+         use your tools.";
     format!(
         "# {name}\n\n\
          You are **{{{{agent_name}}}}**. {role}\n\n\
          Available tools: {{{{tools}}}}.\n\
          Today's date is {{{{date}}}}.\n"
+    )
+}
+
+/// Minimal README for the self-contained `weather` example (mentions next steps).
+fn weather_readme(name: &str) -> String {
+    format!(
+        "# {name}\n\n\
+         A tiny, self-contained Hugr weather agent. It uses only the allowlisted\n\
+         `web_fetch` tool (jailed to the Open-Meteo API hosts in `hugr.toml`), so\n\
+         there is nothing to set up beyond a provider key.\n\n\
+         ## Run it\n\n\
+         ```bash\n\
+         export HUGR_API_KEY=...            # your model provider key\n\
+         hugr run . \"what's the weather in Paris?\"\n\
+         ```\n\n\
+         The answer is the standard Hugr `Answer` JSON; `response.response` is the\n\
+         one-sentence weather summary.\n\n\
+         ## Next steps\n\n\
+         - Edit `SYSTEM.md` to change the assistant's behavior or output style.\n\
+         - Edit `allow_hosts` in `hugr.toml` to point `web_fetch` at other APIs.\n\
+         - Adjust the response contract in `src/lib.rs` (currently a single string).\n\
+         - Build a standalone binary: `hugr build . --release`.\n\
+         - Inspect runs: `hugr traces .`, then `hugr replay`/`hugr verify`.\n"
     )
 }
 
@@ -262,15 +284,14 @@ mod tests {
 
     #[test]
     fn parse_templates() {
-        assert_eq!(Template::parse("docs"), Some(Template::Docs));
-        assert_eq!(Template::parse("sqlite"), Some(Template::Sqlite));
+        assert_eq!(Template::parse("weather"), Some(Template::Weather));
         assert_eq!(Template::parse("blank"), Some(Template::Blank));
         assert_eq!(Template::parse("nope"), None);
     }
 
     #[test]
     fn scaffolded_manifest_parses_for_every_template() {
-        for template in [Template::Docs, Template::Sqlite, Template::Blank] {
+        for template in [Template::Weather, Template::Blank] {
             let files = scaffold_files("my-agent", template);
             let manifest = files
                 .iter()
@@ -308,12 +329,29 @@ mod tests {
     }
 
     #[test]
-    fn docs_template_creates_its_root_folder() {
-        let files = scaffold_files("d", Template::Docs);
+    fn weather_template_is_self_contained_and_grants_web_fetch() {
+        let files = scaffold_files("sky", Template::Weather);
+        let manifest = files
+            .iter()
+            .find(|f| f.rel_path == Path::new("hugr.toml"))
+            .unwrap();
+        let def = AgentDefinition::parse(&manifest.contents, "hugr.toml").unwrap();
+        // Grants only the allowlisted web_fetch tool, scoped to Open-Meteo.
+        let web = def
+            .tools
+            .iter()
+            .find(|t| t.name == "web_fetch")
+            .expect("weather template grants web_fetch");
+        let hosts = web.config.get("allow_hosts").and_then(|v| v.as_array());
+        let hosts: Vec<&str> = hosts.unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert!(hosts.contains(&"api.open-meteo.com"));
+        assert!(hosts.contains(&"geocoding-api.open-meteo.com"));
+        // Ships a README with next steps, and needs no local data folder.
+        assert!(files.iter().any(|f| f.rel_path == Path::new("README.md")));
         assert!(
-            files
+            !files
                 .iter()
-                .any(|f| f.rel_path == Path::new("docs/README.md"))
+                .any(|f| f.rel_path.starts_with("docs") || f.rel_path.starts_with("data"))
         );
     }
 }

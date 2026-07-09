@@ -37,7 +37,7 @@ struct Normalized {
 /// Write the shared agent crate folder used by all surfaces.
 fn write_def(root: &Path, name: &str) {
     let _ = std::fs::remove_dir_all(root);
-    for file in scaffold_files(name, Template::Docs) {
+    for file in scaffold_files(name, Template::Weather) {
         let path = root.join(&file.rel_path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, file.contents).unwrap();

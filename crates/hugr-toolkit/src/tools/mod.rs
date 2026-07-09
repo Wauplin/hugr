@@ -12,9 +12,7 @@
 //! agent, §20.3) are handled elsewhere (ROADMAP T1.5 / T3.8).
 
 mod fs_read;
-mod http_fetch;
-#[cfg(feature = "sqlite")]
-mod sqlite_query;
+mod web_fetch;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -22,9 +20,7 @@ use std::sync::Arc;
 use hugr_host::Capability;
 
 pub use fs_read::FsRoot;
-pub use http_fetch::HttpFetch;
-#[cfg(feature = "sqlite")]
-pub use sqlite_query::SqliteQuery;
+pub use web_fetch::WebFetch;
 
 use crate::manifest::{ToolGrant, ToolKind};
 
@@ -34,7 +30,7 @@ use crate::manifest::{ToolGrant, ToolKind};
 /// `--describe`/docs enumerate.
 #[derive(Clone, Copy, Debug)]
 pub struct LibraryToolSpec {
-    /// The manifest grant key (`fs_read`, `http_fetch`, …).
+    /// The manifest grant key (`fs_read`, `web_fetch`, …).
     pub id: &'static str,
     /// Privilege class for the audit surface.
     pub privilege: &'static str,
@@ -68,16 +64,10 @@ pub const CATALOG: &[LibraryToolSpec] = &[
         summary: "Per-lineage scratch directory (read/write/list).",
     },
     LibraryToolSpec {
-        id: "http_fetch",
+        id: "web_fetch",
         privilege: "network",
-        tools: &["http_fetch"],
+        tools: &["web_fetch"],
         summary: "Host/method-allowlisted HTTP fetch (GET-only by default).",
-    },
-    LibraryToolSpec {
-        id: "sqlite_query",
-        privilege: "read_only",
-        tools: &["sqlite_query"],
-        summary: "Read-only, file-scoped SQLite query.",
     },
 ];
 
@@ -137,19 +127,10 @@ pub fn build_library_grant(
             let fs_root = FsRoot::new(&resolved).map_err(cfg)?;
             Ok(fs_root.capabilities())
         }
-        "http_fetch" => {
-            let tool = HttpFetch::from_config(&grant.config).map_err(cfg)?;
+        "web_fetch" => {
+            let tool = WebFetch::from_config(&grant.config).map_err(cfg)?;
             Ok(vec![Arc::new(tool)])
         }
-        #[cfg(feature = "sqlite")]
-        "sqlite_query" => {
-            let tool = SqliteQuery::from_config(&grant.config, base_dir).map_err(cfg)?;
-            Ok(vec![Arc::new(tool)])
-        }
-        #[cfg(not(feature = "sqlite"))]
-        "sqlite_query" => Err(cfg(anyhow::anyhow!(
-            "sqlite_query is not available: the crate was built without the `sqlite` feature"
-        ))),
         // Provided by the agent runtime (T0.4). Recognized for audit; registers
         // nothing here.
         "scratchpad" => Ok(Vec::new()),
@@ -173,10 +154,7 @@ mod tests {
     #[test]
     fn catalog_covers_the_v1_library() {
         let ids: Vec<_> = CATALOG.iter().map(|s| s.id).collect();
-        assert_eq!(
-            ids,
-            vec!["fs_read", "scratchpad", "http_fetch", "sqlite_query"]
-        );
+        assert_eq!(ids, vec!["fs_read", "scratchpad", "web_fetch"]);
     }
 
     #[test]
@@ -195,15 +173,15 @@ mod tests {
     }
 
     #[test]
-    fn http_fetch_builds_and_reports_network_class() {
+    fn web_fetch_builds_and_reports_network_class() {
         let caps = build_library_grant(
-            &grant("http_fetch", json!({ "allow_hosts": ["example.com"] })),
+            &grant("web_fetch", json!({ "allow_hosts": ["example.com"] })),
             Path::new("."),
         )
         .unwrap();
         assert_eq!(caps.len(), 1);
-        assert_eq!(caps[0].name(), "http_fetch");
+        assert_eq!(caps[0].name(), "web_fetch");
         assert!(!caps[0].requires_permission());
-        assert_eq!(spec("http_fetch").unwrap().privilege, "network");
+        assert_eq!(spec("web_fetch").unwrap().privilege, "network");
     }
 }

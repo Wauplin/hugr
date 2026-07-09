@@ -714,7 +714,6 @@ model = "small-m"
 model = "big-m"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.2
 "#;
         let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
         assert_eq!(
@@ -748,8 +747,8 @@ model = "m"
 [tools.fs_read]
 root = "./policies"
 
-[tools.sqlite_query]
-file = "./expenses.db"
+[tools.web_fetch]
+allow_hosts = ["api.example.com"]
 
 [tools.mcp.docs]
 command = "docs-mcp"
