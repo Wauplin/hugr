@@ -1,7 +1,7 @@
 //! The universal CLI surface every built agent binary wraps (ROADMAP T2.1,
 //! ARCHITECTURE §21.1).
 //!
-//! A binary produced by `hugr build --surface cli` embeds its definition as a
+//! A binary produced by `hugr build` embeds its agent bundle as a
 //! [`bundle`] and calls [`run_cli`] from `main`. Every built agent has the same
 //! shape:
 //!
@@ -364,13 +364,7 @@ pub fn config_json_with_options(
     def: &AgentDefinition,
     options: &RuntimeOptions,
 ) -> serde_json::Value {
-    let type_schema_loaded = def
-        .response
-        .rust_type
-        .as_deref()
-        .and_then(|rust_type| options.response_schema(rust_type))
-        .is_some();
-    serde_json::json!({
+    let mut config = serde_json::json!({
         "agent": def.agent,
         "models": {
             "base_url": def.models.base_url,
@@ -386,18 +380,27 @@ pub fn config_json_with_options(
             "scope": grant.config,
         })).collect::<Vec<_>>(),
         "runtime": def.runtime,
-        "response": {
-            "rust_type": def.response.rust_type,
-            "crate_path": def.response.crate_path,
-            "crate_package": def.response.crate_package,
-            "schema_name": def.response.schema_name,
-            "schema": def.response.schema,
-            "max_attempts": def.response.max_attempts,
-            "schema_loaded": def.response_schema.is_some() || type_schema_loaded,
-        },
         "limits": def.limits,
         "scratchpad": def.scratchpad,
         "traces": def.traces,
+    });
+    if let Some(schema) = response_schema_for_config(def, options) {
+        config
+            .as_object_mut()
+            .expect("config root is an object")
+            .insert("response".to_string(), schema);
+    }
+    config
+}
+
+fn response_schema_for_config(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+) -> Option<serde_json::Value> {
+    def.response_schema.clone().or_else(|| {
+        options
+            .single_response_contract()
+            .map(|contract| contract.schema)
     })
 }
 
@@ -479,7 +482,7 @@ pub async fn load_agent_with_options(
     Ok(LoadedAgent { agent, warnings })
 }
 
-/// Resolve the per-agent home directory and unpack the embedded definition into
+/// Resolve the per-agent home directory and unpack the embedded agent bundle into
 /// it. The definition source files are (re-)written every run — they are
 /// immutable by design — while the runtime dirs (traces, scratch) are never in
 /// the bundle, so persisted traces survive across runs and `--trace` resume
@@ -632,7 +635,33 @@ mod tests {
         assert_eq!(cfg["models"]["api_key_resolved"], true);
         assert_eq!(cfg["tools"][0]["name"], "fs_read");
         assert!(!cfg.to_string().contains("super-secret-value"));
+        assert!(cfg.get("response").is_none());
         unsafe { std::env::remove_var("HUGR_CFG_TEST_KEY") };
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+    struct ConfigResponse {
+        response: String,
+    }
+
+    #[test]
+    fn config_json_shows_actual_response_schema_when_registered() {
+        let src = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let options = RuntimeOptions::new().with_response_type::<ConfigResponse>(
+            "test_agent::ConfigResponse",
+            "test_agent__ConfigResponse",
+        );
+
+        let cfg = config_json_with_options(&def, &options);
+        assert_eq!(cfg["response"]["type"], "object");
+        assert_eq!(cfg["response"]["properties"]["response"]["type"], "string");
+        assert!(
+            !cfg["response"]
+                .as_object()
+                .unwrap()
+                .contains_key("schema_loaded")
+        );
     }
 
     #[test]

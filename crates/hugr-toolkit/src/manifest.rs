@@ -1,7 +1,7 @@
 //! The `hugr.toml` manifest (ARCHITECTURE §20.1, ROADMAP T1.1).
 //!
-//! A subagent definition is an auditable *folder*, not a Rust project: a
-//! `hugr.toml` manifest plus a `SYSTEM.md` system prompt beside it. This module
+//! A subagent definition is an auditable Rust crate folder: a `Cargo.toml`, a
+//! `hugr.toml` manifest, and a `SYSTEM.md` system prompt beside it. This module
 //! parses that folder into a typed [`AgentDefinition`].
 //!
 //! Unknown keys are **hard errors** (`deny_unknown_fields` on every
@@ -19,9 +19,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// The manifest file name expected inside a definition folder.
+/// The manifest file name expected inside an agent crate folder.
 pub const MANIFEST_FILE: &str = "hugr.toml";
-/// The system-prompt file name expected inside a definition folder.
+/// The Cargo manifest expected beside `hugr.toml` in an agent crate folder.
+pub const CARGO_MANIFEST_FILE: &str = "Cargo.toml";
+/// The system-prompt file name expected inside an agent crate folder.
 pub const SYSTEM_PROMPT_FILE: &str = "SYSTEM.md";
 
 /// Reserved keys under `[tools]` that namespace *external* tool grants
@@ -46,12 +48,12 @@ pub struct AgentDefinition {
     pub scratchpad: ScratchpadConfig,
     /// Trace-store configuration (`[traces]`).
     pub traces: TracesConfig,
-    /// Runtime arguments whose values patch the definition for one invocation.
+    /// Runtime arguments whose values patch the manifest for one invocation.
     pub runtime: RuntimeConfig,
-    /// Optional response contract (`[response]`).
+    /// Optional manifest-owned response contract (`[response]`).
     pub response: ResponseConfig,
-    /// JSON Schema loaded from a schema file. Rust response types are resolved
-    /// by the runtime registry because the toolkit must not depend on agents.
+    /// JSON Schema loaded from a schema file. Rust response types are discovered
+    /// from the agent crate by the generated shim.
     pub response_schema: Option<serde_json::Value>,
     /// The `SYSTEM.md` system prompt, if present beside the manifest.
     pub system_prompt: Option<String>,
@@ -198,34 +200,15 @@ pub struct RuntimeArg {
     pub flag: Option<String>,
 }
 
-/// Optional response-shape config. A definition can point to a Rust response
-/// type known to the runtime; the runtime derives JSON Schema from that type
-/// and casts model output into it.
+/// Optional manifest-owned response-shape config. A Rust response contract is
+/// not named here: agent crates expose `RESPONSE_RUST_TYPE`, and generated
+/// shims link that crate to derive JSON Schema from the type.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResponseConfig {
-    /// Rust response type used by the runtime, e.g. `hugr_docs::DocsResponse`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rust_type: Option<String>,
-    /// Path to the crate that defines `rust_type`, relative to the definition
-    /// folder. `hugr build` uses this to link the generated standalone shim.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crate_path: Option<String>,
-    /// Cargo package name for `crate_path` when it differs from the Rust crate
-    /// name used in `rust_type` (for example package `hugr-docs`, crate
-    /// `hugr_docs`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crate_package: Option<String>,
-    /// Provider response-format name. Defaults to a sanitized form of
-    /// `rust_type` when omitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema_name: Option<String>,
-    /// Legacy path to a JSON Schema file, relative to the definition folder.
+    /// Legacy path to a JSON Schema file, relative to the agent crate folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    /// Maximum model turns used to repair an unparsable/uncastable response.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_attempts: Option<u8>,
 }
 
 /// Failure to load or parse a definition. Run failures are *answers* (§18.1);
@@ -235,6 +218,9 @@ pub enum ManifestError {
     /// No `hugr.toml` in the folder.
     #[error("no {MANIFEST_FILE} found in {dir}")]
     NotFound { dir: PathBuf },
+    /// No `Cargo.toml` beside `hugr.toml`.
+    #[error("no {CARGO_MANIFEST_FILE} found in agent crate folder {dir}")]
+    NotRustCrate { dir: PathBuf },
     /// Reading a definition file failed.
     #[error("reading {path}: {source}")]
     Io {
@@ -253,11 +239,16 @@ pub enum ManifestError {
 }
 
 impl AgentDefinition {
-    /// Load a definition folder: `<dir>/hugr.toml` (required) plus
-    /// `<dir>/SYSTEM.md` (optional). The returned definition records
+    /// Load an agent crate folder: `<dir>/Cargo.toml` and `<dir>/hugr.toml`
+    /// (required) plus `<dir>/SYSTEM.md` (optional). The returned definition records
     /// `source_dir` so relative tool scopes can later be resolved against it.
     pub fn load(dir: impl AsRef<Path>) -> Result<Self, ManifestError> {
         let dir = dir.as_ref();
+        if !dir.join(CARGO_MANIFEST_FILE).is_file() {
+            return Err(ManifestError::NotRustCrate {
+                dir: dir.to_path_buf(),
+            });
+        }
         let manifest_path = dir.join(MANIFEST_FILE);
         let src = match std::fs::read_to_string(&manifest_path) {
             Ok(src) => src,
@@ -286,13 +277,6 @@ impl AgentDefinition {
                     source,
                 });
             }
-        }
-
-        if def.response.rust_type.is_some() && def.response.schema.is_some() {
-            return Err(ManifestError::Validate {
-                path: manifest_path,
-                message: "[response] must use either `rust_type` or `schema`, not both".to_string(),
-            });
         }
 
         if let Some(schema) = &def.response.schema {
@@ -818,7 +802,7 @@ help = "Docs folder."
     }
 
     #[test]
-    fn response_rust_type_config_parses() {
+    fn response_rust_type_is_not_a_manifest_key() {
         let src = r#"
 [agent]
 name = "docs"
@@ -826,54 +810,15 @@ name = "docs"
 model = "m"
 [response]
 rust_type = "hugr_docs::DocsResponse"
-crate_path = ".."
-crate_package = "hugr-docs"
-schema_name = "hugr_docs_response"
-max_attempts = 3
 "#;
-        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        assert_eq!(
-            def.response.rust_type.as_deref(),
-            Some("hugr_docs::DocsResponse")
-        );
-        assert_eq!(def.response.crate_path.as_deref(), Some(".."));
-        assert_eq!(def.response.crate_package.as_deref(), Some("hugr-docs"));
-        assert_eq!(
-            def.response.schema_name.as_deref(),
-            Some("hugr_docs_response")
-        );
-        assert_eq!(def.response.max_attempts, Some(3));
-        assert!(def.response_schema.is_none());
-    }
-
-    #[test]
-    fn response_rust_type_does_not_resolve_during_manifest_load() {
-        let dir = tempdir();
-        std::fs::write(
-            dir.path().join("hugr.toml"),
-            r#"
-[agent]
-name = "docs"
-[models.medium]
-model = "m"
-[response]
-rust_type = "hugr_docs::DocsResponse"
-crate_path = ".."
-"#,
-        )
-        .unwrap();
-
-        let def = AgentDefinition::load(dir.path()).unwrap();
-        assert_eq!(
-            def.response.rust_type.as_deref(),
-            Some("hugr_docs::DocsResponse")
-        );
-        assert!(def.response_schema.is_none());
+        let err = AgentDefinition::parse(src, "hugr.toml").unwrap_err();
+        assert!(err.to_string().contains("unknown field `rust_type`"));
     }
 
     #[test]
     fn response_schema_file_loads_relative_to_definition() {
         let dir = tempdir();
+        write_test_cargo_toml(dir.path());
         std::fs::write(
             dir.path().join("hugr.toml"),
             r#"
@@ -924,5 +869,13 @@ schema = "schemas/response.json"
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         TempDir { path }
+    }
+
+    fn write_test_cargo_toml(dir: &Path) {
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"test-agent\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
     }
 }

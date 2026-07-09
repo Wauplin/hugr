@@ -8,12 +8,12 @@
 
 Hugr builds **domain-specific subagents**: small, specialized agents that do one thing well — answer questions about a docs folder, read PDFs, query a SQLite database — and that an orchestrator (a human, a script, or a bigger agent) calls through **one uniform contract**: a question in, a structured response out, with cost, duration, and a resumable trace id attached.
 
-The pitch in one sentence: **a subagent is a system prompt plus a set of tools with privileges; Hugr turns that definition into a self-contained binary** — with traces, forking, sandboxing, and cost accounting built in.
+The pitch in one sentence: **a subagent is a small Rust crate plus a system prompt and a set of tools with privileges; Hugr turns that crate folder into a self-contained binary** — with traces, forking, sandboxing, and cost accounting built in.
 
 Why domain-specific subagents:
 
 - **Token efficiency.** A subagent with 5 tools and a 200-line system prompt is dramatically cheaper and more reliable than a generalist with 50 tools. The orchestrator pays one tool-call's worth of context to invoke it, not the whole domain's.
-- **Security by construction.** A subagent that never registers `shell` *cannot* run shell commands. Privileges are declared in the agent definition and enforced by what the host registers — not by a runtime policy trying to say "no" fast enough.
+- **Security by construction.** A subagent that never registers `shell` *cannot* run shell commands. Privileges are declared in the agent manifest and enforced by what the host registers — not by a runtime policy trying to say "no" fast enough.
 - **Composability.** Every subagent exposes the same ask/answer contract, so orchestrators compose them without per-agent glue. And because that contract is tool-shaped, **a Hugr agent *is* a tool**: one agent grants another in its manifest (`[tools.agent.<name>]`) and calls it like any capability (§8).
 - **No vendor lock-in.** Hugr subagents are artifacts *you* run — locally, in CI, in a container — because the runtime is a small library, not a service.
 
@@ -21,7 +21,7 @@ Why domain-specific subagents:
 
 Goals:
 
-- **Trivial to define.** A new subagent is a human-readable, auditable config folder: a manifest, a system prompt, tool selections from a predefined library. No Rust required.
+- **Trivial to define.** A new subagent is a human-readable, auditable Rust crate folder: a manifest, a system prompt, tool selections from a predefined library, and optional typed response/hooks/capability code in the same crate.
 - **Self-contained to ship.** `hugr build` produces one standalone CLI binary per agent; the same binary is an MCP server via `--mcp-serve`. There is exactly one artifact kind.
 - **One invocation contract.** Every subagent accepts a question + optional metadata and returns a structured response + mandatory metadata (status, cost, duration, tokens, trace id). Orchestrators never learn per-agent APIs.
 - **Resumable and forkable by default.** Every run persists an immutable trace with a `trace_id` and an optional `depends_on` parent. Passing a `trace_id` back resumes that context; passing an older one forks a sibling branch.
@@ -48,19 +48,21 @@ A subagent is **(1) a system prompt and (2) a list of tools with associated priv
 6. **Accounting** — every response carries cost (from per-tier pricing config) and duration, folded from the trace's per-op metadata.
 7. **Composition** — any built Hugr agent can be granted to another as an ordinary tool (§8); the child's cost folds into the caller's metadata.
 
-The definition is data; the infrastructure is the toolkit.
+The manifest and prompt are data; the agent crate owns any typed contract or custom Rust wiring; the infrastructure is the toolkit.
 
 ### 4. The user journey: define → run → build
 
 ```
 my-agent/
+  Cargo.toml          # the agent crate; owns typed contracts and optional Rust wiring
   hugr.toml          # manifest: name, model tiers + pricing, tool grants, limits
   SYSTEM.md          # the system prompt (plain markdown)
+  src/lib.rs          # optional typed response / hooks / compile-in capability registration
 ```
 
-- `hugr new <name> [--template docs|sqlite|blank]` scaffolds a working definition folder.
-- `hugr run <agent-dir> "question" [--trace <id>]` is the development loop. Untyped definitions are interpreted directly; definitions that declare a Rust response type compile and reuse a cached dev shim that links the agent crate, then run the same generated surface as the built binary.
-- `hugr build <agent-dir>` embeds the definition into a **single standalone binary** wrapping the shared runtime. Building requires a Rust toolchain; running the artifact requires nothing.
+- `hugr new <name> [--template docs|sqlite|blank]` scaffolds a working agent crate folder.
+- `hugr run <agent-dir> "question" [--trace <id>]` is the development loop. Agents with a Rust response contract compile and reuse a cached dev shim that links the current agent crate, then run the same generated surface as the built binary; legacy manifest-schema agents can still run directly.
+- `hugr build <agent-dir>` embeds the manifest, prompt, and bundled agent files into a **single standalone binary** wrapping the shared runtime. Building requires a Rust toolchain; running the artifact requires nothing.
 - `hugr traces <agent-dir>` lists the trace lineage tree; `hugr replay` / `hugr verify` point the replay machinery at a stored trace.
 
 Every built agent binary has the same shape:
@@ -138,13 +140,6 @@ required = true
 env = "POLICY_DOCS_PATH"
 help = "Folder containing policies to search."
 
-[response]                            # optional final-output contract
-rust_type = "policy_docs::PolicyResponse"
-crate_path = ".."
-crate_package = "policy-docs"
-schema_name = "policy_docs_response"
-max_attempts = 3
-
 [tools.mcp.github]                    # external tools: an MCP server (the one escape hatch)
 command = "gh-mcp"
 
@@ -157,7 +152,7 @@ max_cost_micro_usd = 50000
 timeout_s = 120
 ```
 
-`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].rust_type` names a Rust response type registered by the agent crate; `[response].crate_path` tells `hugr run`/`hugr build` which crate to link into the generated shim, so the toolkit never depends on agent examples. The generated surface derives JSON Schema from that type, passes it to the model provider, and casts final JSON with `serde`. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
+`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. The Rust response contract belongs to the current agent crate: `src/lib.rs` must expose `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` and define that `serde` + `schemars` type. `hugr run`/`hugr build` infer the crate from `Cargo.toml` beside `hugr.toml`, fail explicitly if `RESPONSE_RUST_TYPE` is missing, derive a provider schema name from the Rust type, derive JSON Schema from the type, pass it to the model provider, and cast final JSON with `serde`. Response repair uses the runtime's fixed default attempt limit for now, not manifest configuration. `[response].schema` remains the legacy manifest-owned JSON Schema path. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
 
 ### 7. The tool library
 
@@ -190,9 +185,9 @@ crates/hugr-providers/  # OpenAI-compatible streaming model adapter.
 crates/hugr-replay/     # the trace format + content-addressed blob store + replay/verify/inspect.
 crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore (trace_id/depends_on),
                         #   scratchpad, blob exchange, limits, cost accounting, agent-as-tool.
-crates/hugr-toolkit/    # declarative definitions (hugr.toml + SYSTEM.md), the tool library,
+crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library,
                         #   and the `hugr` CLI: new / run / build / traces / replay / verify.
-crates/hugr-docs/       # the reference subagent (docs Q&A): a definition folder plus
+crates/hugr-docs/       # the reference subagent crate (docs Q&A): hugr.toml + SYSTEM.md plus
                         #   typed response contract, run/buildable by hugr-toolkit.
 ```
 
@@ -367,7 +362,7 @@ pub struct Trace {
 | ---------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Interface over-/under-engineered                           | Narrow waist: type only what the brain branches on (§14)                 |
 | Traces balloon from per-token deltas                       | Deltas are transport-only; persist consolidated records + blobs (§17)   |
-| Sans-IO makes the simple case painful                      | `hugr run` on a definition folder is the ten-second loop                |
+| Sans-IO makes the simple case painful                      | `hugr run` on an agent crate folder is the ten-second loop              |
 | Canonical model type too thin to use providers well        | First-class streaming/tool-call fields + opaque `extra`                 |
 | Feature creep back toward a platform                       | One artifact, one escape hatch (MCP), no enum without a branch          |
 
@@ -420,10 +415,10 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 
 ### 24. Glossary
 
-- **Subagent / agent** — a packaged Hugr artifact: definition (prompt + tools + config) + runtime, exposing the ask/answer contract.
+- **Subagent / agent** — a packaged Hugr artifact: agent crate (prompt + tools + config + optional Rust wiring) + runtime, exposing the ask/answer contract.
 - **Brain / core** — the pure, sans-IO state machine (`hugr-core`).
 - **Host** — the environment-specific layer that performs IO and drives the brain (`hugr-host`).
-- **Agent definition** — the auditable config folder (`hugr.toml`, `SYSTEM.md`).
+- **Agent crate folder** — the auditable agent source folder (`Cargo.toml`, `hugr.toml`, `SYSTEM.md`, optional Rust code).
 - **Ask / Answer** — the uniform invocation contract: question + metadata in; structured response + mandatory metadata out.
 - **Trace** — the durable, replayable event log of one session; identified by `trace_id`, optionally rooted on a parent via `depends_on`.
 - **Fork** — starting a new session from an existing trace's log; the parent is immutable.

@@ -1,15 +1,16 @@
 # Reference `hugr.toml` — the complete, documented Hugr agent manifest.
 #
-# A subagent definition is an auditable folder (ARCHITECTURE §20):
+# A subagent is an auditable Rust crate folder (ARCHITECTURE §20):
 #
 #   my-agent/
+#     Cargo.toml    # the agent crate; typed contracts and hooks live here
 #     hugr.toml    # this file
 #     SYSTEM.md    # the system prompt (markdown; template vars: name, tool list, date)
-#     tools/       # optional extension points (§20.3)
+#     src/lib.rs   # optional typed response / hooks / compile-in capabilities
 #
 # Reviewing a subagent's blast radius = reading this file. A tool that is not
 # granted is not registered, and an unregistered capability cannot be invoked
-# (sandbox-by-registration, §7.1). Unknown keys warn but never fail the parse.
+# (sandbox-by-registration, §7.1). Unknown keys are hard parse errors.
 
 # ---------------------------------------------------------------------------
 # [agent] — identity (required). `name` must be non-empty.
@@ -86,4 +87,3 @@ timeout_s = 120
 # ---------------------------------------------------------------------------
 [traces]
 # store = "./.traces"
-

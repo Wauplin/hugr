@@ -1,7 +1,7 @@
 //! `hugr` — the builder/interpreter CLI (ROADMAP T1.3+).
 //!
-//! `hugr run <agent-dir> "question" [--trace <id>] [--json]` loads a definition
-//! folder, assembles the `hugr-agent` runtime, and executes one ask. Per the
+//! `hugr run <agent-dir> "question" [--trace <id>] [--json]` loads an agent
+//! crate folder, assembles the `hugr-agent` runtime, and executes one ask. Per the
 //! universal CLI contract (ARCHITECTURE §21.1): the JSON `Answer` goes to
 //! stdout, diagnostics to stderr, and the process always exits 0 — run failures
 //! (and even a bad manifest) come back as `status: "error"` answers.
@@ -31,11 +31,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Interpret a definition folder and answer one question.
+    /// Interpret an agent crate folder and answer one question.
     Run(RunArgs),
-    /// Scaffold a new definition folder from a template.
+    /// Scaffold a new agent crate folder from a template.
     New(NewArgs),
-    /// Compile a definition into one self-contained CLI binary (also serves
+    /// Compile an agent crate into one self-contained CLI binary (also serves
     /// `--mcp-serve`).
     Build(BuildArgs),
     /// List an agent's stored traces as a lineage tree.
@@ -48,19 +48,19 @@ enum Command {
 
 #[derive(Parser)]
 struct AgentArg {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
 }
 
 #[derive(Parser)]
 struct TracesArgs {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
 }
 
 #[derive(Parser)]
 struct TraceArgs {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
     /// The trace id to operate on.
     trace_id: String,
@@ -68,7 +68,7 @@ struct TraceArgs {
 
 #[derive(Parser)]
 struct ReplayArgs {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
     /// The trace id to replay.
     trace_id: String,
@@ -79,7 +79,7 @@ struct ReplayArgs {
 
 #[derive(Parser)]
 struct BuildArgs {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
     /// Where to write the generated shim crate (built binary lands under its
     /// `target/`). Defaults to `<agent-dir>/dist`.
@@ -101,7 +101,7 @@ struct NewArgs {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the agent definition folder (containing hugr.toml).
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
     /// Arguments passed to the agent's generated surface.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -121,7 +121,7 @@ async fn main() {
     }
 }
 
-/// Load a definition folder's trace store, exiting non-zero on a bad manifest.
+/// Load an agent crate folder's trace store, exiting non-zero on a bad manifest.
 /// Trace tooling is a developer inspection surface (like `new`), not the
 /// ask/answer contract.
 fn load_store(agent_dir: &std::path::Path) -> hugr_agent::TraceStore {
@@ -283,18 +283,18 @@ async fn run(args: RunArgs) {
             return;
         }
     };
-    if def.response.rust_type.is_some() {
+    if def.response_schema.is_none() {
         run_typed_definition(&args.agent_dir, &def, &args.args, started, pretty);
         return;
     }
     // The same generated surface as the built binary (ARCHITECTURE §21.1),
-    // including definition-specific runtime arguments.
+    // including agent-specific runtime arguments.
     run_definition_args(def, args.args, started).await;
 }
 
 /// Generic `hugr run` cannot link arbitrary agent crates into the already-built
-/// toolkit binary. For typed response definitions, run the same generated shim
-/// as `hugr build` and point its home at the source definition so dev traces
+/// toolkit binary. For typed response agents, run the same generated shim
+/// as `hugr build` and point its home at the source agent folder so dev traces
 /// stay in the expected folder.
 fn run_typed_definition(
     agent_dir: &Path,

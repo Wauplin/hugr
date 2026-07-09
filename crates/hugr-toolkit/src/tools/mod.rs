@@ -8,7 +8,7 @@
 //!
 //! [`build_library_grant`] turns one `ToolKind::Library` [`ToolGrant`] into the
 //! concrete capabilities it registers, resolving relative scope paths against
-//! the definition folder (`base_dir`). External-tool grants (MCP /
+//! the agent crate folder (`base_dir`). External-tool grants (MCP /
 //! agent, §20.3) are handled elsewhere (ROADMAP T1.5 / T3.8).
 
 mod fs_read;
@@ -105,7 +105,7 @@ pub enum ToolError {
 }
 
 /// Build the capabilities a single library grant registers. Relative scope
-/// paths resolve against `base_dir` (the definition folder). The `scratchpad`
+/// paths resolve against `base_dir` (the agent crate folder). The `scratchpad`
 /// grant returns an empty vec — the agent runtime provides those tools (T0.4);
 /// the grant is recorded for audit only.
 pub fn build_library_grant(

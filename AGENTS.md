@@ -4,7 +4,7 @@ Guidance for working in the Hugr repository.
 
 ## What this is
 
-Hugr is a **toolkit for building tiny, self-contained, domain-specific subagents** — "build your subagent, ship it anywhere" — on a runtime-free, sans-IO Rust core. A subagent is a system prompt + a set of tools with declared privileges; Hugr turns that definition folder into one standalone binary exposing the ask/answer contract (and an MCP server via `--mcp-serve`), with traces, forking, a scratchpad, blob exchange, and cost accounting built in.
+Hugr is a **toolkit for building tiny, self-contained, domain-specific subagents** — "build your subagent, ship it anywhere" — on a runtime-free, sans-IO Rust core. A subagent is a small Rust crate plus a system prompt and a set of tools with declared privileges; Hugr turns that agent crate folder into one standalone binary exposing the ask/answer contract (and an MCP server via `--mcp-serve`), with traces, forking, a scratchpad, blob exchange, and cost accounting built in.
 
 There are exactly two docs, keep both in sync with reality: `docs/ARCHITECTURE.md` (design + architecture + threat model — **the spec**; read it before non-trivial changes) and `docs/ROADMAP.md` (progress log + work plan). **The repo is mid-trim:** `docs/ROADMAP.md` §2 is the authoritative phase-by-phase plan cutting the code down to the ARCHITECTURE.md state — when code and ARCHITECTURE.md disagree, the roadmap phases are the bridge.
 
@@ -59,11 +59,11 @@ crates/hugr-replay/     # trace format (Trace { meta, events, log, commands, blo
 crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore
                         #   (trace_id/depends_on, fork), scratchpad, blobs,
                         #   limits, cost accounting, agent-as-tool (subprocess)
-crates/hugr-toolkit/    # definitions (hugr.toml + SYSTEM.md), the tool library
+crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library
                         #   (fs_read, http_fetch, sqlite_query), and the `hugr`
                         #   CLI: new / run / build / traces / replay / verify
-crates/hugr-docs/       # the reference subagent (docs Q&A): definition folder +
-                        #   typed response contract using hugr-toolkit
+crates/hugr-docs/       # the reference subagent crate (docs Q&A): hugr.toml +
+                        #   SYSTEM.md plus typed response contract using hugr-toolkit
 ```
 
 `hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.

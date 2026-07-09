@@ -27,7 +27,6 @@ use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
 use hugr_providers::OpenAiAdapter;
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
 
 use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
 use crate::tools::{self, ToolError};
@@ -36,7 +35,7 @@ use crate::tools::{self, ToolError};
 pub const DEFAULT_TRACE_DIRNAME: &str = ".hugr-traces";
 
 /// The trace store a definition reads/writes, resolved the same way
-/// [`build_agent`] resolves it (`[traces].store` against the definition folder,
+/// [`build_agent`] resolves it (`[traces].store` against the agent crate folder,
 /// else `.hugr-traces`). Trace tooling (`hugr traces`/`replay`/`verify`) points
 /// at this store (ROADMAP T1.7).
 pub fn trace_store_for(def: &AgentDefinition) -> TraceStore {
@@ -92,9 +91,9 @@ pub const DEFAULT_MAX_AGENT_DEPTH: u32 = 3;
 pub const AGENT_DEPTH_ENV: &str = "HUGR_AGENT_DEPTH";
 
 /// Runtime wiring supplied by an embedding agent crate or a generated build
-/// shim. This keeps `hugr-toolkit` generic: it can parse a manifest containing
-/// a Rust response type name, but only a process that links the agent crate can
-/// register the actual type.
+/// shim. This keeps `hugr-toolkit` generic: it can parse the manifest without
+/// depending on the agent crate, while a process that links the agent crate
+/// registers the actual Rust response type.
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeOptions {
     response_contracts: std::collections::BTreeMap<String, ResponseContract>,
@@ -129,16 +128,16 @@ impl RuntimeOptions {
         self.response_contracts.get(rust_type).cloned()
     }
 
-    pub fn response_schema(&self, rust_type: &str) -> Option<Value> {
-        self.response_contracts
-            .get(rust_type)
-            .map(|contract| contract.schema.clone())
+    pub fn single_response_contract(&self) -> Option<ResponseContract> {
+        (self.response_contracts.len() == 1)
+            .then(|| self.response_contracts.values().next().cloned())
+            .flatten()
     }
 }
 
 /// Assemble a [`Agent`] from a definition, collecting non-fatal build warnings
 /// (e.g. an external-tool grant that is not yet wired). Relative scopes resolve
-/// against the definition's `source_dir` (else the process cwd). This is the
+/// against the agent's `source_dir` (else the process cwd). This is the
 /// one assembly path (`hugr run`, the built binary, `--mcp-serve`, hugr-docs).
 pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), RuntimeError> {
     build_agent_with_options(def, &RuntimeOptions::default()).await
@@ -157,7 +156,7 @@ pub async fn build_agent_with_options(
         return Err(RuntimeError::NoModel);
     }
 
-    // Trace store: [traces].store, resolved against the definition folder.
+    // Trace store: [traces].store, resolved against the agent crate folder.
     let store = trace_store_for(def);
 
     let version = if def.agent.version.trim().is_empty() {
@@ -269,27 +268,11 @@ fn response_contract(
     def: &AgentDefinition,
     options: &RuntimeOptions,
 ) -> Result<Option<ResponseContract>, RuntimeError> {
-    let mut contract = if let Some(rust_type) = &def.response.rust_type {
-        Some(
-            options
-                .response_contract(rust_type)
-                .ok_or_else(|| RuntimeError::Definition {
-                    message: format!(
-                        "[response].rust_type `{rust_type}` is not registered in this runtime"
-                    ),
-                })?,
-        )
-    } else {
-        def.response_schema
-            .as_ref()
-            .map(|schema| ResponseContract::from_schema("agent_response", schema.clone()))
-    };
-    if let Some(contract) = contract.as_mut()
-        && let Some(max_attempts) = def.response.max_attempts
-    {
-        *contract = contract.clone().with_max_attempts(max_attempts);
-    }
-    Ok(contract)
+    Ok(def
+        .response_schema
+        .as_ref()
+        .map(|schema| ResponseContract::from_schema("agent_response", schema.clone()))
+        .or_else(|| options.single_response_contract()))
 }
 
 /// Extract `command` (required) and `args` (optional string array) from an
@@ -400,7 +383,7 @@ async fn run_subprocess_agent(bin: &Path, ask: Ask, depth: u32) -> Result<Answer
         .map_err(|e| format!("parsing subagent answer: {e}"))
 }
 
-/// Resolve a manifest path against the definition folder (absolute paths pass
+/// Resolve a manifest path against the agent crate folder (absolute paths pass
 /// through).
 fn resolve(base_dir: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -525,13 +508,18 @@ root = "."
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
-    /// Write a minimal definition folder and return its path.
+    /// Write a minimal agent crate folder and return its path.
     fn write_def(tag: &str, toml: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let dir =
             std::env::temp_dir().join(format!("hugr-agtool-{tag}-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"test-agent\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("hugr.toml"), toml).unwrap();
         dir
     }

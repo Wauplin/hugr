@@ -1,10 +1,10 @@
-//! `hugr build`: compile a definition folder into one self-contained CLI
+//! `hugr build`: compile an agent crate folder into one self-contained CLI
 //! binary (ARCHITECTURE §21). The binary speaks the ask/answer JSON contract
 //! and serves `--mcp-serve`.
 //!
-//! The approach: generate a small shim crate that embeds the definition as a
+//! The approach: generate a small shim crate that embeds the agent files as a
 //! [`bundle`] and wraps the shared [`crate::surface::run_cli`] path, then
-//! invoke `cargo`. The artifact carries its whole definition and needs no repo
+//! invoke `cargo`. The artifact carries its whole agent bundle and needs no repo
 //! checkout to run (it unpacks the bundle into a per-agent home on startup;
 //! see `surface`). Building, however, needs the Rust toolchain and a path back
 //! to this repo's crates (prebuilt-runtime embedding is a later optimization).
@@ -42,20 +42,28 @@ pub struct BuildOutcome {
 /// Failure to build a surface.
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
-    #[error("definition has no source folder to bundle")]
+    #[error("agent has no source folder to bundle")]
     NoSourceDir,
     #[error(
-        "[response].rust_type requires [response].crate_path so the built shim can link the agent crate"
+        "agent crate must define `pub const RESPONSE_RUST_TYPE: &str = \"crate_name::TypeName\";` in src/lib.rs"
     )]
-    MissingResponseCratePath,
-    #[error("[response].rust_type `{rust_type}` must look like `crate_name::TypeName`")]
+    MissingResponseRustType { path: PathBuf },
+    #[error("agent RESPONSE_RUST_TYPE `{rust_type}` must look like `crate_name::TypeName`")]
     InvalidResponseRustType { rust_type: String },
-    #[error("resolving [response].crate_path `{path}`: {source}")]
-    ResponseCratePath {
+    #[error("reading agent Cargo.toml at {path}: {source}")]
+    AgentCargoToml {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
+    #[error("reading agent response source at {path}: {source}")]
+    AgentResponseSource {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("parsing agent Cargo.toml at {path}: {message}")]
+    AgentCargoTomlParse { path: PathBuf, message: String },
     #[error("writing generated crate: {0}")]
     Io(#[from] std::io::Error),
     #[error("`cargo build` failed (exit {code}). See the output above.")]
@@ -86,7 +94,7 @@ pub fn build(def: &AgentDefinition, opts: &BuildOptions) -> Result<BuildOutcome,
     Ok(BuildOutcome { crate_dir, binary })
 }
 
-/// Create the shim crate's `src/` dir and write the embedded definition bundle,
+/// Create the shim crate's `src/` dir and write the embedded agent bundle,
 /// excluding runtime-only directories so the artifact ships config + tool data
 /// but no prior traces/scratch.
 fn write_bundle(def: &AgentDefinition, crate_dir: &Path) -> Result<(), BuildError> {
@@ -250,56 +258,100 @@ impl ResponseDependency {
 
     fn runtime_options(&self) -> String {
         format!(
-            "hugr_toolkit::runtime::RuntimeOptions::new().with_response_type::<{rust_type}>(\"{rust_type}\", \"{schema_name}\")",
+            "hugr_toolkit::runtime::RuntimeOptions::new().with_response_type::<{rust_type}>({dep_name}::RESPONSE_RUST_TYPE, \"{schema_name}\")",
             rust_type = self.rust_type,
+            dep_name = self.dep_name,
             schema_name = self.schema_name,
         )
     }
 }
 
 fn response_dependency(def: &AgentDefinition) -> Result<Option<ResponseDependency>, BuildError> {
-    let Some(rust_type) = &def.response.rust_type else {
+    if def.response_schema.is_some() {
         return Ok(None);
-    };
-    let Some((dep_name, _)) = rust_type.split_once("::") else {
-        return Err(BuildError::InvalidResponseRustType {
-            rust_type: rust_type.clone(),
-        });
-    };
-    if dep_name.is_empty() {
-        return Err(BuildError::InvalidResponseRustType {
-            rust_type: rust_type.clone(),
-        });
     }
-    let crate_path = def
-        .response
-        .crate_path
-        .as_deref()
-        .ok_or(BuildError::MissingResponseCratePath)?;
     let base = def.source_dir.as_deref().ok_or(BuildError::NoSourceDir)?;
-    let raw_path = if Path::new(crate_path).is_absolute() {
-        PathBuf::from(crate_path)
-    } else {
-        base.join(crate_path)
-    };
-    let path = raw_path
+    let path = base
         .canonicalize()
-        .map_err(|source| BuildError::ResponseCratePath {
-            path: raw_path.clone(),
+        .map_err(|source| BuildError::AgentCargoToml {
+            path: base.to_path_buf(),
             source,
         })?;
+    let rust_type = read_response_rust_type(&path)?;
+    let Some((dep_name, _)) = rust_type.split_once("::") else {
+        return Err(BuildError::InvalidResponseRustType { rust_type });
+    };
+    if dep_name.is_empty() {
+        return Err(BuildError::InvalidResponseRustType { rust_type });
+    }
+    let package_name = cargo_package_name(&path)?;
+    let package = (package_name != dep_name).then_some(package_name);
     Ok(Some(ResponseDependency {
         dep_name: dep_name.to_string(),
-        package: def.response.crate_package.clone(),
+        package,
         path,
-        rust_type: rust_type.clone(),
-        schema_name: def.response.schema_name.clone().unwrap_or_else(|| {
-            rust_type
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                .collect()
-        }),
+        schema_name: schema_name_from_rust_type(&rust_type),
+        rust_type,
     }))
+}
+
+fn read_response_rust_type(agent_dir: &Path) -> Result<String, BuildError> {
+    let path = agent_dir.join("src/lib.rs");
+    let src = std::fs::read_to_string(&path).map_err(|source| BuildError::AgentResponseSource {
+        path: path.clone(),
+        source,
+    })?;
+    let needle = "pub const RESPONSE_RUST_TYPE";
+    let Some(start) = src.find(needle) else {
+        return Err(BuildError::MissingResponseRustType { path });
+    };
+    let after_name = &src[start + needle.len()..];
+    let Some(eq) = after_name.find('=') else {
+        return Err(BuildError::MissingResponseRustType { path });
+    };
+    let after_eq = after_name[eq + 1..].trim_start();
+    let Some(rest) = after_eq.strip_prefix('"') else {
+        return Err(BuildError::MissingResponseRustType { path });
+    };
+    let Some(end) = rest.find('"') else {
+        return Err(BuildError::MissingResponseRustType { path });
+    };
+    let value = rest[..end].to_string();
+    if value.trim().is_empty() {
+        Err(BuildError::MissingResponseRustType { path })
+    } else {
+        Ok(value)
+    }
+}
+
+fn cargo_package_name(agent_dir: &Path) -> Result<String, BuildError> {
+    let path = agent_dir.join("Cargo.toml");
+    let src = std::fs::read_to_string(&path).map_err(|source| BuildError::AgentCargoToml {
+        path: path.clone(),
+        source,
+    })?;
+    let table: toml::Table =
+        toml::from_str(&src).map_err(|err| BuildError::AgentCargoTomlParse {
+            path: path.clone(),
+            message: err.to_string(),
+        })?;
+    table
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| BuildError::AgentCargoTomlParse {
+            path,
+            message: "missing [package].name".to_string(),
+        })
+}
+
+fn schema_name_from_rust_type(rust_type: &str) -> String {
+    rust_type
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 #[cfg(test)]
@@ -349,20 +401,35 @@ root = "work"
 name = "docs"
 [models.medium]
 model = "m"
-[response]
-rust_type = "hugr_docs::DocsResponse"
-crate_path = ".."
-crate_package = "hugr-docs"
-schema_name = "hugr_docs_response"
 "#;
         let mut def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        def.source_dir =
-            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../hugr-docs/definition"));
+        def.source_dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../hugr-docs"));
         let dep = response_dependency(&def).unwrap().unwrap();
         let toml = cli_cargo_toml("docs", &Some(dep.clone()));
         assert!(toml.contains("hugr_docs = { package = \"hugr-docs\", path ="));
         let main = main_rs(&Some(dep));
         assert!(main.contains("with_response_type::<hugr_docs::DocsResponse>"));
-        assert!(main.contains("\"hugr_docs_response\""));
+        assert!(main.contains("hugr_docs::RESPONSE_RUST_TYPE"));
+        assert!(main.contains("\"hugr_docs__DocsResponse\""));
+    }
+
+    #[test]
+    fn missing_response_rust_type_is_an_explicit_error() {
+        let root = std::env::temp_dir().join(format!("hugr-build-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"missing\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        let src = "[agent]\nname = \"missing\"\n[models.medium]\nmodel = \"m\"\n";
+        let mut def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        def.source_dir = Some(root.clone());
+
+        let err = response_dependency(&def).unwrap_err();
+        assert!(matches!(err, BuildError::MissingResponseRustType { .. }));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

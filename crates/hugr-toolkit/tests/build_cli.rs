@@ -1,7 +1,7 @@
 //! T2.1 — `hugr build --surface cli`.
 //!
 //! The fast tests exercise the *runtime* of a built binary in-process: pack a
-//! scaffolded definition into a bundle, unpack it into a temp home (as the
+//! scaffolded agent crate into a bundle, unpack it into a temp home (as the
 //! binary does on startup), assemble the agent, and drive an ask + resume + the
 //! `--describe` audit view — no `cargo build`, no network. The heavy
 //! end-to-end test (`real_build_produces_a_runnable_binary`) actually invokes
@@ -16,7 +16,7 @@ use hugr_toolkit::manifest::AgentDefinition;
 use hugr_toolkit::runtime::build_agent;
 use hugr_toolkit::scaffold::{Template, scaffold_files};
 
-/// Write a scaffolded definition to a temp dir and pack it into a bundle.
+/// Write a scaffolded agent crate to a temp dir and pack it into a bundle.
 fn scaffold_bundle(name: &str, template: Template) -> (Vec<u8>, PathBuf) {
     let src = std::env::temp_dir().join(format!("hugr-bcli-src-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&src);

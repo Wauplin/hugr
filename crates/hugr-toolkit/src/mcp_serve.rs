@@ -425,6 +425,11 @@ help = "Docs root."
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(
+            home.join("Cargo.toml"),
+            "[package]\nname = \"mcpsrv\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(
             home.join("hugr.toml"),
             "[agent]\nname = \"mcpsrv\"\nversion = \"0.2.0\"\n[models.medium]\nmodel = \"m\"\n",
         )

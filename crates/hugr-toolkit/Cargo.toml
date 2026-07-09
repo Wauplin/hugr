@@ -1,6 +1,6 @@
 [package]
 name = "hugr-toolkit"
-description = "Declarative Hugr subagent definitions: the hugr.toml manifest parser, the predefined tool library, and the `hugr` builder CLI (ARCHITECTURE §20–21)."
+description = "Hugr subagent crate manifests: the hugr.toml parser, the predefined tool library, and the `hugr` builder CLI (ARCHITECTURE §20–21)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -42,7 +42,7 @@ async-trait = { workspace = true }
 anyhow = { workspace = true }
 # http_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
 reqwest = { workspace = true }
-# `hugr run` (ROADMAP T1.3) assembles a hugr-agent runtime from a definition and
+# `hugr run` (ROADMAP T1.3) assembles a hugr-agent runtime from an agent manifest and
 # executes one ask over the native engine with the OpenAI-compatible adapter.
 hugr-agent = { workspace = true }
 hugr-providers = { workspace = true }

@@ -34,7 +34,7 @@ struct Normalized {
     distinct_traces: bool,
 }
 
-/// Write the shared definition folder used by all surfaces.
+/// Write the shared agent crate folder used by all surfaces.
 fn write_def(root: &Path, name: &str) {
     let _ = std::fs::remove_dir_all(root);
     for file in scaffold_files(name, Template::Docs) {

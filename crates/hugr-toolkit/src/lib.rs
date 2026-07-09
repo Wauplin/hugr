@@ -1,4 +1,4 @@
-//! `hugr-toolkit` — declarative Hugr subagent definitions (ARCHITECTURE §20–21,
+//! `hugr-toolkit` — Hugr subagent crate manifests (ARCHITECTURE §20–21,
 //! ROADMAP T1).
 //!
 //! A subagent is a config folder, not a Rust project: a [`hugr.toml`

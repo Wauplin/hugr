@@ -1,7 +1,7 @@
-//! A tiny, deterministic archive of a definition folder, embedded into a built
+//! A tiny, deterministic archive of an agent crate folder, embedded into a built
 //! agent binary (ROADMAP T2.1, ARCHITECTURE §21.1).
 //!
-//! `hugr build --surface cli` [`pack`]s the definition's source files into a
+//! `hugr build` [`pack`]s the agent's source files into a
 //! single blob written next to the generated shim crate and `include_bytes!`d
 //! into the binary. At startup the binary [`unpack`]s that blob into a stable
 //! per-agent home directory, so a shipped artifact carries its whole definition

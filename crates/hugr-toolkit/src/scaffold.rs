@@ -1,10 +1,11 @@
-//! `hugr new`: scaffold a working definition folder (ROADMAP T1.4).
+//! `hugr new`: scaffold a working agent crate folder (ROADMAP T1.4).
 //!
-//! Emits a folder with a commented `hugr.toml`, a `SYSTEM.md` prompt (using the
-//! template vars `hugr run` substitutes), and any scaffolding a template needs
-//! to be runnable immediately (e.g. the `docs` template creates the `docs/`
-//! folder its `fs_read` root points at). The goal (exit criterion): `hugr new`
-//! → edit one path → `hugr run` answers within minutes.
+//! Emits a folder with a minimal Rust crate, a commented `hugr.toml`, a
+//! `SYSTEM.md` prompt (using the template vars `hugr run` substitutes), and any
+//! scaffolding a template needs to be runnable immediately (e.g. the `docs`
+//! template creates the `docs/` folder its `fs_read` root points at). The goal
+//! (exit criterion): `hugr new` → edit one path → `hugr run` answers within
+//! minutes.
 
 use std::path::{Path, PathBuf};
 
@@ -68,6 +69,14 @@ pub enum ScaffoldError {
 /// can preview these before [`write_scaffold`] commits them to disk.
 pub fn scaffold_files(name: &str, template: Template) -> Vec<ScaffoldFile> {
     let mut files = vec![
+        ScaffoldFile {
+            rel_path: PathBuf::from("Cargo.toml"),
+            contents: cargo_toml_for(name),
+        },
+        ScaffoldFile {
+            rel_path: PathBuf::from("src/lib.rs"),
+            contents: lib_rs_for(name),
+        },
         ScaffoldFile {
             rel_path: PathBuf::from("hugr.toml"),
             contents: manifest_for(name, template),
@@ -168,6 +177,60 @@ fn manifest_for(name: &str, template: Template) -> String {
     )
 }
 
+fn cargo_toml_for(name: &str) -> String {
+    let package = sanitize_rust_name(name, '-');
+    format!(
+        "[package]\n\
+         name = \"{package}\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2024\"\n\
+         \n\
+         [dependencies]\n\
+         serde = {{ version = \"1\", features = [\"derive\"] }}\n\
+         schemars = \"1\"\n"
+    )
+}
+
+fn lib_rs_for(name: &str) -> String {
+    let crate_name = sanitize_rust_name(name, '-').replace('-', "_");
+    format!(
+        "//! Rust response contract and extension point for the `{name}` Hugr agent.\n\
+         \n\
+         use schemars::JsonSchema;\n\
+         use serde::{{Deserialize, Serialize}};\n\
+         \n\
+         pub const RESPONSE_RUST_TYPE: &str = \"{crate_name}::Response\";\n\
+         \n\
+         #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]\n\
+         #[serde(deny_unknown_fields)]\n\
+         pub struct Response {{\n\
+             pub response: String,\n\
+         }}\n"
+    )
+}
+
+fn sanitize_rust_name(name: &str, separator: char) -> String {
+    let mut out: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                separator
+            }
+        })
+        .collect();
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(true)
+    {
+        out.insert_str(0, "agent-");
+    }
+    out
+}
+
 fn system_for(name: &str, template: Template) -> String {
     let role = match template {
         Template::Docs => {
@@ -209,7 +272,10 @@ mod tests {
     fn scaffolded_manifest_parses_for_every_template() {
         for template in [Template::Docs, Template::Sqlite, Template::Blank] {
             let files = scaffold_files("my-agent", template);
-            let manifest = &files[0];
+            let manifest = files
+                .iter()
+                .find(|file| file.rel_path == Path::new("hugr.toml"))
+                .unwrap();
             assert_eq!(manifest.rel_path, PathBuf::from("hugr.toml"));
             let def = AgentDefinition::parse(&manifest.contents, "hugr.toml").unwrap_or_else(|e| {
                 panic!("template {} manifest must parse: {e}", template.as_str())
@@ -217,8 +283,28 @@ mod tests {
             assert_eq!(def.agent.name, "my-agent");
             assert_eq!(def.default_tier(), Some("medium"));
             // SYSTEM.md carries the template vars for hugr run to substitute.
-            assert!(files[1].contents.contains("{{agent_name}}"));
+            assert!(
+                files
+                    .iter()
+                    .any(|file| file.rel_path == Path::new("SYSTEM.md")
+                        && file.contents.contains("{{agent_name}}"))
+            );
         }
+    }
+
+    #[test]
+    fn scaffold_creates_a_rust_crate() {
+        let files = scaffold_files("my-agent", Template::Blank);
+        assert!(
+            files
+                .iter()
+                .any(|file| file.rel_path == Path::new("Cargo.toml"))
+        );
+        assert!(
+            files
+                .iter()
+                .any(|file| file.rel_path == Path::new("src/lib.rs"))
+        );
     }
 
     #[test]

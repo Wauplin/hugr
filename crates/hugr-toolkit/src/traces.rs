@@ -1,6 +1,6 @@
 //! Trace tooling over an agent's trace store (ROADMAP T1.7): list the lineage
 //! forest, replay a trace step-by-step, and verify one bit-for-bit — the
-//! existing `hugr-replay` machinery pointed at the definition's store
+//! existing `hugr-replay` machinery pointed at the agent's store
 //! (`hugr_toolkit::runtime::trace_store_for`).
 //!
 //! The lineage renderer is pure over a `Vec<TraceHead>` (a fork writes a child

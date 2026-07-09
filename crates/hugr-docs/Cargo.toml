@@ -11,8 +11,5 @@ rust-version.workspace = true
 name = "hugr_docs"
 
 [dependencies]
-tokio = { workspace = true }
-hugr-toolkit = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 schemars = { workspace = true }
