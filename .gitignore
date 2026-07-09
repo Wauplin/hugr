@@ -12,3 +12,5 @@ Cargo.lock.orig
 archive*
 
 .claude/
+
+**/.*-traces
