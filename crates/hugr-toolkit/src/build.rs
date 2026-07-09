@@ -70,6 +70,16 @@ pub enum BuildError {
     Cargo { code: i32 },
     #[error("could not run `cargo`: {0}")]
     CargoSpawn(std::io::Error),
+    #[error("extracting the response schema from `{binary}`: {message}")]
+    SchemaExtraction { binary: PathBuf, message: String },
+    #[error(
+        "`maturin` was not found on PATH. Install it (`pipx install maturin` or `pip install maturin`) and re-run, or build the generated project at {crate_dir} yourself."
+    )]
+    MaturinMissing { crate_dir: PathBuf },
+    #[error("`maturin build` failed (exit {code}). See the output above.")]
+    Maturin { code: i32 },
+    #[error("could not run `maturin`: {0}")]
+    MaturinSpawn(std::io::Error),
 }
 
 /// Generate a shim crate embedding `def` and compile it into a standalone
@@ -96,8 +106,8 @@ pub fn build(def: &AgentDefinition, opts: &BuildOptions) -> Result<BuildOutcome,
 
 /// Create the shim crate's `src/` dir and write the embedded agent bundle,
 /// excluding runtime-only directories so the artifact ships config + tool data
-/// but no prior traces/scratch.
-fn write_bundle(def: &AgentDefinition, crate_dir: &Path) -> Result<(), BuildError> {
+/// but no prior traces/scratch. Shared by every generated surface (CLI, Python).
+pub(crate) fn write_bundle(def: &AgentDefinition, crate_dir: &Path) -> Result<(), BuildError> {
     let source_dir = def.source_dir.as_ref().ok_or(BuildError::NoSourceDir)?;
     std::fs::create_dir_all(crate_dir.join("src"))?;
     let excludes = bundle_excludes(def);
@@ -157,8 +167,9 @@ fn first_component(path: &str) -> Option<String> {
     })
 }
 
-/// A cargo-legal package/binary name derived from the agent name.
-fn sanitize_crate_name(name: &str) -> String {
+/// A cargo-legal package/binary name derived from the agent name. Shared by the
+/// CLI and Python surfaces.
+pub(crate) fn sanitize_crate_name(name: &str) -> String {
     let mut out: String = name
         .chars()
         .map(|c| {
@@ -233,8 +244,11 @@ async fn main() {{
     )
 }
 
+/// The agent crate that owns a typed response contract, resolved so a generated
+/// surface can add it as a path dependency and register the Rust response type.
+/// Shared by the CLI and Python surfaces.
 #[derive(Clone, Debug)]
-struct ResponseDependency {
+pub(crate) struct ResponseDependency {
     dep_name: String,
     package: Option<String>,
     path: PathBuf,
@@ -243,7 +257,7 @@ struct ResponseDependency {
 }
 
 impl ResponseDependency {
-    fn cargo_dep(&self) -> String {
+    pub(crate) fn cargo_dep(&self) -> String {
         let path = self.path.display();
         let package = self
             .package
@@ -256,7 +270,7 @@ impl ResponseDependency {
         )
     }
 
-    fn runtime_options(&self) -> String {
+    pub(crate) fn runtime_options(&self) -> String {
         format!(
             "hugr_toolkit::runtime::RuntimeOptions::new().with_response_type::<{rust_type}>({dep_name}::RESPONSE_RUST_TYPE, \"{schema_name}\")",
             rust_type = self.rust_type,
@@ -266,7 +280,9 @@ impl ResponseDependency {
     }
 }
 
-fn response_dependency(def: &AgentDefinition) -> Result<Option<ResponseDependency>, BuildError> {
+pub(crate) fn response_dependency(
+    def: &AgentDefinition,
+) -> Result<Option<ResponseDependency>, BuildError> {
     if def.response_schema.is_some() {
         return Ok(None);
     }
