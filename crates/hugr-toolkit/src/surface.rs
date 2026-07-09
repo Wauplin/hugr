@@ -455,7 +455,7 @@ fn response_schema_for_config(
     def.response_schema.clone().or_else(|| {
         options
             .single_response_contract()
-            .map(|contract| contract.schema)
+            .map(|contract| contract.public_schema().clone())
     })
 }
 

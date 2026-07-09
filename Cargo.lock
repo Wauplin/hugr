@@ -451,8 +451,10 @@ dependencies = [
 name = "hugr-docs"
 version = "0.0.2"
 dependencies = [
+ "hugr-agent",
  "schemars",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

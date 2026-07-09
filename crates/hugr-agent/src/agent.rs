@@ -87,6 +87,11 @@ pub struct Agent {
     /// passed to the model provider and the final JSON is cast into the Rust
     /// type before it becomes `Answer.response`.
     pub response_contract: Option<ResponseContract>,
+    /// Compile-time registered host-side hooks. These run outside `hugr-core`
+    /// so the reducer stays pure; they are deterministic Rust wiring owned by
+    /// the agent crate, not manifest/runtime policy.
+    pub ask_hooks: Vec<AskHook>,
+    pub answer_hooks: Vec<AnswerHook>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities
     /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
     /// invocation's child cost folds into this ask's `AnswerMeta`.
@@ -121,6 +126,8 @@ impl Agent {
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
             response_contract: None,
+            ask_hooks: Vec::new(),
+            answer_hooks: Vec::new(),
             agent_tools: Vec::new(),
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
@@ -200,8 +207,11 @@ impl Agent {
 
     /// Run one ask to completion (ARCHITECTURE §18.1/§19.2). See the module
     /// docs for the fresh-vs-resume split and the error discipline.
-    pub async fn ask(&self, ask: Ask) -> Result<Answer, AskError> {
+    pub async fn ask(&self, mut ask: Ask) -> Result<Answer, AskError> {
         let started = Instant::now();
+        for hook in &self.ask_hooks {
+            hook.apply(&mut ask);
+        }
         let parent = ask.trace_id.clone();
 
         // Assemble a fresh engine per ask. Recording is always on: the trace
@@ -383,14 +393,18 @@ impl Agent {
         // never recorded, so this move happens after the trace is persisted.
         self.finalize_scratch(&working_dir, &trace_id)?;
 
-        Ok(Answer {
+        let mut answer = Answer {
             status,
             response,
             trace_id,
             blobs: out_blobs,
             metadata,
             extra,
-        })
+        };
+        for hook in &self.answer_hooks {
+            hook.apply(&mut answer);
+        }
+        Ok(answer)
     }
 
     /// Create this ask's working scratch directory (a fresh `.pending/<n>`
@@ -457,6 +471,76 @@ impl Agent {
             .collect();
         tiers.sort_by(|a, b| a.selector.cmp(&b.selector));
         tiers
+    }
+}
+
+/// A compile-time registered hook that can adjust an [`Ask`] before the agent
+/// builds the turn. Hooks live in the host layer, never in `hugr-core`.
+#[derive(Clone)]
+pub struct AskHook {
+    name: String,
+    apply: Arc<dyn Fn(&mut Ask) + Send + Sync>,
+}
+
+impl std::fmt::Debug for AskHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskHook")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AskHook {
+    pub fn new(name: impl Into<String>, apply: impl Fn(&mut Ask) + Send + Sync + 'static) -> Self {
+        Self {
+            name: name.into(),
+            apply: Arc::new(apply),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn apply(&self, ask: &mut Ask) {
+        (self.apply)(ask);
+    }
+}
+
+/// A compile-time registered hook that can adjust the final [`Answer`] at the
+/// very end of an ask, after the trace/scratch/blob work is complete and just
+/// before the surface returns to the caller.
+#[derive(Clone)]
+pub struct AnswerHook {
+    name: String,
+    apply: Arc<dyn Fn(&mut Answer) + Send + Sync>,
+}
+
+impl std::fmt::Debug for AnswerHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnswerHook")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AnswerHook {
+    pub fn new(
+        name: impl Into<String>,
+        apply: impl Fn(&mut Answer) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            apply: Arc::new(apply),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn apply(&self, answer: &mut Answer) {
+        (self.apply)(answer);
     }
 }
 
@@ -535,6 +619,7 @@ impl AgentLimits {
 pub struct ResponseContract {
     pub name: String,
     pub schema: Value,
+    pub public_schema: Value,
     pub max_attempts: u8,
     parse: Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>,
 }
@@ -544,6 +629,7 @@ impl std::fmt::Debug for ResponseContract {
         f.debug_struct("ResponseContract")
             .field("name", &self.name)
             .field("schema", &self.schema)
+            .field("public_schema", &self.public_schema)
             .field("max_attempts", &self.max_attempts)
             .finish_non_exhaustive()
     }
@@ -582,10 +668,24 @@ impl ResponseContract {
     {
         Self {
             name: name.into(),
+            public_schema: schema.clone(),
             schema,
             max_attempts: 3,
             parse: Arc::new(parse),
         }
+    }
+
+    pub fn with_public_type<T>(mut self) -> Self
+    where
+        T: JsonSchema + 'static,
+    {
+        self.public_schema =
+            serde_json::to_value(schema_for!(T)).expect("public response schema serializes");
+        self
+    }
+
+    pub fn public_schema(&self) -> &Value {
+        &self.public_schema
     }
 
     fn request_extra(&self) -> Value {

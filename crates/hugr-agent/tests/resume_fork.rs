@@ -14,8 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, Ask, Pricing, ResponseContract, STATUS_SUCCESS, TraceId, TraceStore};
-use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
+use hugr_agent::{
+    Agent, AnswerHook, Ask, AskHook, Pricing, ResponseContract, STATUS_SUCCESS, TraceId, TraceStore,
+};
+use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Record, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -141,6 +143,91 @@ async fn typed_response_contract_retries_until_output_casts() {
     assert_eq!(answer.response["response"], "Paris.");
     assert_eq!(answer.response["related_documents"], json!(["guide.md"]));
     assert_eq!(answer.metadata.model_calls, 2, "bad cast is retried once");
+}
+
+#[tokio::test]
+async fn ask_hook_runs_before_the_turn() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let mut agent = agent(store, vec!["hooked"]);
+    agent.ask_hooks.push(AskHook::new("prefix", |ask| {
+        ask.question = format!("hooked: {}", ask.question);
+    }));
+
+    let answer = agent.ask(Ask::new("question")).await.unwrap();
+
+    assert_eq!(answer.status, STATUS_SUCCESS);
+    assert_eq!(answer.response["text"], "hooked");
+    let head = agent.store.head(&answer.trace_id).unwrap();
+    assert_eq!(head.question, "hooked: question");
+}
+
+#[tokio::test]
+async fn answer_hook_runs_at_the_final_return_boundary() {
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct ModelResponse {
+        response: String,
+        related_documents: Vec<String>,
+    }
+
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let mut agent = agent(
+        store.clone(),
+        vec![
+            "{\"response\":\"Use advanced compute.\",\"related_documents\":[\"hub/advanced-compute-options.md\"]}",
+        ],
+    );
+    agent.response_contract = Some(ResponseContract::from_type::<ModelResponse>(
+        "model_response",
+    ));
+    agent
+        .answer_hooks
+        .push(AnswerHook::new("document_urls", |answer| {
+            let related = answer
+                .response
+                .get_mut("related_documents")
+                .and_then(Value::as_array_mut)
+                .expect("related documents array");
+            for document in related {
+                let path = document.as_str().unwrap().to_string();
+                let slug = path.strip_suffix(".md").unwrap_or(&path);
+                let url = format!("https://huggingface.co/docs/{slug}");
+                *document = json!({
+                    "path": path,
+                    "url": url,
+                });
+            }
+        }));
+
+    let answer = agent.ask(Ask::new("compute?")).await.unwrap();
+
+    assert_eq!(answer.status, STATUS_SUCCESS);
+    assert_eq!(
+        answer.response["related_documents"],
+        json!([{
+            "path": "hub/advanced-compute-options.md",
+            "url": "https://huggingface.co/docs/hub/advanced-compute-options",
+        }])
+    );
+
+    let trace = store.get(&answer.trace_id).unwrap();
+    let recorded_text = trace
+        .log
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.record {
+            Record::ModelOutput { output, .. } => Some(output.text.as_str()),
+            _ => None,
+        });
+    assert_eq!(
+        recorded_text,
+        Some(
+            "{\"response\":\"Use advanced compute.\",\"related_documents\":[\"hub/advanced-compute-options.md\"]}"
+        )
+    );
+    hugr_replay::verify(&trace).unwrap();
 }
 
 #[tokio::test]

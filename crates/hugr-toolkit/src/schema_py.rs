@@ -50,7 +50,11 @@ pub fn generate(schema: &Value, fallback_root: &str) -> Generated {
         .cloned()
         .unwrap_or_default();
 
-    let root_class = sanitize_class(obj.get("title").and_then(Value::as_str).unwrap_or(fallback_root));
+    let root_class = sanitize_class(
+        obj.get("title")
+            .and_then(Value::as_str)
+            .unwrap_or(fallback_root),
+    );
 
     // Enum vs object is decided up front so a `$ref` resolves to the right
     // constructor (`Enum(value)` vs `Cls._from_dict(...)`).
@@ -219,7 +223,8 @@ impl PyGen {
         // `Option<T>`. Anything richer degrades to Optional[...] or Any.
         for key in ["anyOf", "oneOf"] {
             if let Some(variants) = obj.get(key).and_then(Value::as_array) {
-                let non_null: Vec<&Value> = variants.iter().filter(|v| !is_null_schema(v)).collect();
+                let non_null: Vec<&Value> =
+                    variants.iter().filter(|v| !is_null_schema(v)).collect();
                 let has_null = variants.iter().any(is_null_schema);
                 return match non_null.as_slice() {
                     [only] => {
@@ -341,7 +346,10 @@ impl PyType {
                 format!("[{} for _x in {src}]", inner.convert("_x"))
             }
             PyType::Dict(inner) => {
-                format!("{{_k: {} for _k, _v in ({src}).items()}}", inner.convert("_v"))
+                format!(
+                    "{{_k: {} for _k, _v in ({src}).items()}}",
+                    inner.convert("_v")
+                )
             }
             PyType::Ref { name, is_enum } => {
                 if *is_enum {
@@ -383,10 +391,7 @@ fn type_tag(obj: &Map<String, Value>) -> Option<(&'static str, bool)> {
         Value::String(s) => known(s).map(|t| (t, false)),
         Value::Array(items) => {
             let nullable = items.iter().any(|v| v.as_str() == Some("null"));
-            let primary = items
-                .iter()
-                .filter_map(|v| v.as_str())
-                .find_map(known)?;
+            let primary = items.iter().filter_map(|v| v.as_str()).find_map(known)?;
             Some((primary, nullable))
         }
         _ => None,
@@ -407,10 +412,12 @@ fn is_enum(schema: &Value) -> bool {
 
 /// A one-line Python docstring from a schema `description`, or `None`.
 fn doc_line(schema: &Value) -> Option<String> {
-    schema
-        .get("description")
-        .and_then(Value::as_str)
-        .map(|d| format!("\"\"\"{}\"\"\"", d.replace('\\', "\\\\").replace('"', "\\\"")))
+    schema.get("description").and_then(Value::as_str).map(|d| {
+        format!(
+            "\"\"\"{}\"\"\"",
+            d.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    })
 }
 
 /// A Python-safe, PascalCase-ish class name (keeps existing casing, strips
@@ -418,9 +425,20 @@ fn doc_line(schema: &Value) -> Option<String> {
 fn sanitize_class(name: &str) -> String {
     let mut out: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(true)
+    {
         out.insert(0, '_');
     }
     out
@@ -431,7 +449,13 @@ fn sanitize_class(name: &str) -> String {
 fn py_ident(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let cleaned = if cleaned
         .chars()
@@ -453,7 +477,13 @@ fn py_ident(name: &str) -> String {
 fn enum_member(value: &str) -> String {
     let upper: String = value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     if upper
         .chars()
@@ -470,10 +500,41 @@ fn enum_member(value: &str) -> String {
 fn is_py_keyword(s: &str) -> bool {
     matches!(
         s,
-        "False" | "None" | "True" | "and" | "as" | "assert" | "async" | "await" | "break"
-            | "class" | "continue" | "def" | "del" | "elif" | "else" | "except" | "finally"
-            | "for" | "from" | "global" | "if" | "import" | "in" | "is" | "lambda" | "nonlocal"
-            | "not" | "or" | "pass" | "raise" | "return" | "try" | "while" | "with" | "yield"
+        "False"
+            | "None"
+            | "True"
+            | "and"
+            | "as"
+            | "assert"
+            | "async"
+            | "await"
+            | "break"
+            | "class"
+            | "continue"
+            | "def"
+            | "del"
+            | "elif"
+            | "else"
+            | "except"
+            | "finally"
+            | "for"
+            | "from"
+            | "global"
+            | "if"
+            | "import"
+            | "in"
+            | "is"
+            | "lambda"
+            | "nonlocal"
+            | "not"
+            | "or"
+            | "pass"
+            | "raise"
+            | "return"
+            | "try"
+            | "while"
+            | "with"
+            | "yield"
     )
 }
 
@@ -495,17 +556,52 @@ mod tests {
             "description": "Final response payload produced by the docs agent.",
             "properties": {
                 "response": {"type": "string"},
-                "related_documents": {"type": "array", "items": {"type": "string"}}
+                "related_documents": {"type": "array", "items": {"$ref": "#/$defs/Document"}}
             },
-            "required": ["response", "related_documents"]
+            "required": ["response", "related_documents"],
+            "$defs": {
+                "Document": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "url": {"type": "string"}
+                    },
+                    "required": ["path", "url"]
+                }
+            }
         });
         let out = generate(&schema, "Response");
         assert_eq!(out.root_class, "DocsResponse");
-        assert!(out.code.contains("@dataclass\nclass DocsResponse:"), "{}", out.code);
+        assert!(
+            out.code.contains("@dataclass\nclass Document:"),
+            "{}",
+            out.code
+        );
+        assert!(out.code.contains("path: str"), "{}", out.code);
+        assert!(out.code.contains("url: str"), "{}", out.code);
+        assert!(
+            out.code.contains("@dataclass\nclass DocsResponse:"),
+            "{}",
+            out.code
+        );
         assert!(out.code.contains("response: str"), "{}", out.code);
-        assert!(out.code.contains("related_documents: List[str]"), "{}", out.code);
-        assert!(out.code.contains("related_documents=[_x for _x in d[\"related_documents\"]]"), "{}", out.code);
-        assert!(out.code.contains("def _from_dict(cls, d: dict)"), "{}", out.code);
+        assert!(
+            out.code.contains("related_documents: List[Document]"),
+            "{}",
+            out.code
+        );
+        assert!(
+            out.code.contains(
+                "related_documents=[Document._from_dict(_x) for _x in d[\"related_documents\"]]"
+            ),
+            "{}",
+            out.code
+        );
+        assert!(
+            out.code.contains("def _from_dict(cls, d: dict)"),
+            "{}",
+            out.code
+        );
     }
 
     #[test]
@@ -524,9 +620,22 @@ mod tests {
         // Required field first, no default.
         assert!(out.code.contains("always: str\n"), "{}", out.code);
         // Not-required → Optional with default None.
-        assert!(out.code.contains("maybe: Optional[str] = None"), "{}", out.code);
-        assert!(out.code.contains("nullable: Optional[int] = None"), "{}", out.code);
-        assert!(out.code.contains("maybe=(None if d.get(\"maybe\") is None else d.get(\"maybe\"))"), "{}", out.code);
+        assert!(
+            out.code.contains("maybe: Optional[str] = None"),
+            "{}",
+            out.code
+        );
+        assert!(
+            out.code.contains("nullable: Optional[int] = None"),
+            "{}",
+            out.code
+        );
+        assert!(
+            out.code
+                .contains("maybe=(None if d.get(\"maybe\") is None else d.get(\"maybe\"))"),
+            "{}",
+            out.code
+        );
     }
 
     #[test]
@@ -552,11 +661,24 @@ mod tests {
         let out = generate(&schema, "Root");
         assert!(out.code.contains("class Kind(str, Enum):"), "{}", out.code);
         assert!(out.code.contains("A = \"a\""), "{}", out.code);
-        assert!(out.code.contains("@dataclass\nclass Child:"), "{}", out.code);
+        assert!(
+            out.code.contains("@dataclass\nclass Child:"),
+            "{}",
+            out.code
+        );
         // Enum ref → Enum(value); object ref → Cls._from_dict; list of refs maps.
         assert!(out.code.contains("kind=Kind(d[\"kind\"])"), "{}", out.code);
-        assert!(out.code.contains("child=Child._from_dict(d[\"child\"])"), "{}", out.code);
-        assert!(out.code.contains("children=[Child._from_dict(_x) for _x in d[\"children\"]]"), "{}", out.code);
+        assert!(
+            out.code.contains("child=Child._from_dict(d[\"child\"])"),
+            "{}",
+            out.code
+        );
+        assert!(
+            out.code
+                .contains("children=[Child._from_dict(_x) for _x in d[\"children\"]]"),
+            "{}",
+            out.code
+        );
         // Child ($def) is emitted before Root uses it.
         let child_at = out.code.find("class Child:").unwrap();
         let root_at = out.code.find("class Root:").unwrap();
@@ -577,9 +699,17 @@ mod tests {
         });
         let out = generate(&schema, "Bag");
         assert!(out.code.contains("counts: Dict[str, int]"), "{}", out.code);
-        assert!(out.code.contains("mode: Literal[\"fast\", \"slow\"]"), "{}", out.code);
+        assert!(
+            out.code.contains("mode: Literal[\"fast\", \"slow\"]"),
+            "{}",
+            out.code
+        );
         // Unknown, not required → Optional[Any].
-        assert!(out.code.contains("weird: Optional[Any] = None"), "{}", out.code);
+        assert!(
+            out.code.contains("weird: Optional[Any] = None"),
+            "{}",
+            out.code
+        );
     }
 
     #[test]

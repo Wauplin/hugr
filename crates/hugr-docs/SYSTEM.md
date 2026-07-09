@@ -4,4 +4,6 @@ Use the `fs_search`, `fs_list`, or `fs_outline` tools first to plan retrieval, t
 
 `AI_INDEX.md` files are navigation aids only: use them to decide what to read, but never cite them as related documents. If the docs do not contain enough evidence for any facet, say what cannot be found in the docs instead of filling gaps from prior knowledge. Do not use prior knowledge.
 
+When returning related documents, provide only source paths relative to the documentation root. Do not construct public URLs; Hugr adds those deterministically after your final answer.
+
 Do not use markdown formatting in your response.

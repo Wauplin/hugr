@@ -35,13 +35,25 @@ fn real_python_build_generates_typed_package_and_wheel() {
     let pkg = outcome.crate_dir.join("python").join("hugr_docs");
     let init = std::fs::read_to_string(pkg.join("__init__.py")).unwrap();
     assert!(init.contains("def ask("), "{init}");
-    assert!(init.contains("docs_path: str"), "runtime arg is typed: {init}");
+    assert!(
+        init.contains("docs_path: str"),
+        "runtime arg is typed: {init}"
+    );
     assert!(init.contains("-> Answer:"), "{init}");
 
     let models = std::fs::read_to_string(pkg.join("_models.py")).unwrap();
     assert!(models.contains("class DocsResponse:"), "{models}");
-    assert!(models.contains("related_documents: List[str]"), "{models}");
-    assert!(models.contains("response: Optional[DocsResponse] = None"), "{models}");
+    assert!(models.contains("class Document:"), "{models}");
+    assert!(models.contains("path: str"), "{models}");
+    assert!(models.contains("url: str"), "{models}");
+    assert!(
+        models.contains("related_documents: List[Document]"),
+        "{models}"
+    );
+    assert!(
+        models.contains("response: Optional[DocsResponse] = None"),
+        "{models}"
+    );
     assert!(pkg.join("py.typed").exists(), "PEP 561 marker present");
 
     // maturin produced a wheel.

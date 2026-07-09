@@ -253,7 +253,9 @@ pub(crate) struct ResponseDependency {
     package: Option<String>,
     path: PathBuf,
     rust_type: String,
+    model_rust_type: String,
     schema_name: String,
+    has_answer_hooks: bool,
 }
 
 impl ResponseDependency {
@@ -271,12 +273,32 @@ impl ResponseDependency {
     }
 
     pub(crate) fn runtime_options(&self) -> String {
-        format!(
-            "hugr_toolkit::runtime::RuntimeOptions::new().with_response_type::<{rust_type}>({dep_name}::RESPONSE_RUST_TYPE, \"{schema_name}\")",
-            rust_type = self.rust_type,
+        let contract = if self.model_rust_type == self.rust_type {
+            format!(
+                "hugr_toolkit::runtime::ResponseContract::from_type::<{rust_type}>(\"{schema_name}\")",
+                rust_type = self.rust_type,
+                schema_name = self.schema_name,
+            )
+        } else {
+            format!(
+                "hugr_toolkit::runtime::ResponseContract::from_type::<{model_rust_type}>(\"{schema_name}\").with_public_type::<{rust_type}>()",
+                model_rust_type = self.model_rust_type,
+                rust_type = self.rust_type,
+                schema_name = self.schema_name,
+            )
+        };
+        let mut options = format!(
+            "hugr_toolkit::runtime::RuntimeOptions::new().with_response_contract({dep_name}::RESPONSE_RUST_TYPE, {contract})",
             dep_name = self.dep_name,
-            schema_name = self.schema_name,
-        )
+            contract = contract,
+        );
+        if self.has_answer_hooks {
+            options.push_str(&format!(
+                ".with_answer_hooks({}::answer_hooks())",
+                self.dep_name
+            ));
+        }
+        options
     }
 }
 
@@ -294,6 +316,8 @@ pub(crate) fn response_dependency(
             source,
         })?;
     let rust_type = read_response_rust_type(&path)?;
+    let model_rust_type = read_optional_rust_type_const(&path, "MODEL_RESPONSE_RUST_TYPE")?
+        .unwrap_or_else(|| rust_type.clone());
     let Some((dep_name, _)) = rust_type.split_once("::") else {
         return Err(BuildError::InvalidResponseRustType { rust_type });
     };
@@ -302,42 +326,69 @@ pub(crate) fn response_dependency(
     }
     let package_name = cargo_package_name(&path)?;
     let package = (package_name != dep_name).then_some(package_name);
+    let has_answer_hooks = has_pub_fn(&path, "answer_hooks")?;
     Ok(Some(ResponseDependency {
         dep_name: dep_name.to_string(),
         package,
         path,
+        model_rust_type,
+        has_answer_hooks,
         schema_name: schema_name_from_rust_type(&rust_type),
         rust_type,
     }))
 }
 
 fn read_response_rust_type(agent_dir: &Path) -> Result<String, BuildError> {
+    read_rust_type_const(agent_dir, "RESPONSE_RUST_TYPE")?.ok_or_else(|| {
+        BuildError::MissingResponseRustType {
+            path: agent_dir.join("src/lib.rs"),
+        }
+    })
+}
+
+fn read_optional_rust_type_const(
+    agent_dir: &Path,
+    const_name: &str,
+) -> Result<Option<String>, BuildError> {
+    read_rust_type_const(agent_dir, const_name)
+}
+
+fn read_rust_type_const(agent_dir: &Path, const_name: &str) -> Result<Option<String>, BuildError> {
     let path = agent_dir.join("src/lib.rs");
     let src = std::fs::read_to_string(&path).map_err(|source| BuildError::AgentResponseSource {
         path: path.clone(),
         source,
     })?;
-    let needle = "pub const RESPONSE_RUST_TYPE";
-    let Some(start) = src.find(needle) else {
-        return Err(BuildError::MissingResponseRustType { path });
+    let needle = format!("pub const {const_name}");
+    let Some(start) = src.find(&needle) else {
+        return Ok(None);
     };
     let after_name = &src[start + needle.len()..];
     let Some(eq) = after_name.find('=') else {
-        return Err(BuildError::MissingResponseRustType { path });
+        return Ok(None);
     };
     let after_eq = after_name[eq + 1..].trim_start();
     let Some(rest) = after_eq.strip_prefix('"') else {
-        return Err(BuildError::MissingResponseRustType { path });
+        return Ok(None);
     };
     let Some(end) = rest.find('"') else {
-        return Err(BuildError::MissingResponseRustType { path });
+        return Ok(None);
     };
     let value = rest[..end].to_string();
     if value.trim().is_empty() {
-        Err(BuildError::MissingResponseRustType { path })
+        Ok(None)
     } else {
-        Ok(value)
+        Ok(Some(value))
     }
+}
+
+fn has_pub_fn(agent_dir: &Path, fn_name: &str) -> Result<bool, BuildError> {
+    let path = agent_dir.join("src/lib.rs");
+    let src = std::fs::read_to_string(&path).map_err(|source| BuildError::AgentResponseSource {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(src.contains(&format!("pub fn {fn_name}")))
 }
 
 fn cargo_package_name(agent_dir: &Path) -> Result<String, BuildError> {
@@ -424,7 +475,9 @@ model = "m"
         let toml = cli_cargo_toml("docs", &Some(dep.clone()));
         assert!(toml.contains("hugr_docs = { package = \"hugr-docs\", path ="));
         let main = main_rs(&Some(dep));
-        assert!(main.contains("with_response_type::<hugr_docs::DocsResponse>"));
+        assert!(main.contains("ResponseContract::from_type::<hugr_docs::DocsModelResponse>"));
+        assert!(main.contains(".with_public_type::<hugr_docs::DocsResponse>()"));
+        assert!(main.contains(".with_answer_hooks(hugr_docs::answer_hooks())"));
         assert!(main.contains("hugr_docs::RESPONSE_RUST_TYPE"));
         assert!(main.contains("\"hugr_docs__DocsResponse\""));
     }

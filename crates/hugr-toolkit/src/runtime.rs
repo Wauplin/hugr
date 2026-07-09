@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_agent::{
-    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, Pricing, ResponseContract,
-    TraceStore, depth_exceeded_resolver,
+    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, AnswerHook, Ask, AskHook,
+    Pricing, TraceStore, depth_exceeded_resolver,
 };
 use hugr_core::{ModelSelector, SamplingParams};
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
@@ -30,6 +30,8 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
 use crate::tools::{self, ToolError};
+
+pub use hugr_agent::ResponseContract;
 
 /// Default trace-store directory when the manifest omits `[traces].store`.
 pub const DEFAULT_TRACE_DIRNAME: &str = ".hugr-traces";
@@ -97,6 +99,8 @@ pub const AGENT_DEPTH_ENV: &str = "HUGR_AGENT_DEPTH";
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeOptions {
     response_contracts: std::collections::BTreeMap<String, ResponseContract>,
+    ask_hooks: Vec<AskHook>,
+    answer_hooks: Vec<AnswerHook>,
 }
 
 impl RuntimeOptions {
@@ -124,6 +128,26 @@ impl RuntimeOptions {
         self.with_response_contract(rust_type, ResponseContract::from_type::<T>(schema_name))
     }
 
+    pub fn with_ask_hook(mut self, hook: AskHook) -> Self {
+        self.ask_hooks.push(hook);
+        self
+    }
+
+    pub fn with_ask_hooks(mut self, hooks: impl IntoIterator<Item = AskHook>) -> Self {
+        self.ask_hooks.extend(hooks);
+        self
+    }
+
+    pub fn with_answer_hook(mut self, hook: AnswerHook) -> Self {
+        self.answer_hooks.push(hook);
+        self
+    }
+
+    pub fn with_answer_hooks(mut self, hooks: impl IntoIterator<Item = AnswerHook>) -> Self {
+        self.answer_hooks.extend(hooks);
+        self
+    }
+
     pub fn response_contract(&self, rust_type: &str) -> Option<ResponseContract> {
         self.response_contracts.get(rust_type).cloned()
     }
@@ -132,6 +156,14 @@ impl RuntimeOptions {
         (self.response_contracts.len() == 1)
             .then(|| self.response_contracts.values().next().cloned())
             .flatten()
+    }
+
+    pub fn ask_hooks(&self) -> Vec<AskHook> {
+        self.ask_hooks.clone()
+    }
+
+    pub fn answer_hooks(&self) -> Vec<AnswerHook> {
+        self.answer_hooks.clone()
     }
 }
 
@@ -214,6 +246,8 @@ pub async fn build_agent_with_options(
     }
     agent.pricing = pricing;
     agent.response_contract = response_contract(def, options)?;
+    agent.ask_hooks = options.ask_hooks();
+    agent.answer_hooks = options.answer_hooks();
 
     // System prompt (with template vars). A definition without SYSTEM.md gets a
     // minimal default so the agent still runs.

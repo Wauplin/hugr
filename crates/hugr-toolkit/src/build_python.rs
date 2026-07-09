@@ -141,7 +141,12 @@ fn python_module_name(name: &str) -> String {
             }
         })
         .collect();
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(true)
+    {
         out.insert(0, '_');
     }
     out
@@ -402,7 +407,10 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
         if arg.required {
             params.push_str(&format!("    {}: str,\n", py_arg(&arg.name)));
         } else {
-            params.push_str(&format!("    {}: Optional[str] = None,\n", py_arg(&arg.name)));
+            params.push_str(&format!(
+                "    {}: Optional[str] = None,\n",
+                py_arg(&arg.name)
+            ));
         }
     }
     params.push_str("    trace_id: Optional[str] = None,\n");
@@ -424,7 +432,9 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
         doc.push_str(&format!("        {}: {}\n", py_arg(&arg.name), help));
     }
     doc.push_str("        question: The question to ask the agent.\n");
-    doc.push_str("        trace_id: Resume/fork from an existing trace id (writes a new child trace).\n");
+    doc.push_str(
+        "        trace_id: Resume/fork from an existing trace id (writes a new child trace).\n",
+    );
     doc.push_str("        blobs: Local file paths to hand in as inbound blobs.\n");
     doc.push_str("        extra: Opaque caller metadata, echoed into the trace.\n");
 
@@ -528,18 +538,20 @@ fn newest_wheel(crate_dir: &Path) -> Option<PathBuf> {
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("whl"))
         .collect();
-    wheels.sort_by_key(|p| {
-        std::fs::metadata(p)
-            .and_then(|m| m.modified())
-            .ok()
-    });
+    wheels.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
     wheels.pop()
 }
 
 /// A Python identifier for a runtime-arg name (dashes → underscores).
 fn py_arg(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -622,10 +634,12 @@ help = "Folder containing the documentation to search."
     fn models_py_types_answer_response_with_root_class() {
         let generated = schema_py::Generated {
             root_class: "DocsResponse".to_string(),
-            code: "@dataclass\nclass DocsResponse:\n    response: str".to_string(),
+            code: "@dataclass\nclass Document:\n    path: str\n    url: str\n\n@dataclass\nclass DocsResponse:\n    response: str\n    related_documents: List[Document]".to_string(),
         };
         let models = models_py(&generated);
         assert!(models.contains("class DocsResponse:"));
+        assert!(models.contains("class Document:"));
+        assert!(models.contains("related_documents: List[Document]"));
         assert!(models.contains("response: Optional[DocsResponse] = None"));
         assert!(models.contains("class Answer:"));
         assert!(models.contains("class AnswerMeta:"));

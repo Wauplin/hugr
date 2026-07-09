@@ -12,4 +12,6 @@ name = "hugr_docs"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 schemars = { workspace = true }
+hugr-agent = { workspace = true }
