@@ -238,19 +238,13 @@ fn system_for(name: &str, template: Template) -> String {
              then fetch current weather with \
              `https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&current=temperature_2m,weather_code,wind_speed_10m`. \
              Reply in one short sentence with the city, temperature, conditions, and wind speed. \
-             If the city is missing or ambiguous, ask a short clarification.\n\n\
-             Available tools: {{{{tools}}}}.\n\
-             Today’s date is {{{{date}}}}.\n"
+             If the city is missing or ambiguous, ask a short clarification."
         );
     }
-    // Only the Blank template reaches here (Weather returned above).
-    let role = "You are a focused subagent. Answer the user's question. TODO: describe your task and how to \
-         use your tools.";
+    // Blank template.
     format!(
-        "# {name}\n\n\
-         You are **{{{{agent_name}}}}**. {role}\n\n\
-         Available tools: {{{{tools}}}}.\n\
-         Today's date is {{{{date}}}}.\n"
+        "You are **{name}**. You are a focused subagent. Answer the user's question. TODO: describe your task and how to \
+         use your tools."
     )
 }
 

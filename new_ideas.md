@@ -9,4 +9,6 @@
   - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
 - Shared blobs between agents => make sure no local copy (can be huge in case of e.g a dataset)
 - Define cron job for an agent (I.e. a prompt + a cron formula)
-- Scratchpad, memory, traces, etc. For now we assume all of this is a normal local filesystem. But we must be able to swap different backends. Filesystem is an obvious backend. But can also be a postgre SQL db. Can be a local storage (if run in a browser). Can be anything able to manage data. 
+- Scratchpad, memory, traces, etc. For now we assume all of this is a normal local filesystem. But we must be able to swap different backends. Filesystem is an obvious backend. But can also be a postgre SQL db. Can be a local storage (if run in a browser). Can be anything able to manage data.
+- default template for hugr new should not be docs specific (currently leaning towards hugr-docs)
+- skill for hugr "how to build your own agent" (hugr must be agent-first)

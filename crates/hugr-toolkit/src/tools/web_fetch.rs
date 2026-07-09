@@ -1,9 +1,9 @@
-//! `http_fetch` — a host-allowlisted, GET-only HTTP tool (ROADMAP T1.2,
+//! `web_fetch` — a host-allowlisted, GET-only HTTP tool (ROADMAP T1.2,
 //! ARCHITECTURE §20.2). Privilege class: **network**. The scope is the host
 //! allowlist declared in the manifest:
 //!
 //! ```toml
-//! [tools.http_fetch]
+//! [tools.web_fetch]
 //! allow_hosts = ["api.example.com", "docs.rs"]
 //! allow_methods = ["GET"]        # optional; GET-only by default
 //! max_bytes = 1000000            # optional response cap
@@ -20,7 +20,7 @@
 //! redirects, and the allowlist is only checked on the *initial* URL — so an
 //! allowlisted host could `3xx`-redirect to an off-allowlist (or internal)
 //! target and exfiltrate/SSRF past the jail. With redirects off, a `3xx`
-//! response is returned to the model as-is; following it is a *new* `http_fetch`
+//! response is returned to the model as-is; following it is a *new* `web_fetch`
 //! call whose target is re-checked against the allowlist. Only `http`/`https`
 //! schemes are accepted (no `file:`/`ftp:`), and userinfo tricks
 //! (`https://allowed@evil.com`) resolve to the real host, which is what the
@@ -35,15 +35,15 @@ use serde_json::json;
 const DEFAULT_MAX_BYTES: usize = 1_000_000;
 
 /// A network-egress tool jailed to an allowlist of hosts + methods.
-pub struct HttpFetch {
+pub struct WebFetch {
     client: reqwest::Client,
     allow_hosts: Vec<String>,
     allow_methods: Vec<String>,
     max_bytes: usize,
 }
 
-impl HttpFetch {
-    /// Build from a manifest `[tools.http_fetch]` config value.
+impl WebFetch {
+    /// Build from a manifest `[tools.web_fetch]` config value.
     pub fn from_config(config: &Value) -> Result<Self> {
         let allow_hosts = config
             .get("allow_hosts")
@@ -79,7 +79,7 @@ impl HttpFetch {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .context("building http_fetch client")?;
+            .context("building web_fetch client")?;
         Ok(Self {
             client,
             allow_hosts,
@@ -98,14 +98,14 @@ impl HttpFetch {
 }
 
 #[async_trait]
-impl Capability for HttpFetch {
+impl Capability for WebFetch {
     fn name(&self) -> &str {
-        "http_fetch"
+        "web_fetch"
     }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
-            "http_fetch",
+            "web_fetch",
             "Fetch a URL over HTTP(S). Restricted to an allowlist of hosts and methods declared in the agent manifest (GET-only by default).",
             json!({
                 "type": "object",
@@ -130,12 +130,12 @@ impl Capability for HttpFetch {
     }
 }
 
-impl HttpFetch {
+impl WebFetch {
     async fn fetch(&self, args: Value) -> Result<Value> {
         let url = args
             .get("url")
             .and_then(Value::as_str)
-            .context("http_fetch requires string `url`")?;
+            .context("web_fetch requires string `url`")?;
         let method = args
             .get("method")
             .and_then(Value::as_str)
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn host_allowlist_matches_exact_and_subdomains() {
-        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+        let tool = WebFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
         assert!(tool.host_allowed("example.com"));
         assert!(tool.host_allowed("api.example.com"));
         assert!(!tool.host_allowed("evil.com"));
@@ -207,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_disallowed_host_and_method_without_network() {
-        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+        let tool = WebFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
         // Host not on the allowlist — fails before any request.
         let err = tool
             .fetch(json!({ "url": "https://evil.com/x" }))
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn empty_allowlist_is_fail_closed() {
-        let tool = HttpFetch::from_config(&json!({})).unwrap();
+        let tool = WebFetch::from_config(&json!({})).unwrap();
         assert!(!tool.host_allowed("example.com"));
         assert_eq!(tool.allow_methods, vec!["GET".to_string()]);
     }
@@ -233,7 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn userinfo_and_nonhttp_schemes_cannot_bypass_the_allowlist() {
-        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+        let tool = WebFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
 
         // `https://example.com@evil.com/` — the real host is evil.com, so the
         // allowlist rejects it (no network touched).
@@ -255,7 +255,7 @@ mod tests {
     fn a_bare_host_does_not_match_a_different_host_with_shared_suffix() {
         // Regression: subdomain matching must require a dot boundary, so
         // `notexample.com` never matches an `example.com` allowlist.
-        let tool = HttpFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
+        let tool = WebFetch::from_config(&json!({ "allow_hosts": ["example.com"] })).unwrap();
         assert!(!tool.host_allowed("notexample.com"));
         assert!(!tool.host_allowed("example.com.evil.com"));
         assert!(tool.host_allowed("deep.sub.example.com"));
