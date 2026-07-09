@@ -353,6 +353,61 @@ pub async fn run_ask(
     }
 }
 
+/// Programmatic one-shot ask against an embedded bundle, returning the `Answer`
+/// (errors are answers, §18.1). This is the shared entry point for non-CLI
+/// surfaces — the generated Python extension (T2.3) and any future language
+/// binding — so the whole "bundle → assembled agent → one ask" path stays in
+/// one tested place. The caller supplies primitives (no `Ask`/`clap` types), we
+/// apply required runtime args, assemble with `options`, and run exactly one
+/// ask. Build/runtime failures come back as `status: "error"` answers, never
+/// panics or `Err`.
+pub async fn ask_bundle_with_options(
+    bundle_bytes: &[u8],
+    options: &RuntimeOptions,
+    question: String,
+    trace_id: Option<String>,
+    blob_paths: &[PathBuf],
+    extra: serde_json::Value,
+    runtime: &RuntimeValues,
+) -> Answer {
+    let started = Instant::now();
+    let mut def = match prepare_definition(bundle_bytes) {
+        Ok(def) => def,
+        Err(err) => return error_answer(err.to_string(), started),
+    };
+    if let Err(err) = apply_runtime_values(&mut def, runtime) {
+        return error_answer(err.to_string(), started);
+    }
+    let agent = match build_agent_with_options(&def, options).await {
+        Ok((agent, warnings)) => {
+            for warning in &warnings {
+                eprintln!("warning: {warning}");
+            }
+            agent
+        }
+        Err(err) => return error_answer(err.to_string(), started),
+    };
+
+    let mut blobs = Vec::with_capacity(blob_paths.len());
+    for path in blob_paths {
+        match blob_handle_from_path(path) {
+            Ok(handle) => blobs.push(handle),
+            Err(err) => return error_answer(err, started),
+        }
+    }
+
+    let ask = Ask {
+        question,
+        trace_id: trace_id.map(TraceId::new),
+        blobs,
+        extra,
+    };
+    match agent.ask(ask).await {
+        Ok(answer) => answer,
+        Err(err) => error_answer(err.to_string(), started),
+    }
+}
+
 /// The `--config` view: the parsed manifest as JSON. The API key env *name*
 /// is shown, and whether it currently resolves — the secret value never is.
 pub fn config_json(def: &AgentDefinition) -> serde_json::Value {

@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use hugr_agent::TraceId;
 use hugr_toolkit::AgentDefinition;
 use hugr_toolkit::build::{BuildOptions, build as run_build};
+use hugr_toolkit::build_python::build_python;
 use hugr_toolkit::runtime::trace_store_for;
 use hugr_toolkit::scaffold::{Template, write_scaffold};
 use hugr_toolkit::surface::{error_answer, print_answer, run_definition_args};
@@ -88,6 +89,12 @@ struct BuildArgs {
     /// Build in release mode.
     #[arg(long)]
     release: bool,
+    /// Surface(s) to generate: `cli` (default) and/or `python`. Repeatable or
+    /// comma-separated (`--surface python`, `--surface cli,python`). The
+    /// `python` surface also builds the CLI binary (it reads the response schema
+    /// from it).
+    #[arg(long, value_delimiter = ',', default_value = "cli")]
+    surface: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -250,22 +257,61 @@ fn build(args: BuildArgs) {
         release: args.release,
     };
 
-    eprintln!("building `{}`…", def.agent.name);
-    match run_build(&def, &opts) {
-        Ok(outcome) => {
-            eprintln!("built {} ✓", outcome.binary.display());
-            eprintln!(
-                "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
-                outcome.binary.display()
-            );
-            eprintln!(
-                "serve MCP: {} --mcp-serve  (register this stdio command in your MCP client)",
-                outcome.binary.display()
-            );
+    // Validate the requested surfaces up front (open set today: cli, python).
+    let mut python = false;
+    let mut cli = false;
+    for surface in &args.surface {
+        match surface.as_str() {
+            "cli" => cli = true,
+            "python" => python = true,
+            other => {
+                eprintln!("error: unknown surface `{other}` (expected cli | python)");
+                std::process::exit(2);
+            }
         }
-        Err(err) => {
-            eprintln!("error: {err}");
-            std::process::exit(1);
+    }
+
+    eprintln!("building `{}`…", def.agent.name);
+    // The Python surface builds the CLI binary internally (it reads the response
+    // schema from `--config`), so requesting python covers cli too.
+    if python {
+        match build_python(&def, &opts) {
+            Ok(outcome) => {
+                eprintln!("built python surface ✓ ({})", outcome.crate_dir.display());
+                match &outcome.wheel {
+                    Some(wheel) => eprintln!(
+                        "install it: pip install {}  (then `import {}`)",
+                        wheel.display(),
+                        outcome.module
+                    ),
+                    None => eprintln!(
+                        "build the wheel: (cd {} && maturin build --release)",
+                        outcome.crate_dir.display()
+                    ),
+                }
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                std::process::exit(1);
+            }
+        }
+    } else if cli {
+        match run_build(&def, &opts) {
+            Ok(outcome) => {
+                eprintln!("built {} ✓", outcome.binary.display());
+                eprintln!(
+                    "run it: {} \"<question>\"  (self-contained; no repo checkout needed)",
+                    outcome.binary.display()
+                );
+                eprintln!(
+                    "serve MCP: {} --mcp-serve  (register this stdio command in your MCP client)",
+                    outcome.binary.display()
+                );
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                std::process::exit(1);
+            }
         }
     }
 }

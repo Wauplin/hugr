@@ -13,12 +13,14 @@
 //! [manifest]: crate::manifest
 
 pub mod build;
+pub mod build_python;
 pub mod bundle;
 pub mod manifest;
 pub mod mcp_serve;
 pub mod runtime;
 pub mod runtime_args;
 pub mod scaffold;
+pub mod schema_py;
 pub mod surface;
 pub mod tools;
 pub mod traces;
