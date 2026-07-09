@@ -482,6 +482,7 @@ pub struct EngineBuilder {
     /// convenience fallback when no explicit default was set.
     first_model: Option<ModelSelector>,
     system_prompt: Option<String>,
+    model_request_extra: Value,
     sampling: SamplingParams,
     record: bool,
     /// When set, the brain is pre-seeded by replaying this trace's recorded
@@ -500,6 +501,7 @@ impl Default for EngineBuilder {
             default_model: None,
             first_model: None,
             system_prompt: None,
+            model_request_extra: Value::Null,
             sampling: SamplingParams::default(),
             record: false,
             resume: None,
@@ -553,6 +555,12 @@ impl EngineBuilder {
     /// Set the system prompt prepended to every projected request.
     pub fn system_prompt(mut self, system: impl Into<String>) -> Self {
         self.system_prompt = Some(system.into());
+        self
+    }
+
+    /// Set provider-specific opaque extras attached to every model request.
+    pub fn model_request_extra(mut self, extra: Value) -> Self {
+        self.model_request_extra = extra;
         self
     }
 
@@ -633,7 +641,8 @@ impl EngineBuilder {
                     .with_tools(self.caps.schemas())
                     .with_permissioned(self.caps.permissioned_names())
                     .with_background(self.caps.background_names())
-                    .with_params(self.sampling);
+                    .with_params(self.sampling)
+                    .with_extra(self.model_request_extra);
                 if let Some(system) = self.system_prompt {
                     policy = policy.with_system_prompt(system);
                 }

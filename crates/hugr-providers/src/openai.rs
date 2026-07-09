@@ -189,6 +189,13 @@ impl OpenAiAdapter {
         if let Some(m) = request.params.max_tokens.or(self.default_params.max_tokens) {
             body["max_tokens"] = json!(m);
         }
+        if let Some(extra) = request.extra.as_object() {
+            for (key, value) in extra {
+                if !value.is_null() {
+                    body[key] = value.clone();
+                }
+            }
+        }
         body
     }
 
@@ -633,6 +640,39 @@ mod tests {
         assert_eq!(body["temperature"], json!(0.5));
         assert_eq!(body["max_tokens"], json!(128));
         assert_eq!(body["tools"][0]["function"]["name"], "shell");
+    }
+
+    #[test]
+    fn build_body_passes_provider_extras() {
+        let mut request = ModelRequest::new(
+            vec![ContextBlock::new(
+                Role::User,
+                vec![ContentPart::Text("answer".into())],
+            )],
+            Vec::new(),
+            SamplingParams::new(),
+        );
+        request.extra = json!({
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "docs_response",
+                    "strict": true,
+                    "schema": { "type": "object" }
+                }
+            }
+        });
+
+        let body = adapter().build_body(&request);
+
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "docs_response"
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"],
+            json!({ "type": "object" })
+        );
     }
 
     #[test]

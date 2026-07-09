@@ -13,7 +13,7 @@
     },
     "response": {
       "type": "object",
-      "description": "Structured response object. Hugr only requires an object; a definition may enforce a narrower JSON Schema. Error answers use response.error."
+      "description": "Structured response object. Hugr only requires an object; a typed response contract may cast it into a narrower Rust type. Error answers use response.error."
     },
     "trace_id": {
       "type": "string",

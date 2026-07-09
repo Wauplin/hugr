@@ -101,7 +101,7 @@ pub struct AnswerMeta {
 }
 ```
 
-Design rules: `AnswerMeta` is never optional — an orchestrator can always account for a call. `response` is always a JSON object; without a declared schema, plain model text is wrapped as `{ "text": ... }`, while a definition may enforce a narrower shape with `[response].schema`. `extra` is only for non-answer extras and is never load-bearing for the contract. `BlobHandle { ref: Bytes | Path | Sha256, media_type }` — inbound blobs are materialized into the scratchpad before the turn starts; outbound blobs are returned by content-addressed ref into the blob store (dedup by hash).
+Design rules: `AnswerMeta` is never optional — an orchestrator can always account for a call. `response` is always a JSON object; without a declared response contract, plain model text is wrapped as `{ "text": ... }`. A typed response contract is a Rust `serde` + `schemars` type: Hugr derives JSON Schema from it, passes that schema to the model provider as `response_format`, and casts the final JSON into the Rust type before returning it. If that cast fails, the agent asks the model to repair the response for up to the contract's attempt limit. `extra` is only for non-answer extras and is never load-bearing for the contract. `BlobHandle { ref: Bytes | Path | Sha256, media_type }` — inbound blobs are materialized into the scratchpad before the turn starts; outbound blobs are returned by content-addressed ref into the blob store (dedup by hash).
 
 The orchestration model:
 
@@ -139,7 +139,11 @@ env = "POLICY_DOCS_PATH"
 help = "Folder containing policies to search."
 
 [response]                            # optional final-output contract
-schema = "response.schema.json"       # relative to the definition folder
+rust_type = "policy_docs::PolicyResponse"
+crate_path = ".."
+crate_package = "policy-docs"
+schema_name = "policy_docs_response"
+max_attempts = 3
 
 [tools.mcp.github]                    # external tools: an MCP server (the one escape hatch)
 command = "gh-mcp"
@@ -153,7 +157,7 @@ max_cost_micro_usd = 50000
 timeout_s = 120
 ```
 
-`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].schema` is an optional JSON Schema file loaded from the definition folder and enforced by the built binary against the final model output before it becomes `Answer.response`; Hugr itself only requires the top-level response to be an object. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
+`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].rust_type` names a Rust response type registered by the agent crate; `[response].crate_path` tells `hugr build` which crate to link into the generated standalone shim, so the toolkit never depends on agent examples. The built binary derives JSON Schema from that type, passes it to the model provider, and casts final JSON with `serde`. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
 
 ### 7. The tool library
 
@@ -188,8 +192,8 @@ crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore (trace_id
                         #   scratchpad, blob exchange, limits, cost accounting, agent-as-tool.
 crates/hugr-toolkit/    # declarative definitions (hugr.toml + SYSTEM.md), the tool library,
                         #   and the `hugr` CLI: new / run / build / traces / replay / verify.
-crates/hugr-docs/       # the reference subagent (docs Q&A): a definition folder only,
-                        #   run/buildable by hugr-toolkit.
+crates/hugr-docs/       # the reference subagent (docs Q&A): a definition folder plus
+                        #   typed response contract, run/buildable by hugr-toolkit.
 ```
 
 Dependency rules: **`hugr-core` depends on nothing environmental** (verify with `cargo tree -p hugr-core`). `hugr-replay` may use `std::fs` but consumes `hugr-core` as pure data. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are all hosts.

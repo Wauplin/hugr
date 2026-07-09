@@ -14,8 +14,9 @@
 //!   a call.
 //! - Errors are answers (`status: Error`, exit 0 on the CLI) so callers branch
 //!   on data, not on exceptions.
-//! - `extra` is the narrow-waist escape hatch: agent-specific structure rides
-//!   there, never as new contract fields.
+//! - The user-facing payload rides in `Answer.response`; typed response
+//!   contracts can generate provider JSON Schema and cast the final JSON into a
+//!   Rust serde type before it is returned.
 
 mod agent;
 mod agent_tool;
@@ -26,7 +27,8 @@ mod scratch;
 mod store;
 
 pub use agent::{
-    Agent, AgentCard, AgentLimits, AskError, ModelTierCard, Pricing, TierPrice, ToolCard,
+    Agent, AgentCard, AgentLimits, AskError, ModelTierCard, Pricing, ResponseContract, TierPrice,
+    ToolCard,
 };
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
 pub use blobs::BlobError;

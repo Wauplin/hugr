@@ -7,6 +7,7 @@ members = [
     "crates/hugr-replay",
     "crates/hugr-agent",
     "crates/hugr-toolkit",
+    "crates/hugr-docs",
 ]
 
 # Crate layout (see docs/ARCHITECTURE.md §10): `hugr-core` is the pure, sans-IO
@@ -23,6 +24,7 @@ rust-version = "1.85"
 # Pure data (used by hugr-core too).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1"
 
 # Host-side (IO/runtime) deps — never used by hugr-core.
 hugr-core = { path = "crates/hugr-core" }

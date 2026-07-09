@@ -144,7 +144,7 @@ pub struct Answer {
     /// Outcome to branch on: [`STATUS_SUCCESS`] or [`STATUS_ERROR`].
     pub status: String,
     /// Structured response object. Hugr only requires this to be a JSON object;
-    /// a definition may provide a response schema to enforce a narrower shape.
+    /// a typed response contract may cast it into a narrower Rust type.
     pub response: Value,
     /// The **new** trace this run persisted (§19.2) — the anchor for
     /// follow-ups and forks.

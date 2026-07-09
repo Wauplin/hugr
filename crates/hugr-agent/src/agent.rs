@@ -31,7 +31,8 @@ use std::time::Instant;
 use hugr_core::{LogEntry, ModelSelector, Record, SamplingParams, ToolSchema};
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter};
 use hugr_replay::{BlobStore, Trace};
-use serde::{Deserialize, Serialize};
+use schemars::{JsonSchema, schema_for};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use crate::agent_tool::{AgentTool, AgentToolSpec};
@@ -82,9 +83,10 @@ pub struct Agent {
     /// trace-recorded usage (ARCHITECTURE §18.4). Missing tiers price at zero.
     pub pricing: Pricing,
     pub limits: AgentLimits,
-    /// Optional response JSON Schema. When set, the final model text must parse
-    /// as a JSON object and validate before it becomes `Answer.response`.
-    pub response_schema: Option<Value>,
+    /// Optional typed response contract. When set, the generated JSON Schema is
+    /// passed to the model provider and the final JSON is cast into the Rust
+    /// type before it becomes `Answer.response`.
+    pub response_contract: Option<ResponseContract>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities
     /// (ARCHITECTURE §20.5, ROADMAP T3.8). Registered fresh per ask so each
     /// invocation's child cost folds into this ask's `AnswerMeta`.
@@ -118,7 +120,7 @@ impl Agent {
             blob_store,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
-            response_schema: None,
+            response_contract: None,
             agent_tools: Vec::new(),
             next_scratch: Arc::new(AtomicU64::new(0)),
         }
@@ -237,6 +239,9 @@ impl Agent {
         if let Some(sampling) = &self.sampling {
             builder = builder.sampling(sampling.clone());
         }
+        if let Some(contract) = &self.response_contract {
+            builder = builder.model_request_extra(contract.request_extra());
+        }
         if let Some(clock) = &self.clock {
             builder = builder.clock(clock.clone());
         }
@@ -279,27 +284,52 @@ impl Agent {
         // parent's entries; this ask's meta must cover only the new turn.
         let baseline = engine.brain().state().log().len();
 
-        // Drive the turn, bounded by the wall-clock timeout when one is set. On
-        // elapse the turn future is dropped mid-flight; the recorded event
-        // prefix is self-consistent, so the persisted (partial) trace still
-        // replays. `session_end` then flushes the final checkpoint/render.
-        match self.limits.timeout_ms {
-            Some(ms) if ms > 0 => {
-                if tokio::time::timeout(
-                    std::time::Duration::from_millis(ms),
-                    engine.user_turn(ask.question.clone()),
-                )
-                .await
-                .is_err()
-                {
-                    limit_state.record_timeout(ms);
+        let max_response_attempts = self
+            .response_contract
+            .as_ref()
+            .map(|contract| contract.max_attempts)
+            .unwrap_or(1)
+            .max(1);
+        let mut response_result = None;
+        for attempt in 1..=max_response_attempts {
+            let question = if attempt == 1 {
+                ask.question.clone()
+            } else {
+                response_retry_prompt(response_result.as_ref().unwrap())
+            };
+            // Drive the turn, bounded by the wall-clock timeout when one is set.
+            // On elapse the turn future is dropped mid-flight; the recorded
+            // event prefix is self-consistent, so the persisted (partial) trace
+            // still replays. `session_end` later flushes the final checkpoint.
+            match self.limits.timeout_ms {
+                Some(ms) if ms > 0 => {
+                    if tokio::time::timeout(
+                        std::time::Duration::from_millis(ms),
+                        engine.user_turn(question),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        limit_state.record_timeout(ms);
+                    }
                 }
+                _ => engine.user_turn(question).await,
             }
-            _ => engine.user_turn(ask.question.clone()).await,
+            if limit_state.trip().is_some() {
+                break;
+            }
+            let parsed = final_response(
+                engine.brain().state().log(),
+                self.response_contract.as_ref(),
+            );
+            let should_retry = parsed.retryable && attempt < max_response_attempts;
+            response_result = Some(parsed);
+            if !should_retry {
+                break;
+            }
         }
         engine.session_end();
 
-        let log = engine.brain().state().log();
         // A limit trip supersedes the log-derived answer: it is an error answer
         // with a typed reason on `extra` (ROADMAP T3.1). Otherwise the final
         // model output is the answer (§18.1).
@@ -311,8 +341,13 @@ impl Agent {
                 trip.extra(),
             ),
             None => {
-                let (status, response) = final_response(log, self.response_schema.as_ref());
-                (status, response, Value::Null)
+                let response = response_result.unwrap_or_else(|| {
+                    final_response(
+                        engine.brain().state().log(),
+                        self.response_contract.as_ref(),
+                    )
+                });
+                (response.status, response.value, Value::Null)
             }
         };
 
@@ -492,6 +527,85 @@ impl AgentLimits {
     }
 }
 
+/// Typed response contract for one agent. The schema is sent to model
+/// providers as an opaque request knob; the parser only casts returned JSON
+/// into the declared Rust type, it does not perform independent JSON Schema
+/// validation.
+#[derive(Clone)]
+pub struct ResponseContract {
+    pub name: String,
+    pub schema: Value,
+    pub max_attempts: u8,
+    parse: Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>,
+}
+
+impl std::fmt::Debug for ResponseContract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResponseContract")
+            .field("name", &self.name)
+            .field("schema", &self.schema)
+            .field("max_attempts", &self.max_attempts)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ResponseContract {
+    pub fn from_type<T>(name: impl Into<String>) -> Self
+    where
+        T: DeserializeOwned + Serialize + JsonSchema + 'static,
+    {
+        let schema = serde_json::to_value(schema_for!(T)).expect("response schema serializes");
+        Self::with_parser(name, schema, |value| {
+            let typed: T = serde_json::from_value(value).map_err(|err| err.to_string())?;
+            serde_json::to_value(typed).map_err(|err| err.to_string())
+        })
+    }
+
+    pub fn from_schema(name: impl Into<String>, schema: Value) -> Self {
+        Self::with_parser(name, schema, |value| {
+            if value.is_object() {
+                Ok(value)
+            } else {
+                Err("final response JSON must be an object".to_string())
+            }
+        })
+    }
+
+    pub fn with_max_attempts(mut self, max_attempts: u8) -> Self {
+        self.max_attempts = max_attempts.max(1);
+        self
+    }
+
+    fn with_parser<F>(name: impl Into<String>, schema: Value, parse: F) -> Self
+    where
+        F: Fn(Value) -> Result<Value, String> + Send + Sync + 'static,
+    {
+        Self {
+            name: name.into(),
+            schema,
+            max_attempts: 3,
+            parse: Arc::new(parse),
+        }
+    }
+
+    fn request_extra(&self) -> Value {
+        json!({
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": self.name,
+                    "strict": true,
+                    "schema": self.schema,
+                },
+            },
+        })
+    }
+
+    fn cast(&self, value: Value) -> Result<Value, String> {
+        (self.parse)(value)
+    }
+}
+
 /// Per-tier token prices used by [`Agent`] cost accounting (ROADMAP T0.6).
 /// Values are USD per million tokens, matching provider price sheets. The
 /// computed answer cost is rounded to the nearest micro-USD.
@@ -587,10 +701,16 @@ impl AskError {
     }
 }
 
+struct FinalResponse {
+    status: String,
+    value: Value,
+    retryable: bool,
+}
+
 /// Extract the final response from the durable log: the last model output with
 /// no tool calls is the turn's answer. No text means the run failed before
 /// answering — an error *answer* (§18.1), with the terminal error surfaced.
-fn final_response(log: &[LogEntry], schema: Option<&Value>) -> (String, Value) {
+fn final_response(log: &[LogEntry], contract: Option<&ResponseContract>) -> FinalResponse {
     let final_text = log.iter().rev().find_map(|entry| match &entry.record {
         Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {
             Some(output.text.clone())
@@ -598,34 +718,38 @@ fn final_response(log: &[LogEntry], schema: Option<&Value>) -> (String, Value) {
         _ => None,
     });
     match final_text {
-        Some(text) => match parse_model_response(&text, schema) {
-            Ok(response) => (STATUS_SUCCESS.to_string(), response),
-            Err(error) => (
-                STATUS_ERROR.to_string(),
-                error_response(
+        Some(text) => match parse_model_response(&text, contract) {
+            Ok(response) => FinalResponse {
+                status: STATUS_SUCCESS.to_string(),
+                value: response,
+                retryable: false,
+            },
+            Err(error) => FinalResponse {
+                status: STATUS_ERROR.to_string(),
+                value: error_response(
                     format!("model response did not match the response contract: {error}"),
                     json!({ "raw": text }),
                 ),
-            ),
+                retryable: true,
+            },
         },
-        None => (
-            STATUS_ERROR.to_string(),
-            error_response(missing_final_answer_message(log), Value::Null),
-        ),
+        None => FinalResponse {
+            status: STATUS_ERROR.to_string(),
+            value: error_response(missing_final_answer_message(log), Value::Null),
+            retryable: false,
+        },
     }
 }
 
-fn parse_model_response(text: &str, schema: Option<&Value>) -> Result<Value, String> {
+fn parse_model_response(text: &str, contract: Option<&ResponseContract>) -> Result<Value, String> {
     let trimmed = strip_json_fence(text.trim());
     match serde_json::from_str::<Value>(trimmed) {
-        Ok(value) if value.is_object() => {
-            if let Some(schema) = schema {
-                validate_response_schema(schema, &value)?;
-            }
-            Ok(value)
-        }
+        Ok(value) if value.is_object() => match contract {
+            Some(contract) => contract.cast(value),
+            None => Ok(value),
+        },
         Ok(_) => Err("final response JSON must be an object".to_string()),
-        Err(_) if schema.is_none() => Ok(json!({ "text": text.trim() })),
+        Err(_) if contract.is_none() => Ok(json!({ "text": text.trim() })),
         Err(error) => Err(format!("final response is not valid JSON: {error}")),
     }
 }
@@ -651,18 +775,15 @@ fn error_response(message: impl Into<String>, extra: Value) -> Value {
     }
 }
 
-fn validate_response_schema(schema: &Value, value: &Value) -> Result<(), String> {
-    let validator =
-        jsonschema::validator_for(schema).map_err(|err| format!("schema is invalid: {err}"))?;
-    validator.validate(value).map_err(|err| {
-        let path = err.instance_path().to_string();
-        if path.is_empty() {
-            err.to_string()
-        } else {
-            format!("{err} at {path}")
-        }
-    })?;
-    Ok(())
+fn response_retry_prompt(last: &FinalResponse) -> String {
+    let error = last
+        .value
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("the previous response could not be parsed");
+    format!(
+        "Your previous response could not be accepted: {error}. Return only the structured response requested by the provider response schema."
+    )
 }
 
 fn missing_final_answer_message(log: &[LogEntry]) -> String {

@@ -1,12 +1,12 @@
 # hugr-docs
 
-`hugr-docs` is the checked-in reference documentation-retrieval agent. It is not a Rust crate; it is a Hugr definition folder at `crates/hugr-docs/definition` that `hugr-toolkit` can run directly or build into one standalone binary.
+`hugr-docs` is the checked-in reference documentation-retrieval agent. It is a Hugr definition folder at `crates/hugr-docs/definition` plus a tiny Rust crate that owns and registers the typed `DocsResponse` contract. The crate consumes `hugr-toolkit`'s shared surface; `hugr-toolkit` does not depend on `hugr-docs`.
 
 ## Usage
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...
-cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "What is the narrow-waist rule?" | jq
+cargo run -p hugr-docs -- ./docs "What is the narrow-waist rule?" | jq
 ```
 
 To build the standalone artifact:
@@ -24,9 +24,7 @@ The output is the standard Hugr `Answer` JSON:
 {
   "status": "success",
   "response": {
-    "response": {
-      "summary": "..."
-    },
+    "response": "...",
     "related_documents": ["docs/ARCHITECTURE.md"]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
@@ -43,7 +41,7 @@ The output is the standard Hugr `Answer` JSON:
 }
 ```
 
-The definition declares `[response] schema = "response.schema.json"`, so the binary parses the final model text as JSON and enforces the docs-specific shape before emitting the standard Hugr `Answer`. Hugr itself keeps one universal wire contract: `Answer.response` is a structured object.
+The definition declares `[response] rust_type = "hugr_docs::DocsResponse"` plus the crate path needed by `hugr build`, so the generated binary links the agent crate, derives provider JSON Schema from the Rust type, asks the model provider for that structured output, and casts the final JSON with serde before emitting the standard Hugr `Answer`. Hugr itself keeps one universal wire contract: `Answer.response` is a structured object.
 
 ## Runtime Args
 
@@ -59,7 +57,11 @@ env = "HUGR_DOCS_PATH"
 help = "Folder containing the documentation to search."
 
 [response]
-schema = "response.schema.json"
+rust_type = "hugr_docs::DocsResponse"
+crate_path = ".."
+crate_package = "hugr-docs"
+schema_name = "hugr_docs_response"
+max_attempts = 3
 ```
 
 The toolkit uses that block to generate the CLI argument and the MCP `ask` schema. For MCP, `docs_path` is an `ask` argument, so one long-running server can answer against different docs folders on different calls.

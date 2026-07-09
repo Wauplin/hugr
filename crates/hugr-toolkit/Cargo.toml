@@ -27,6 +27,7 @@ sqlite = []
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 thiserror = { workspace = true }
 # The manifest is TOML (ARCHITECTURE §20.1). `toml` gives us both a typed
 # `Deserialize` path and byte-offset error spans (`toml::de::Error::span`),

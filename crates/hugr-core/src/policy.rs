@@ -83,6 +83,8 @@ pub struct StaticPolicy {
     background: Vec<String>,
     params: SamplingParams,
     system: Option<String>,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    extra: Value,
     #[serde(default)]
     context_budget: TokenBudget,
 }
@@ -96,6 +98,7 @@ impl Default for StaticPolicy {
             background: Vec::new(),
             params: SamplingParams::default(),
             system: None,
+            extra: Value::Null,
             context_budget: TokenBudget::default(),
         }
     }
@@ -140,6 +143,12 @@ impl StaticPolicy {
     /// Set the system prompt prepended to every projected request.
     pub fn with_system_prompt(mut self, system: impl Into<String>) -> Self {
         self.system = Some(system.into());
+        self
+    }
+
+    /// Set provider-specific request extras applied to every model call.
+    pub fn with_extra(mut self, extra: Value) -> Self {
+        self.extra = extra;
         self
     }
 
@@ -320,6 +329,7 @@ impl TurnPolicy for StaticPolicy {
             self.tools.clone(),
             self.params.clone(),
         )
+        .with_extra(self.extra.clone())
     }
 
     fn needs_permission(&self, capability: &str) -> bool {

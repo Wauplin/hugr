@@ -14,9 +14,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hugr_agent::{Agent, Ask, Pricing, STATUS_SUCCESS, TraceId, TraceStore};
+use hugr_agent::{Agent, Ask, Pricing, ResponseContract, STATUS_SUCCESS, TraceId, TraceStore};
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// A scripted model: pops the next queued reply per call. Text-only replies
@@ -115,34 +117,30 @@ async fn fresh_ask_persists_a_root_trace() {
 }
 
 #[tokio::test]
-async fn response_schema_enforces_structured_final_output() {
+async fn typed_response_contract_retries_until_output_casts() {
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct TestResponse {
+        response: String,
+        related_documents: Vec<String>,
+    }
+
     let dir = tempdir();
     let store = TraceStore::new(dir.path());
     let mut agent = agent(
         store,
         vec![
-            "```json\n{\"response\":{\"summary\":\"Paris.\"},\"related_documents\":[\"guide.md\"]}\n```",
             "{\"answer\":\"Paris.\",\"related_documents\":[\"guide.md\"]}",
+            "```json\n{\"response\":\"Paris.\",\"related_documents\":[\"guide.md\"]}\n```",
         ],
     );
-    agent.response_schema = Some(json!({
-        "type": "object",
-        "required": ["response", "related_documents"],
-        "additionalProperties": false,
-        "properties": {
-            "response": { "type": "object" },
-            "related_documents": { "type": "array", "items": { "type": "string" } }
-        }
-    }));
+    agent.response_contract = Some(ResponseContract::from_type::<TestResponse>("test_response"));
 
-    let ok = agent.ask(Ask::new("capital?")).await.unwrap();
-    assert_eq!(ok.status, STATUS_SUCCESS);
-    assert_eq!(ok.response["response"]["summary"], "Paris.");
-    assert_eq!(ok.response["related_documents"], json!(["guide.md"]));
-
-    let bad = agent.ask(Ask::new("capital again?")).await.unwrap();
-    assert_eq!(bad.status, "error");
-    assert!(bad.response["error"].as_str().unwrap().contains("contract"));
+    let answer = agent.ask(Ask::new("capital?")).await.unwrap();
+    assert_eq!(answer.status, STATUS_SUCCESS);
+    assert_eq!(answer.response["response"], "Paris.");
+    assert_eq!(answer.response["related_documents"], json!(["guide.md"]));
+    assert_eq!(answer.metadata.model_calls, 2, "bad cast is retried once");
 }
 
 #[tokio::test]

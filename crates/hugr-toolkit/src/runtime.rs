@@ -19,12 +19,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_agent::{
-    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, Pricing, TraceStore,
-    depth_exceeded_resolver,
+    Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, Ask, Pricing, ResponseContract,
+    TraceStore, depth_exceeded_resolver,
 };
 use hugr_core::{ModelSelector, SamplingParams};
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
 use hugr_providers::OpenAiAdapter;
+use schemars::JsonSchema;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 
 use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
 use crate::tools::{self, ToolError};
@@ -72,6 +75,9 @@ pub enum RuntimeError {
     /// (missing or bad `artifact` path).
     #[error("wiring agent-as-tool grant `{name}`: {message}")]
     Agent { name: String, message: String },
+    /// Definition-level runtime wiring failed.
+    #[error("{message}")]
+    Definition { message: String },
 }
 
 /// Default recursion cap for agent-as-tool delegation (ARCHITECTURE §20.5,
@@ -85,11 +91,65 @@ pub const DEFAULT_MAX_AGENT_DEPTH: u32 = 3;
 /// child artifact (§20.5). Absent = [`DEFAULT_MAX_AGENT_DEPTH`].
 pub const AGENT_DEPTH_ENV: &str = "HUGR_AGENT_DEPTH";
 
+/// Runtime wiring supplied by an embedding agent crate or a generated build
+/// shim. This keeps `hugr-toolkit` generic: it can parse a manifest containing
+/// a Rust response type name, but only a process that links the agent crate can
+/// register the actual type.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeOptions {
+    response_contracts: std::collections::BTreeMap<String, ResponseContract>,
+}
+
+impl RuntimeOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_response_contract(
+        mut self,
+        rust_type: impl Into<String>,
+        contract: ResponseContract,
+    ) -> Self {
+        self.response_contracts.insert(rust_type.into(), contract);
+        self
+    }
+
+    pub fn with_response_type<T>(
+        self,
+        rust_type: impl Into<String>,
+        schema_name: impl Into<String>,
+    ) -> Self
+    where
+        T: DeserializeOwned + Serialize + JsonSchema + 'static,
+    {
+        self.with_response_contract(rust_type, ResponseContract::from_type::<T>(schema_name))
+    }
+
+    pub fn response_contract(&self, rust_type: &str) -> Option<ResponseContract> {
+        self.response_contracts.get(rust_type).cloned()
+    }
+
+    pub fn response_schema(&self, rust_type: &str) -> Option<Value> {
+        self.response_contracts
+            .get(rust_type)
+            .map(|contract| contract.schema.clone())
+    }
+}
+
 /// Assemble a [`Agent`] from a definition, collecting non-fatal build warnings
 /// (e.g. an external-tool grant that is not yet wired). Relative scopes resolve
 /// against the definition's `source_dir` (else the process cwd). This is the
 /// one assembly path (`hugr run`, the built binary, `--mcp-serve`, hugr-docs).
 pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), RuntimeError> {
+    build_agent_with_options(def, &RuntimeOptions::default()).await
+}
+
+/// Assemble an [`Agent`] with explicit runtime wiring supplied by an embedding
+/// crate or generated shim.
+pub async fn build_agent_with_options(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+) -> Result<(Agent, Vec<String>), RuntimeError> {
     let mut warnings = Vec::new();
     let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
@@ -154,7 +214,7 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
         agent.default_model = Some(ModelSelector::named(default.to_string()));
     }
     agent.pricing = pricing;
-    agent.response_schema = def.response_schema.clone();
+    agent.response_contract = response_contract(def, options)?;
 
     // System prompt (with template vars). A definition without SYSTEM.md gets a
     // minimal default so the agent still runs.
@@ -203,6 +263,33 @@ pub async fn build_agent(def: &AgentDefinition) -> Result<(Agent, Vec<String>), 
     }
 
     Ok((agent, warnings))
+}
+
+fn response_contract(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+) -> Result<Option<ResponseContract>, RuntimeError> {
+    let mut contract = if let Some(rust_type) = &def.response.rust_type {
+        Some(
+            options
+                .response_contract(rust_type)
+                .ok_or_else(|| RuntimeError::Definition {
+                    message: format!(
+                        "[response].rust_type `{rust_type}` is not registered in this runtime"
+                    ),
+                })?,
+        )
+    } else {
+        def.response_schema
+            .as_ref()
+            .map(|schema| ResponseContract::from_schema("agent_response", schema.clone()))
+    };
+    if let Some(contract) = contract.as_mut()
+        && let Some(max_attempts) = def.response.max_attempts
+    {
+        *contract = contract.clone().with_max_attempts(max_attempts);
+    }
+    Ok(contract)
 }
 
 /// Extract `command` (required) and `args` (optional string array) from an

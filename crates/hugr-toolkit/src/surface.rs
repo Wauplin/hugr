@@ -26,7 +26,7 @@ use serde_json::json;
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
-use crate::runtime::build_agent;
+use crate::runtime::{RuntimeOptions, build_agent_with_options};
 use crate::runtime_args::{RuntimeArgError, RuntimeValues, apply_runtime_values};
 
 /// The file inside a bundle that carries the manifest (used to resolve the
@@ -60,9 +60,18 @@ enum Mode {
 /// runs the requested operation, prints to stdout, and returns the process exit
 /// code. The ask path always returns 0.
 pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
+    run_cli_with_options(bundle_bytes, RuntimeOptions::default()).await
+}
+
+/// Entry point for a built agent binary that links agent-owned Rust response
+/// types. The surface remains universal; only the registry differs.
+pub async fn run_cli_with_options(bundle_bytes: &'static [u8], options: RuntimeOptions) -> i32 {
     let started = Instant::now();
     match prepare_definition(bundle_bytes) {
-        Ok(def) => run_definition_args(def, std::env::args_os().skip(1), started).await,
+        Ok(def) => {
+            run_definition_args_with_options(def, std::env::args_os().skip(1), started, options)
+                .await
+        }
         Err(err) => print_answer(&error_answer(err.to_string(), started), true),
     }
 }
@@ -74,6 +83,20 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    run_definition_args_with_options(base_def, argv, started, RuntimeOptions::default()).await
+}
+
+/// Run the universal surface with explicit runtime wiring.
+pub async fn run_definition_args_with_options<I, T>(
+    base_def: AgentDefinition,
+    argv: I,
+    started: Instant,
+    options: RuntimeOptions,
+) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     let args = parse_surface_args(&base_def, argv);
     let pretty = !args.json; // default pretty; --json forces compact
     let mut def = base_def.clone();
@@ -81,7 +104,7 @@ where
     // `--config` needs only the parsed manifest, not an assembled agent.
     if args.config {
         let _ = apply_runtime_values(&mut def, &args.runtime);
-        return print_json_or_die(&config_json(&def), pretty);
+        return print_json_or_die(&config_json_with_options(&def, &options), pretty);
     }
 
     let mode = if args.describe {
@@ -99,7 +122,7 @@ where
             eprintln!("error: {err}");
             return 1;
         }
-        return crate::mcp_serve::serve_definition(def).await;
+        return crate::mcp_serve::serve_definition_with_options(def, options).await;
     }
 
     let runtime_result = if mode == Mode::Ask {
@@ -112,7 +135,7 @@ where
     }
 
     // Assemble the agent. Warnings go to stderr.
-    let agent = match build_agent(&def).await {
+    let agent = match build_agent_with_options(&def, &options).await {
         Ok((agent, warnings)) => {
             for warning in &warnings {
                 eprintln!("warning: {warning}");
@@ -333,6 +356,20 @@ pub async fn run_ask(
 /// The `--config` view: the parsed manifest as JSON. The API key env *name*
 /// is shown, and whether it currently resolves — the secret value never is.
 pub fn config_json(def: &AgentDefinition) -> serde_json::Value {
+    config_json_with_options(def, &RuntimeOptions::default())
+}
+
+/// The `--config` view with a response-type registry available.
+pub fn config_json_with_options(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+) -> serde_json::Value {
+    let type_schema_loaded = def
+        .response
+        .rust_type
+        .as_deref()
+        .and_then(|rust_type| options.response_schema(rust_type))
+        .is_some();
     serde_json::json!({
         "agent": def.agent,
         "models": {
@@ -350,8 +387,13 @@ pub fn config_json(def: &AgentDefinition) -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "runtime": def.runtime,
         "response": {
+            "rust_type": def.response.rust_type,
+            "crate_path": def.response.crate_path,
+            "crate_package": def.response.crate_package,
+            "schema_name": def.response.schema_name,
             "schema": def.response.schema,
-            "schema_loaded": def.response_schema.is_some(),
+            "max_attempts": def.response.max_attempts,
+            "schema_loaded": def.response_schema.is_some() || type_schema_loaded,
         },
         "limits": def.limits,
         "scratchpad": def.scratchpad,
@@ -423,9 +465,17 @@ pub enum LoadError {
 /// the typed [`Agent`]. This is the whole "a binary/crate carrying a definition
 /// becomes a callable agent" path, reused by every generated surface.
 pub async fn load_agent(bundle_bytes: &[u8]) -> Result<LoadedAgent, LoadError> {
+    load_agent_with_options(bundle_bytes, &RuntimeOptions::default()).await
+}
+
+/// Unpack and assemble an embedded bundle with explicit runtime wiring.
+pub async fn load_agent_with_options(
+    bundle_bytes: &[u8],
+    options: &RuntimeOptions,
+) -> Result<LoadedAgent, LoadError> {
     let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
     let def = AgentDefinition::load(&home)?;
-    let (agent, warnings) = build_agent(&def).await?;
+    let (agent, warnings) = build_agent_with_options(&def, options).await?;
     Ok(LoadedAgent { agent, warnings })
 }
 
@@ -629,7 +679,7 @@ required = true
         assert!(home.join("hugr.toml").exists());
 
         let def = AgentDefinition::load(&home).unwrap();
-        let (agent, _) = build_agent(&def).await.unwrap();
+        let (agent, _) = crate::runtime::build_agent(&def).await.unwrap();
         let card = agent.describe();
         assert_eq!(card.name, "surfacedesc");
         let tools: Vec<_> = card.tools.iter().map(|t| t.name.as_str()).collect();

@@ -25,7 +25,11 @@ env = "HUGR_DOCS_PATH"
 help = "Folder containing the documentation to search."
 
 [response]
-schema = "response.schema.json"
+rust_type = "hugr_docs::DocsResponse"
+crate_path = ".."
+crate_package = "hugr-docs"
+schema_name = "hugr_docs_response"
+max_attempts = 3
 
 [traces]
 store = ".hugr-docs-traces"

@@ -62,13 +62,13 @@ crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore
 crates/hugr-toolkit/    # definitions (hugr.toml + SYSTEM.md), the tool library
                         #   (fs_read, http_fetch, sqlite_query), and the `hugr`
                         #   CLI: new / run / build / traces / replay / verify
-crates/hugr-docs/       # the reference subagent (docs Q&A): definition folder only,
-                        #   run/buildable by hugr-toolkit
+crates/hugr-docs/       # the reference subagent (docs Q&A): definition folder +
+                        #   typed response contract using hugr-toolkit
 ```
 
 `hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.
 
-Subagent-layer conventions (ARCHITECTURE Part I): the `Ask`/`Answer` contract is the one-way door — `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), the user-facing payload rides `Answer.response` as a JSON object, and optional definition schemas enforce agent-specific response shapes. Traces are immutable; a resumed ask writes a **new** trace with `depends_on` set. Tools are granted in the manifest and jailed to their declared scope — sandbox-by-registration, so never register a capability the manifest doesn't grant. A built Hugr agent is itself grantable as a tool (`[tools.agent.<name>]`, subprocess over the CLI JSON contract) — delegation never widens privileges and the child's cost folds into the caller's `AnswerMeta`. The tool library is exec-free (the planned sandboxed `code_exec` is the only future exception) — never add a `shell` to the library. MCP (`[tools.mcp.<name>]`) is the **only** external-process tool escape hatch.
+Subagent-layer conventions (ARCHITECTURE Part I): the `Ask`/`Answer` contract is the one-way door — `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), the user-facing payload rides `Answer.response` as a JSON object, and typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`. Traces are immutable; a resumed ask writes a **new** trace with `depends_on` set. Tools are granted in the manifest and jailed to their declared scope — sandbox-by-registration, so never register a capability the manifest doesn't grant. A built Hugr agent is itself grantable as a tool (`[tools.agent.<name>]`, subprocess over the CLI JSON contract) — delegation never widens privileges and the child's cost folds into the caller's `AnswerMeta`. The tool library is exec-free (the planned sandboxed `code_exec` is the only future exception) — never add a `shell` to the library. MCP (`[tools.mcp.<name>]`) is the **only** external-process tool escape hatch.
 
 When extending the host: capabilities are uniform (no privileged built-ins); a model call is "an effect the host provides" registered like a capability; transport errors (retries, 429s) are the adapter's job, semantic errors route back to the model as tool results.
 

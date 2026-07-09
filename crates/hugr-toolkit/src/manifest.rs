@@ -12,7 +12,7 @@
 //!
 //! The typed shape mirrors the pieces an agent runtime declares (system prompt,
 //! model tiers + pricing, granted tools, limits, runtime arguments, response
-//! schema); T1.3 (`hugr run`) assembles a `hugr-agent` runtime from it.
+//! contract); T1.3 (`hugr run`) assembles a `hugr-agent` runtime from it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,7 +50,8 @@ pub struct AgentDefinition {
     pub runtime: RuntimeConfig,
     /// Optional response contract (`[response]`).
     pub response: ResponseConfig,
-    /// Parsed JSON Schema loaded from [`ResponseConfig::schema`], if present.
+    /// JSON Schema loaded from a schema file. Rust response types are resolved
+    /// by the runtime registry because the toolkit must not depend on agents.
     pub response_schema: Option<serde_json::Value>,
     /// The `SYSTEM.md` system prompt, if present beside the manifest.
     pub system_prompt: Option<String>,
@@ -197,14 +198,34 @@ pub struct RuntimeArg {
     pub flag: Option<String>,
 }
 
-/// Optional response-shape config. Hugr itself only requires `Answer.response`
-/// to be an object; this schema lets a definition enforce a narrower shape.
+/// Optional response-shape config. A definition can point to a Rust response
+/// type known to the runtime; the runtime derives JSON Schema from that type
+/// and casts model output into it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResponseConfig {
-    /// Path to a JSON Schema file, relative to the definition folder.
+    /// Rust response type used by the runtime, e.g. `hugr_docs::DocsResponse`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_type: Option<String>,
+    /// Path to the crate that defines `rust_type`, relative to the definition
+    /// folder. `hugr build` uses this to link the generated standalone shim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crate_path: Option<String>,
+    /// Cargo package name for `crate_path` when it differs from the Rust crate
+    /// name used in `rust_type` (for example package `hugr-docs`, crate
+    /// `hugr_docs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crate_package: Option<String>,
+    /// Provider response-format name. Defaults to a sanitized form of
+    /// `rust_type` when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_name: Option<String>,
+    /// Legacy path to a JSON Schema file, relative to the definition folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    /// Maximum model turns used to repair an unparsable/uncastable response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u8>,
 }
 
 /// Failure to load or parse a definition. Run failures are *answers* (§18.1);
@@ -265,6 +286,13 @@ impl AgentDefinition {
                     source,
                 });
             }
+        }
+
+        if def.response.rust_type.is_some() && def.response.schema.is_some() {
+            return Err(ManifestError::Validate {
+                path: manifest_path,
+                message: "[response] must use either `rust_type` or `schema`, not both".to_string(),
+            });
         }
 
         if let Some(schema) = &def.response.schema {
@@ -790,17 +818,56 @@ help = "Docs folder."
     }
 
     #[test]
-    fn response_schema_config_parses() {
+    fn response_rust_type_config_parses() {
         let src = r#"
 [agent]
 name = "docs"
 [models.medium]
 model = "m"
 [response]
-schema = "response.schema.json"
+rust_type = "hugr_docs::DocsResponse"
+crate_path = ".."
+crate_package = "hugr-docs"
+schema_name = "hugr_docs_response"
+max_attempts = 3
 "#;
         let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
-        assert_eq!(def.response.schema.as_deref(), Some("response.schema.json"));
+        assert_eq!(
+            def.response.rust_type.as_deref(),
+            Some("hugr_docs::DocsResponse")
+        );
+        assert_eq!(def.response.crate_path.as_deref(), Some(".."));
+        assert_eq!(def.response.crate_package.as_deref(), Some("hugr-docs"));
+        assert_eq!(
+            def.response.schema_name.as_deref(),
+            Some("hugr_docs_response")
+        );
+        assert_eq!(def.response.max_attempts, Some(3));
+        assert!(def.response_schema.is_none());
+    }
+
+    #[test]
+    fn response_rust_type_does_not_resolve_during_manifest_load() {
+        let dir = tempdir();
+        std::fs::write(
+            dir.path().join("hugr.toml"),
+            r#"
+[agent]
+name = "docs"
+[models.medium]
+model = "m"
+[response]
+rust_type = "hugr_docs::DocsResponse"
+crate_path = ".."
+"#,
+        )
+        .unwrap();
+
+        let def = AgentDefinition::load(dir.path()).unwrap();
+        assert_eq!(
+            def.response.rust_type.as_deref(),
+            Some("hugr_docs::DocsResponse")
+        );
         assert!(def.response_schema.is_none());
     }
 
@@ -850,8 +917,10 @@ schema = "schemas/response.json"
     }
 
     fn tempdir() -> TempDir {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let path =
-            std::env::temp_dir().join(format!("hugr-toolkit-manifest-{}", std::process::id()));
+            std::env::temp_dir().join(format!("hugr-toolkit-manifest-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         TempDir { path }

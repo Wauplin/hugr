@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncWriteExt, BufReader};
 
 use crate::manifest::AgentDefinition;
-use crate::runtime::build_agent;
+use crate::runtime::{RuntimeOptions, build_agent_with_options};
 use crate::runtime_args::{RuntimeValues, apply_runtime_values};
 
 /// The protocol version we advertise when the client doesn't pin one.
@@ -38,7 +38,16 @@ pub async fn serve(agent: &Agent, card: &AgentCard) -> i32 {
 /// how a single docs binary can narrow its `fs_read` jail to a different folder
 /// on each invocation.
 pub async fn serve_definition(def: AgentDefinition) -> i32 {
-    serve_with(ServeMode::Definition { def: Box::new(def) }).await
+    serve_definition_with_options(def, RuntimeOptions::default()).await
+}
+
+/// Run the stdio MCP server against a definition plus explicit runtime wiring.
+pub async fn serve_definition_with_options(def: AgentDefinition, options: RuntimeOptions) -> i32 {
+    serve_with(ServeMode::Definition {
+        def: Box::new(def),
+        options: Box::new(options),
+    })
+    .await
 }
 
 enum ServeMode<'a> {
@@ -48,6 +57,7 @@ enum ServeMode<'a> {
     },
     Definition {
         def: Box<AgentDefinition>,
+        options: Box<RuntimeOptions>,
     },
 }
 
@@ -84,7 +94,9 @@ async fn serve_with(mode: ServeMode<'_>) -> i32 {
 async fn handle_message_for(mode: &ServeMode<'_>, message: &Value) -> Option<Value> {
     match mode {
         ServeMode::Agent { agent, card } => handle_message(agent, card, message).await,
-        ServeMode::Definition { def } => handle_definition_message(def, message).await,
+        ServeMode::Definition { def, options } => {
+            handle_definition_message(def, options, message).await
+        }
     }
 }
 
@@ -116,7 +128,11 @@ pub(crate) async fn handle_message(
     Some(response)
 }
 
-async fn handle_definition_message(def: &AgentDefinition, message: &Value) -> Option<Value> {
+async fn handle_definition_message(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+    message: &Value,
+) -> Option<Value> {
     let id = message.get("id").cloned()?;
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -137,7 +153,7 @@ async fn handle_definition_message(def: &AgentDefinition, message: &Value) -> Op
         ),
         "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema(Some(def))] })),
         "ping" => ok(&id, json!({})),
-        "tools/call" => match tools_call_definition(def, params).await {
+        "tools/call" => match tools_call_definition(def, options, params).await {
             Ok(result) => ok(&id, result),
             Err(err) => rpc_error(&id, -32602, &err),
         },
@@ -189,7 +205,11 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
     }))
 }
 
-async fn tools_call_definition(def: &AgentDefinition, params: Value) -> Result<Value, String> {
+async fn tools_call_definition(
+    def: &AgentDefinition,
+    options: &RuntimeOptions,
+    params: Value,
+) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     if name != "ask" {
         return Err(format!("unknown tool: {name}"));
@@ -200,7 +220,9 @@ async fn tools_call_definition(def: &AgentDefinition, params: Value) -> Result<V
     let runtime = runtime_values_from_mcp(def, &args.runtime)?;
     let mut def = def.clone();
     apply_runtime_values(&mut def, &runtime).map_err(|e| e.to_string())?;
-    let (agent, warnings) = build_agent(&def).await.map_err(|e| e.to_string())?;
+    let (agent, warnings) = build_agent_with_options(&def, options)
+        .await
+        .map_err(|e| e.to_string())?;
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
@@ -228,6 +250,9 @@ fn answer_text(response: &Value) -> String {
         return text.to_string();
     }
     if let Some(value) = response.get("response") {
+        if let Some(text) = value.as_str() {
+            return text.to_string();
+        }
         if let Some(summary) = value.get("summary").and_then(Value::as_str) {
             return summary.to_string();
         }

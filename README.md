@@ -10,7 +10,7 @@ A **subagent** is, at its essence, a system prompt plus a set of tools with decl
 - **Token-efficient by design.** A handful of domain tools and a focused prompt, not fifty generic ones. Small agents are cheaper, faster, and more reliable — and an orchestrator pays one tool call to use them.
 - **Agents compose.** A built Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and it's called like any capability — delegation never widens privileges, and the child's cost folds into the caller's metadata.
 
-The reference agent, [`hugr-docs`](crates/hugr-docs/), is a checked-in docs-Q&A definition folder run and built by `hugr-toolkit`.
+The reference agent, [`hugr-docs`](crates/hugr-docs/), is a checked-in docs-Q&A definition folder plus a tiny Rust response-contract crate. It consumes `hugr-toolkit`; `hugr-toolkit` does not depend on it.
 
 There are exactly two docs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (design, architecture, threat model — the spec) and [`docs/ROADMAP.md`](docs/ROADMAP.md) (progress log + work plan).
 
@@ -94,7 +94,7 @@ crates/
   hugr-toolkit/       # definitions (hugr.toml + SYSTEM.md), the tool library,
                       #   and the `hugr` CLI: new/run/build/traces/replay/verify.
   hugr-docs/          # the reference subagent (docs Q&A): definition folder
-                      #   only; run/build it with hugr-toolkit.
+                      #   plus typed response contract.
 ```
 
 ## The reference subagent: `hugr-docs`
@@ -103,16 +103,14 @@ One folder in, one question in, one JSON response out — with cost metadata. No
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
-cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "What is the narrow-waist rule?" | jq
+cargo run -p hugr-docs -- ./docs "What is the narrow-waist rule?" | jq
 ```
 
 ```json
 {
   "status": "success",
   "response": {
-    "response": {
-      "summary": "The narrow-waist rule is ..."
-    },
+    "response": "The narrow-waist rule is ...",
     "related_documents": ["docs/ARCHITECTURE.md"]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
@@ -120,7 +118,7 @@ cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "
 }
 ```
 
-The docs root is runtime config, not a compiled-in scope: `hugr run crates/hugr-docs/definition ./docs "..."` and `hugr run crates/hugr-docs/definition ./other-docs "..."` use the same definition with different read jails. Build it with `hugr build crates/hugr-docs/definition`; Python and other languages consume the built binary via subprocess or `--mcp-serve`.
+The docs root is runtime config, not a compiled-in scope: `cargo run -p hugr-docs -- ./docs "..."` and `cargo run -p hugr-docs -- ./other-docs "..."` use the same definition with different read jails. Build it with `hugr build crates/hugr-docs/definition`; the generated standalone shim links the `hugr-docs` crate declared by `[response].crate_path`, then Python and other languages consume the built binary via subprocess or `--mcp-serve`.
 
 ## Building & testing
 
