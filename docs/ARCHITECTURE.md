@@ -59,7 +59,7 @@ my-agent/
 ```
 
 - `hugr new <name> [--template docs|sqlite|blank]` scaffolds a working definition folder.
-- `hugr run <agent-dir> "question" [--trace <id>]` interprets the definition directly — the development loop. No Rust written, no compilation of the agent.
+- `hugr run <agent-dir> "question" [--trace <id>]` is the development loop. Untyped definitions are interpreted directly; definitions that declare a Rust response type compile and reuse a cached dev shim that links the agent crate, then run the same generated surface as the built binary.
 - `hugr build <agent-dir>` embeds the definition into a **single standalone binary** wrapping the shared runtime. Building requires a Rust toolchain; running the artifact requires nothing.
 - `hugr traces <agent-dir>` lists the trace lineage tree; `hugr replay` / `hugr verify` point the replay machinery at a stored trace.
 
@@ -157,7 +157,7 @@ max_cost_micro_usd = 50000
 timeout_s = 120
 ```
 
-`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].rust_type` names a Rust response type registered by the agent crate; `[response].crate_path` tells `hugr build` which crate to link into the generated standalone shim, so the toolkit never depends on agent examples. The built binary derives JSON Schema from that type, passes it to the model provider, and casts final JSON with `serde`. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
+`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. `[response].rust_type` names a Rust response type registered by the agent crate; `[response].crate_path` tells `hugr run`/`hugr build` which crate to link into the generated shim, so the toolkit never depends on agent examples. The generated surface derives JSON Schema from that type, passes it to the model provider, and casts final JSON with `serde`. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
 
 ### 7. The tool library
 

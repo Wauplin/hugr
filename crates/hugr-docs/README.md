@@ -1,12 +1,12 @@
 # hugr-docs
 
-`hugr-docs` is the checked-in reference documentation-retrieval agent. It is a Hugr definition folder at `crates/hugr-docs/definition` plus a tiny Rust crate that owns and registers the typed `DocsResponse` contract. The crate consumes `hugr-toolkit`'s shared surface; `hugr-toolkit` does not depend on `hugr-docs`.
+`hugr-docs` is the checked-in reference documentation-retrieval agent. It is a Hugr definition folder at `crates/hugr-docs/definition` plus a tiny Rust crate that owns and registers the typed `DocsResponse` contract. The crate consumes `hugr-toolkit`'s shared surface; `hugr-toolkit` does not depend on `hugr-docs`. Generic `hugr run` works by compiling a cached dev shim that links this crate, matching the built-binary path.
 
 ## Usage
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...
-cargo run -p hugr-docs -- ./docs "What is the narrow-waist rule?" | jq
+cargo run -p hugr-toolkit --bin hugr -- run crates/hugr-docs/definition ./docs "What is the narrow-waist rule?" | jq
 ```
 
 To build the standalone artifact:

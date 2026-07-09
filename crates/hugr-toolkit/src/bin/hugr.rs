@@ -6,7 +6,8 @@
 //! stdout, diagnostics to stderr, and the process always exits 0 — run failures
 //! (and even a bad manifest) come back as `status: "error"` answers.
 
-use std::path::PathBuf;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
@@ -282,7 +283,77 @@ async fn run(args: RunArgs) {
             return;
         }
     };
+    if def.response.rust_type.is_some() {
+        run_typed_definition(&args.agent_dir, &def, &args.args, started, pretty);
+        return;
+    }
     // The same generated surface as the built binary (ARCHITECTURE §21.1),
     // including definition-specific runtime arguments.
     run_definition_args(def, args.args, started).await;
+}
+
+/// Generic `hugr run` cannot link arbitrary agent crates into the already-built
+/// toolkit binary. For typed response definitions, run the same generated shim
+/// as `hugr build` and point its home at the source definition so dev traces
+/// stay in the expected folder.
+fn run_typed_definition(
+    agent_dir: &Path,
+    def: &AgentDefinition,
+    argv: &[String],
+    started: Instant,
+    pretty: bool,
+) {
+    let out_dir = typed_run_out_dir(agent_dir, &def.agent.name);
+    let opts = BuildOptions {
+        out_dir,
+        release: false,
+    };
+    let outcome = match run_build(def, &opts) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            print_answer(&error_answer(err.to_string(), started), pretty);
+            return;
+        }
+    };
+    let home = agent_dir
+        .canonicalize()
+        .unwrap_or_else(|_| agent_dir.to_path_buf());
+    let status = std::process::Command::new(&outcome.binary)
+        .args(argv)
+        .env("HUGR_AGENT_HOME", home)
+        .status();
+    if let Err(err) = status {
+        print_answer(
+            &error_answer(
+                format!(
+                    "running typed response shim {}: {err}",
+                    outcome.binary.display()
+                ),
+                started,
+            ),
+            pretty,
+        );
+    }
+}
+
+fn typed_run_out_dir(agent_dir: &Path, agent_name: &str) -> PathBuf {
+    let key = agent_dir
+        .canonicalize()
+        .unwrap_or_else(|_| agent_dir.to_path_buf());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    let hash = hasher.finish();
+    let safe_name: String = agent_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    std::env::temp_dir()
+        .join("hugr-run")
+        .join(format!("{safe_name}-{hash:016x}"))
 }
