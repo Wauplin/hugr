@@ -3,12 +3,20 @@
 - Have a hugr subagent that reads all traces from another agent and tries to find patterns that could be defined as other skills / tools => used auto improves the initial subagent (lower prio). Goes with the feedback feature as well.
 - let's have a "new_ideas.md" file in which we can drop ideas as unstructured text. Let's update AGENTS.md so codex/claude can also add their -short- ideas while implementing to I can get a look at them and later add them to the roadmap
 - Detailed analytics (cost per request, cost per tool/subagent -never nested-, tokens in/out per tier, nb calls, etc.)
-- Hugr on the Hub:
-  - Store traces in buckets
-  - Run agents in Jobs / Sandbox
-  - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
 - Shared blobs between agents => make sure no local copy (can be huge in case of e.g a dataset)
 - Define cron job for an agent (I.e. a prompt + a cron formula)
 - Scratchpad, memory, traces, etc. For now we assume all of this is a normal local filesystem. But we must be able to swap different backends. Filesystem is an obvious backend. But can also be a postgre SQL db. Can be a local storage (if run in a browser). Can be anything able to manage data.
-- default template for hugr new should not be docs specific (currently leaning towards hugr-docs)
-- skill for hugr "how to build your own agent" (hugr must be agent-first)
+- have a built-in and configurable compaction/"forget" mechanisms. Currently we have a POC in hugr-wasm for the Chrome extension but it's not entirely satisfying and not built-in. Make sure the configuration stays flexible and easy to use. 
+- let's cleanup the codebase. There is A LOT of comments in the code and most of them can just be removed. Let's remove all references to other docs, all "how it works" comments, anything that just describe what's going on when the code is already self-explanatory. When something is very hacky/specific then it's fine to have comments but it shouldn't be the default.
+- hugr-docs and hugr-weather (the weather template) should live in an `examples/` folder completely separated from the other crates. They are not part of the library/framework, but examples of how to use them
+- hugr-wasm must be split. The part that is generic should remain as a crate in the library. The part specific to the extension we've made and the extension itself should also be moved to `examples/` (and renamed). The goal is to make it easy to build other chrome extensions with different layouts, policies, tooling, etc. than what we did. Anything generic/reusable => framework, anything specific => example.
+- an exposed Python API (see PYTHON_RUNTIME_API_PLAN.md, might be outdated). The biggest goal is to make it possible to define Agents in Python, define their capabilities/tools in Python code, and run everything with hugr-core. Ideally I would make it async (e.g. `async for event in Agent.run(): yield event`), and make all the events accessible. Compaction, hooks, tools, etc. should be accessible and configurable from Python. I want things to be correctly typed (not necessarily validated with Pydantic, but at least typed with typeddicts or dataclasses). 
+- exactly the same but in TypeScript (not just surfacing a binary, but really all the Agent definition)
+- multiple tutorials "how to build your first agent CLI", "how to build your first Chrome extension, "how to build your first agent binary and surface it in Python", "how to build my first agent entirely in Python?", "how to build my first agent entirely in TS?" etc. All of them should be didactic and nice to read.
+- skills for hugr "how to build agents" (hugr must be agent-first). Might contain multiple commands, everything related to implementation, building, dev tools, packaging, configuration, etc. Skills per sub-part as well (Python, chrome extension, Typescript, etc.)
+- traces should by default be stored in ~/.hugr/<agent name>/traces/... (i.e. `~/.hugr/hugr-docs/traces`). No need to configure it per-agent (of course it can be overwritten but let's not do it in examples, documentation, hugr-docs, etc.)
+- (at some point - not for now) have a Android surface
+- (at some point) Hugr on the Hub:
+  - Store traces in buckets
+  - Run agents in Jobs / Sandbox
+  - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
