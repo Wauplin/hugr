@@ -1,0 +1,20 @@
+[agent]
+name = "hugr-wasm"
+version = "0.0.2"
+description = "AI-powered Chrome extension for general-purpose browser navigation."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGR_WASM_API_KEY"
+default = "default"
+
+[models.default]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 0.0
+output_usd_per_m_tokens = 0.0
+
+[limits]
+max_model_calls = 20
+max_cost_micro_usd = 50000
+timeout_s = 120
+

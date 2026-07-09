@@ -8,6 +8,7 @@ members = [
     "crates/hugr-agent",
     "crates/hugr-toolkit",
     "crates/hugr-docs",
+    "crates/hugr-wasm",
 ]
 
 # Crate layout (see ARCHITECTURE.md §10): `hugr-core` is the pure, sans-IO
@@ -44,6 +45,9 @@ clap = { version = "4", features = ["derive", "env"] }
 sha2 = "0.10"
 # base64 for inline blob transport on the Ask/Answer contract (host-side; §18.3).
 base64 = "0.22"
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
+js-sys = "0.3.103"
 
 # Release profile leaning toward the "tiny footprint" goal (ARCHITECTURE §11).
 # NOTE: `panic = "abort"` is intentionally NOT set here — it conflicts with the

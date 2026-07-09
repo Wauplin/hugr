@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>hugr-wasm</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="topbar">
+          <h1>hugr-wasm</h1>
+          <div class="top-actions">
+            <button id="new-chat" class="icon-button" type="button" title="New chat" aria-label="New chat">＋</button>
+            <button id="interrupt" class="icon-button danger-button" type="button" title="Interrupt run" aria-label="Interrupt run" disabled>■</button>
+          </div>
+        </div>
+        <nav>
+          <button data-view="ask" class="active">Ask</button>
+          <button data-view="settings">Settings</button>
+          <button data-view="sessions">Sessions</button>
+          <button data-view="files">Files</button>
+        </nav>
+      </header>
+      <section id="view-ask" class="view active">
+        <div id="status" class="status idle">Idle</div>
+        <div id="chat" class="chat"></div>
+        <div id="events" class="events"></div>
+        <form id="composer" class="composer">
+          <textarea id="question" rows="3" placeholder="Ask hugr-wasm to use the browser"></textarea>
+          <button id="ask" type="submit">Send</button>
+        </form>
+      </section>
+      <section id="view-settings" class="view">
+        <label>API key <input id="api-key" type="password" autocomplete="off"></label>
+        <label>Base URL <input id="base-url" type="url"></label>
+        <label>Model <input id="model" type="text"></label>
+        <button id="save-settings">Save</button>
+      </section>
+      <section id="view-sessions" class="view">
+        <div class="session-actions">
+          <button id="download-session" type="button">Download Selected</button>
+          <button id="download-sessions" type="button">Download All</button>
+        </div>
+        <div class="split">
+          <ul id="sessions" class="sessions"></ul>
+          <article id="session-detail" class="session-detail"></article>
+        </div>
+      </section>
+      <section id="view-files" class="view">
+        <div class="session-actions">
+          <button id="download-files-metadata" type="button">Download Metadata</button>
+        </div>
+        <ul id="files"></ul>
+      </section>
+    </main>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>
