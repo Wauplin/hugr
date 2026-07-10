@@ -76,7 +76,7 @@ Do these first: they move files around, and every later phase touches the moved 
 - Docs: ARCHITECTURE §9 + §23 (browser packaging), AGENTS.md layout, README crate layout.
 - Acceptance: extension builds and runs from `examples/chrome-extension`; `cargo check -p hugr-wasm` clean natively and for wasm32; a second minimal browser host (a plain web page in the tutorial, 4.2) can drive the same package.
 
-### 0.4 `[ ]` Comment cleanup sweep (idea 10) — M
+### 0.4 `[x]` Comment cleanup sweep (idea 10) — M
 
 - Why: ~2,600 comment lines across crates (hugr-replay 39%, hugr-core 24%, hugr-agent 23%, hugr-host 24% of src lines). Most restate what the code shows, cite doc sections, or narrate "how it works".
 - Rules for the sweep (add these to AGENTS.md conventions, replacing the current "Reference design sections in comments as `ARCHITECTURE §X`" rule, which idea 10 explicitly reverses):
@@ -87,7 +87,7 @@ Do these first: they move files around, and every later phase touches the moved 
 - Docs: update AGENTS.md conventions (comment policy); ARCHITECTURE untouched (it keeps the rationale that comments used to duplicate — that's the point).
 - Acceptance: comment-line count reduced by well over half per crate; every kept comment states something the code cannot.
 
-### 0.5 `[ ]` new_ideas.md workflow polish (idea 4) — S
+### 0.5 `[x]` new_ideas.md workflow polish (idea 4) — S
 
 - Today: `new_ideas.md` exists and AGENTS.md already ends with "Drop short raw ideas into `new_ideas.md`" — the idea is mostly done.
 - Steps: expand the AGENTS.md convention to what idea 4 actually asks: coding agents (Claude/Codex) should append *short* one-line ideas they get **while implementing** (not designs, not TODO lists), so the owner can review and promote them to `plan.md`; add "when an idea is promoted into `plan.md`, remove it from `new_ideas.md`"; mention `plan.md` as the structured roadmap in AGENTS.md.
