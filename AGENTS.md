@@ -79,6 +79,8 @@ examples/hugr-insights/ # offline self-improvement agent: mines another agent's
                         #   traces + feedback via traces_read and reports suggestions
 examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   side-panel UI, MV3 manifest (vendors the generic JS)
+.agents/skills/          # concise coding-agent workflows for building Hugr agents,
+                        #   language/browser surfaces, and trace debugging
 ```
 
 `hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.
@@ -101,7 +103,7 @@ hugr cron <agent-dir>       # run configured [cron.<name>] recurring asks
 
 ## Conventions
 
-- **Keep the docs in sync — it's part of "done".** After completing a task update `ARCHITECTURE.md` if behavior changed. A task isn't finished until the docs match reality.
+- **Keep the docs and agent skills in sync — it's part of "done".** After completing a task update `ARCHITECTURE.md` if behavior changed and any tutorial that demonstrates it. A manifest, tool, surface, packaging, or trace-workflow change is not finished until the relevant `.agents/skills/*/SKILL.md` cheat sheet matches reality.
 - **Prefer deletion over abstraction.** One way to do each thing; if two mechanisms do the same job, keep the one the live stack uses and delete the other.
 - **Markdown is single-line.** One physical line per paragraph or bullet — never hard-wrap prose; rely on soft-wrap. (Fenced code blocks and table rows are exempt.)
 - **Comments state what the code cannot.** No references to other docs (`ARCHITECTURE §X` etc.), no "how it works" narration, no comments restating the signature or the next line, no section banners. A comment is justified only for a non-obvious constraint, failure mode, or safety/jail invariant; public items keep one concise doc line stating the contract.

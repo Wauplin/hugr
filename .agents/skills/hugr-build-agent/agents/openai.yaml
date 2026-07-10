@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hugr Build Agent"
+  short_description: "Scaffold and ship a Hugr subagent"
+  default_prompt: "Use $hugr-build-agent to scaffold, configure, test, and package a Hugr subagent."

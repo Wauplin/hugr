@@ -292,7 +292,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Steps: write 01/02/04 immediately; others gated on their features; add a CI job that extracts and runs the shell blocks from 01 (doctest-style smoke) where secrets aren't needed.
 - Docs: README links the tutorial index; AGENTS.md "one doc" rule amended: ARCHITECTURE stays the *spec*; tutorials are teaching material and must not restate spec (link instead).
 
-### 4.3 `[ ]` Skills for building Hugr agents (idea 16) — M
+### 4.3 `[x]` Skills for building Hugr agents (idea 16) — M
 
 - Why: hugr must be agent-first — a coding agent dropped into any repo should be able to build a Hugr subagent without reading the whole spec. Agent skills are the delivery vehicle.
 - Design: in-repo `.agents/skills/` (checked in, so contributors' agents get them; installable elsewhere by copy):
