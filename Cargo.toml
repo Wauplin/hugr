@@ -9,6 +9,7 @@ members = [
     "crates/hugr-toolkit",
     "crates/hugr-wasm",
     "examples/hugr-docs",
+    "examples/hugr-insights",
     "examples/hugr-weather",
 ]
 # The PyO3 embedding crate needs a Python toolchain; it builds via maturin

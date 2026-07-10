@@ -517,6 +517,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hugr-insights"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "hugr-providers"
 version = "0.0.2"
 dependencies = [

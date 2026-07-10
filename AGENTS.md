@@ -75,6 +75,8 @@ examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml +
 examples/hugr-weather/  # the self-contained beginner example; also the source of
                         #   the `hugr new --template weather` scaffold (embedded
                         #   at compile time, name substituted)
+examples/hugr-insights/ # offline self-improvement agent: mines another agent's
+                        #   traces + feedback via traces_read and reports suggestions
 examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   side-panel UI, MV3 manifest (vendors the generic JS)
 ```

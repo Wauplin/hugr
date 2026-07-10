@@ -5,6 +5,7 @@
 //! [`build_library_grant`] turns one `ToolKind::Library` [`ToolGrant`] into the concrete capabilities it registers, resolving relative scope paths against the agent crate folder (`base_dir`). External-tool grants (MCP / agent) are handled elsewhere.
 
 mod fs_read;
+mod traces_read;
 mod web_fetch;
 
 use std::path::Path;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use hugr_host::Capability;
 
 pub use fs_read::FsRoot;
+pub use traces_read::TracesRoot;
 pub use web_fetch::WebFetch;
 
 use crate::manifest::{ToolGrant, ToolKind};
@@ -60,6 +62,17 @@ pub const CATALOG: &[LibraryToolSpec] = &[
         privilege: "memory",
         tools: &["memory_read", "memory_write", "memory_list"],
         summary: "Agent-wide durable memory directory (read/write/list).",
+    },
+    LibraryToolSpec {
+        id: "traces_read",
+        privilege: "read_only",
+        tools: &[
+            "trace_list",
+            "trace_ops",
+            "trace_transcript",
+            "feedback_list",
+        ],
+        summary: "Root-jailed read-only access to an agent's stored traces and feedback (summaries, paged transcripts).",
     },
     LibraryToolSpec {
         id: "web_fetch",
@@ -125,6 +138,23 @@ pub fn build_library_grant(
             let fs_root = FsRoot::new(&resolved).map_err(cfg)?;
             Ok(fs_root.capabilities())
         }
+        "traces_read" => {
+            let root = grant
+                .config
+                .get("root")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let resolved = {
+                let p = Path::new(root);
+                if p.is_absolute() || p.starts_with("~") {
+                    p.to_path_buf()
+                } else {
+                    base_dir.join(p)
+                }
+            };
+            let traces_root = TracesRoot::new(&resolved).map_err(cfg)?;
+            Ok(traces_root.capabilities())
+        }
         "web_fetch" => {
             let tool = WebFetch::from_config(&grant.config).map_err(cfg)?;
             Ok(vec![Arc::new(tool)])
@@ -151,7 +181,16 @@ mod tests {
     #[test]
     fn catalog_covers_the_v1_library() {
         let ids: Vec<_> = CATALOG.iter().map(|s| s.id).collect();
-        assert_eq!(ids, vec!["fs_read", "scratchpad", "memory", "web_fetch"]);
+        assert_eq!(
+            ids,
+            vec![
+                "fs_read",
+                "scratchpad",
+                "memory",
+                "traces_read",
+                "web_fetch"
+            ]
+        );
     }
 
     #[test]

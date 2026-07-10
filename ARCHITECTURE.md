@@ -214,6 +214,7 @@ Vetted, parameterized capabilities selectable by manifest grant, each jailed to 
 - **`fs_read`** — root-jailed read-only family: `fs_list` / `fs_search` / `fs_read` / `fs_read_range` / `fs_read_many` / `fs_outline`.
 - **`scratchpad`** — ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime, always on).
 - **`memory`** — optional `memory_read` / `memory_write` / `memory_list`, jailed to durable agent-wide memory at `<agent-home>/memory` by default; `readonly = true` makes writes semantic errors.
+- **`traces_read`** — root-jailed read-only family over one agent home's stored traces and feedback sidecars: `trace_list` / `trace_ops` / `trace_transcript` / `feedback_list`. Results are summaries and paged, size-capped excerpts — never raw trace JSON — so offline analysis (e.g. the `hugr-insights` example) fits a context budget.
 - **`web_fetch`** — host-allowlisted GET-only fetch, fail-closed on an empty allowlist, no automatic redirects.
 
 The library is **exec-free**: no shell tool exists, and nothing in the library spawns a process except granted child agents. A sandboxed `code_exec` (pinned interpreter, cwd = scratchpad, no network, capped) is a designed future addition; a general `shell` never enters the library.
@@ -249,6 +250,8 @@ examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml + S
                         #   typed response contract, run/buildable by hugr-toolkit
 examples/hugr-weather/  # the self-contained beginner agent; single source of truth for the
                         #   `hugr new --template weather` scaffold (embedded at compile time).
+examples/hugr-insights/ # offline self-improvement agent: mines another agent's traces +
+                        #   feedback via `traces_read` and reports improvement suggestions.
 crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS hosts: submit/poll
                         #   over JSON, the portable-trace AgentSession + verify_trace_json (the
                         #   hugr-replay fold compiled to wasm), and the browser tool schemas.
@@ -474,6 +477,12 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Redirect bypass (SSRF).** Automatic redirects are disabled (`redirect::Policy::none()`); a `3xx` is returned to the model as-is, and following it is a *new* call whose target is re-checked.
 - **Scheme confusion.** Only `http`/`https`; `file://` etc. cannot exfiltrate local files.
 - **DNS-rebinding / internal-IP SSRF.** Not defended at v1: allowlisting a host that resolves internally reaches it. Mitigation is operator-side; resolve-and-pin is future work.
+
+**`traces_read`** (read-only over an agent home's `traces/` + `feedback/`):
+
+- **Path traversal via trace ids.** Trace ids key file paths (`<id>.json`); ids are validated against a closed character set (ASCII alphanumeric, `-`, `_`) before any filesystem touch, so a crafted id (`../…`, absolute, separators) cannot leave the jail. The root itself is canonicalized at construction. Test: `crafted_trace_id_is_rejected_before_io`.
+- **Attacker-influenced content.** Trace transcripts contain model and tool output, and feedback payloads are caller-supplied — doubly untrusted. Any agent granted `traces_read` (e.g. an insights agent) must treat everything it reads as data to analyze, never instructions to follow; its system prompt should say so explicitly.
+- **Cross-agent reading.** The grant's root selects *which* agent's home is readable; granting `~/.hugr/<other-agent>` deliberately exposes that agent's full conversation history to the reader. The manifest line is the audit surface.
 
 **External grants (`mcp`, `agent`).** `[tools.mcp.*]` runs an operator-declared external process; its jail is the process boundary plus whatever the server enforces — Hugr does not sandbox its filesystem/network. Granting one is equivalent to trusting that command; `--config` surfaces the command/args for audit. `[tools.agent.*]` spawns a built Hugr agent whose own manifest is its jail; privileges compose downward only.
 

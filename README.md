@@ -63,7 +63,7 @@ env = "HUGR_DOCS_PATH"
 help = "Folder containing the documentation to search."
 ```
 
-Auditable by reading: the manifest *is* the blast radius. Unknown keys are hard errors, so a typo can't silently widen or narrow it. The tool library today: `fs_read` (six read-only `fs_*` tools), `http_fetch`, `sqlite_query`, the scratchpad — plus `[tools.mcp.<name>]` (the one external-process escape hatch) and `[tools.agent.<name>]` (another built agent as a tool).
+Auditable by reading: the manifest *is* the blast radius. Unknown keys are hard errors, so a typo can't silently widen or narrow it. The tool library today: `fs_read` (six read-only `fs_*` tools), `web_fetch`, `memory`, `traces_read` (read-only trace/feedback mining), the scratchpad — plus `[tools.mcp.<name>]` (the one external-process escape hatch) and `[tools.agent.<name>]` (another built agent as a tool).
 
 ## The core underneath
 
@@ -99,6 +99,7 @@ bindings/
 examples/
   hugr-docs/          # the reference subagent crate (docs Q&A): manifest, prompt, and typed response contract.
   hugr-weather/       # the self-contained beginner agent; source of the `hugr new --template weather` scaffold.
+  hugr-insights/      # offline self-improvement agent: mines an agent's traces + feedback via `traces_read`.
   chrome-extension/   # a browser host built on hugr-wasm + bindings/typescript: chrome.* capabilities, side-panel UI.
 ```
 

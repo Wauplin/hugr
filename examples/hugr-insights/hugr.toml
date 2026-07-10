@@ -1,0 +1,34 @@
+# The insights agent mines another agent's traces and feedback for improvement
+# suggestions. Point it at an agent home, e.g.:
+#   hugr run . ~/.hugr/hugr-docs "What should hugr-docs improve?"
+
+[agent]
+name = "hugr-insights"
+version = "0.1.0"
+description = "Analyzes an agent's stored traces and feedback and reports improvement suggestions."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGR_API_KEY"
+default = "medium"
+
+[models.medium]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
+temperature = 0.0
+
+[tools.traces_read]
+root = "."
+
+[runtime.args.agent_home]
+target = "tools.traces_read.root"
+positional = true
+required = true
+env = "HUGR_INSIGHTS_HOME"
+help = "Agent home directory to analyze (e.g. ~/.hugr/hugr-docs)."
+
+[limits]
+max_model_calls = 40
+max_cost_micro_usd = 100000
+timeout_s = 300

@@ -266,7 +266,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 
 ## Phase 4 — Self-improvement, docs & DX
 
-### 4.1 `[ ]` Insights agent: analyze traces + feedback to improve a subagent (idea 3) — L
+### 4.1 `[x]` Insights agent: analyze traces + feedback to improve a subagent (idea 3) — L
 
 - Why: with traces (always) and feedback (2.3) accumulated under `~/.hugr/<name>/`, a Hugr agent can mine them for patterns — repeated tool sequences that should be one tool, recurring questions that belong in the prompt, common failure feedback — closing the loop offline (never real-time).
 - Design (an *example*, dogfooding the framework — not framework code):
