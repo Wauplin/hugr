@@ -148,7 +148,7 @@ where
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
-        Mode::Traces => match agent.traces() {
+        Mode::Traces => match agent.traces().await {
             Ok(heads) => print_json_or_die(&heads, pretty),
             Err(err) => {
                 eprintln!("error: listing traces: {err}");

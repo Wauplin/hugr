@@ -10,8 +10,6 @@
 //! Error discipline: *run* failures — the model erroring, no final answer — are **answers** (`status: Error`) with a persisted trace, so the caller still gets a `trace_id` to inspect. Only *infrastructure* failures (an unknown parent id, a store write error) return [`AskError`]; surfaces convert those to error answers at their own boundary.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -23,20 +21,53 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use crate::agent_tool::{AgentTool, AgentToolSpec};
-use crate::blobs::{self, BlobError};
+use crate::blobs::{self, BlobBackend, BlobError, FsBlobStore};
 use crate::contract::{Answer, AnswerMeta, Ask, STATUS_ERROR, STATUS_SUCCESS, TraceId};
 use crate::limits::{LimitState, LimitedAdapter};
-use crate::scratch::{ScratchDir, copy_tree, scratch_tool_schemas};
-use crate::store::{StoreError, TraceHead, TraceHeader, TraceStore};
+use crate::scratch::{FsScratch, ScratchBackend, ScratchSession, scratch_tool_schemas};
+use crate::store::{StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore};
+
+/// Default blob store directory inside the store root. Hidden and non-`.json`, so `TraceStore::list` skips it.
+const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
 
 /// Default scratch subtree directory for direct `Agent::new` users.
 const DEFAULT_SCRATCH_DIRNAME: &str = "scratch";
 
-/// Working subtrees (one per in-flight ask) live under this child of the scratch root until the ask's trace is persisted and the copy is finalized to its own `<trace_id>` subtree.
-const PENDING_DIRNAME: &str = ".pending";
+#[derive(Clone)]
+pub struct StorageOverrides {
+    pub traces: Arc<dyn TraceBackend>,
+    pub blobs: Arc<dyn BlobBackend>,
+    pub scratch: Arc<dyn ScratchBackend>,
+    pub scratch_scope: Value,
+}
 
-/// Default blob store directory inside the store root. Hidden and non-`.json`, so `TraceStore::list` skips it.
-const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
+impl std::fmt::Debug for StorageOverrides {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageOverrides")
+            .field("scratch_scope", &self.scratch_scope)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StorageOverrides {
+    pub fn new(
+        traces: Arc<dyn TraceBackend>,
+        blobs: Arc<dyn BlobBackend>,
+        scratch: Arc<dyn ScratchBackend>,
+    ) -> Self {
+        Self {
+            traces,
+            blobs,
+            scratch,
+            scratch_scope: Value::Null,
+        }
+    }
+
+    pub fn with_scratch_scope(mut self, scope: Value) -> Self {
+        self.scratch_scope = scope;
+        self
+    }
+}
 
 /// A configured subagent: ask it questions, get [`Answer`]s, resume or fork
 /// any stored trace. Construct with [`Agent::new`], then set the public fields
@@ -48,17 +79,16 @@ pub struct Agent {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub store: TraceStore,
+    pub traces: Arc<dyn TraceBackend>,
     pub system_prompt: Option<String>,
     pub models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
     pub default_model: Option<ModelSelector>,
     pub capabilities: Vec<Arc<dyn Capability>>,
     pub sampling: Option<SamplingParams>,
     pub clock: Option<Clock>,
-    /// Root of the per-lineage scratchpad subtree.
-    pub scratch_root: PathBuf,
-    /// Content-addressed store outbound blobs land in.
-    pub blob_store: BlobStore,
+    pub scratch: Arc<dyn ScratchBackend>,
+    pub scratch_scope: Value,
+    pub blobs: Arc<dyn BlobBackend>,
     /// Per-tier pricing used to derive `AnswerMeta.cost_micro_usd` from trace-recorded usage. Missing tiers price at zero.
     pub pricing: Pricing,
     pub limits: AgentLimits,
@@ -69,8 +99,8 @@ pub struct Agent {
     pub answer_hooks: Vec<AnswerHook>,
     /// Granted child agents exposed as ordinary `agent_<name>` capabilities. Registered fresh per ask so each invocation's child cost folds into this ask's `AnswerMeta`.
     pub agent_tools: Vec<AgentToolSpec>,
-    /// Monotonic counter naming each ask's pending working directory — the one piece of host-side nondeterminism, kept off the trace (scratch content never enters the log; results carry only relative paths).
-    next_scratch: Arc<AtomicU64>,
+    fs_trace_store: Option<TraceStore>,
+    fs_blob_store: Option<FsBlobStore>,
 }
 
 impl Agent {
@@ -78,37 +108,68 @@ impl Agent {
     pub fn new(name: impl Into<String>, version: impl Into<String>, store: TraceStore) -> Agent {
         let scratch_root = store.root().join(DEFAULT_SCRATCH_DIRNAME);
         let blob_store = BlobStore::new(store.root().join(DEFAULT_BLOBS_DIRNAME));
+        let storage = StorageOverrides::new(
+            Arc::new(store.clone()),
+            Arc::new(blob_store.clone()),
+            Arc::new(FsScratch::new(&scratch_root)),
+        )
+        .with_scratch_scope(json!({ "root": scratch_root.display().to_string() }));
+        let mut agent = Agent::with_storage(name, version, storage);
+        agent.fs_trace_store = Some(store);
+        agent.fs_blob_store = Some(blob_store);
+        agent
+    }
+
+    pub fn with_storage(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        storage: StorageOverrides,
+    ) -> Agent {
         Agent {
             name: name.into(),
             version: version.into(),
             description: String::new(),
-            store,
+            traces: storage.traces,
             system_prompt: None,
             models: Vec::new(),
             default_model: None,
             capabilities: Vec::new(),
             sampling: None,
             clock: None,
-            scratch_root,
-            blob_store,
+            scratch: storage.scratch,
+            scratch_scope: storage.scratch_scope,
+            blobs: storage.blobs,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
             response_contract: None,
             ask_hooks: Vec::new(),
             answer_hooks: Vec::new(),
             agent_tools: Vec::new(),
-            next_scratch: Arc::new(AtomicU64::new(0)),
+            fs_trace_store: None,
+            fs_blob_store: None,
         }
     }
 
     /// The trace store this agent persists into.
     pub fn store(&self) -> &TraceStore {
-        &self.store
+        self.fs_trace_store
+            .as_ref()
+            .expect("Agent::store is only available on filesystem-backed agents")
+    }
+
+    pub fn trace_backend(&self) -> Arc<dyn TraceBackend> {
+        self.traces.clone()
     }
 
     /// The content-addressed blob store this agent's outbound blobs land in. An orchestrator resolves an [`Answer`] blob's `sha256` ref through here.
     pub fn blob_store(&self) -> &BlobStore {
-        &self.blob_store
+        self.fs_blob_store
+            .as_ref()
+            .expect("Agent::blob_store is only available on filesystem-backed agents")
+    }
+
+    pub fn blob_backend(&self) -> Arc<dyn BlobBackend> {
+        self.blobs.clone()
     }
 
     /// Describe this agent's public card: identity, tools + privileges, model tiers, pricing, and declared limits.
@@ -121,7 +182,7 @@ impl Agent {
                 privilege: "scratchpad".to_string(),
                 runs_in_background: false,
                 schema,
-                scope: json!({ "root": self.scratch_root.display().to_string() }),
+                scope: self.scratch_scope.clone(),
             })
             .collect();
         // Granted child agents show as `agent_<name>` tools; they are registered per-ask but are part of the agent's advertised surface.
@@ -164,8 +225,8 @@ impl Agent {
     }
 
     /// List stored trace headers for this agent — the same cheap header-only read as [`TraceStore::list`].
-    pub fn traces(&self) -> Result<Vec<TraceHead>, StoreError> {
-        self.store.list()
+    pub async fn traces(&self) -> Result<Vec<TraceHead>, StoreError> {
+        self.traces.list().await
     }
 
     /// Run one ask to completion. See the module docs for the fresh-vs-resume split and the error discipline.
@@ -214,7 +275,7 @@ impl Agent {
             builder = builder.clock(clock.clone());
         }
         let parent_trace = match &parent {
-            Some(parent_id) => Some(self.store.get(parent_id)?),
+            Some(parent_id) => Some(self.traces.get(parent_id).await?),
             None => None,
         };
 
@@ -230,13 +291,14 @@ impl Agent {
         }
 
         // A fresh working scratch subtree, seeded by copying the parent's finalized subtree on resume/fork — so this ask sees the ancestor's notes but never a sibling's writes.
-        let (scratch, working_dir) = self.prepare_scratch(parent.as_ref())?;
+        let scratch_handle = self.scratch.prepare(parent.as_ref()).await?;
+        let scratch = ScratchSession::new(self.scratch.clone(), scratch_handle);
         for capability in scratch.capabilities() {
             builder = builder.capability(capability);
         }
 
         // Materialize inbound blobs into the working scratch dir *before* the turn, so tools see plain files in the jail. Malformed hand-ins are infra errors (AskError), not answers.
-        blobs::materialize_inbound(&working_dir, &ask.blobs, &self.blob_store)?;
+        blobs::materialize_inbound(&scratch, &ask.blobs, self.blobs.as_ref()).await?;
 
         let mut engine = builder.build();
 
@@ -323,13 +385,13 @@ impl Agent {
         if let Some(parent_id) = parent {
             header = header.with_depends_on(parent_id);
         }
-        let trace_id = self.store.put(trace, header)?;
+        let trace_id = self.traces.put(trace, header).await?;
 
         // Sweep the `out/` scratch subtree into the content-addressed store and return the files as outbound blobs. Done before finalize while the working subtree is still in place.
-        let out_blobs = blobs::sweep_outbound(&working_dir, &self.blob_store)?;
+        let out_blobs = blobs::sweep_outbound(&scratch, self.blobs.as_ref()).await?;
 
         // Finalize the working subtree under the new trace's id so a later resume/fork of *this* trace can seed from it. Scratch is never recorded, so this move happens after the trace is persisted.
-        self.finalize_scratch(&working_dir, &trace_id)?;
+        self.scratch.finalize(scratch.handle(), &trace_id).await?;
 
         let mut answer = Answer {
             status,
@@ -343,44 +405,6 @@ impl Agent {
             hook.apply(&mut answer);
         }
         Ok(answer)
-    }
-
-    /// Create this ask's working scratch directory (a fresh `.pending/<n>` subtree) and, when resuming a parent, seed it with a copy of the parent's finalized subtree (copy-on-fork). Returns the jailed [`ScratchDir`] for the tools plus the working path for finalization.
-    fn prepare_scratch(&self, parent: Option<&TraceId>) -> Result<(ScratchDir, PathBuf), AskError> {
-        let n = self.next_scratch.fetch_add(1, Ordering::SeqCst);
-        let working = self
-            .scratch_root
-            .join(PENDING_DIRNAME)
-            .join(format!("{}-{n}", std::process::id()));
-        // A stale working dir from a crashed prior run must not leak in.
-        if working.exists() {
-            std::fs::remove_dir_all(&working)?;
-        }
-        if let Some(parent_id) = parent {
-            let parent_scratch = self.scratch_root.join(parent_id.as_str());
-            if parent_scratch.exists() {
-                copy_tree(&parent_scratch, &working)?;
-            } else {
-                std::fs::create_dir_all(&working)?;
-            }
-        } else {
-            std::fs::create_dir_all(&working)?;
-        }
-        let scratch = ScratchDir::new(&working)?;
-        Ok((scratch, working))
-    }
-
-    /// Move this ask's working subtree to its final `<trace_id>` home so the lineage persists. A same-filesystem rename (both are under the scratch root); trace ids are unique, but any pre-existing target is cleared first so the move can't fail on a stray directory.
-    fn finalize_scratch(&self, working: &PathBuf, trace_id: &TraceId) -> Result<(), AskError> {
-        let final_dir = self.scratch_root.join(trace_id.as_str());
-        if final_dir.exists() {
-            std::fs::remove_dir_all(&final_dir)?;
-        }
-        if let Some(parent) = final_dir.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::rename(working, &final_dir)?;
-        Ok(())
     }
 
     fn model_tiers(&self) -> Vec<ModelTierCard> {

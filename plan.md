@@ -112,7 +112,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: unit tests for home resolution (env precedence); end-to-end test asserting a dev run and a built-binary run of the same agent share `~/.hugr/<name>/traces` (under a temp `$HUGR_HOME`).
 - Invariant check: pure path policy in host layers; core untouched.
 
-### 1.2 `[ ]` Pluggable storage backends (idea 8) — L
+### 1.2 `[x]` Pluggable storage backends (idea 8) — L
 
 - Why: scratchpad, traces, and blobs are hardwired to `std::fs` via concrete structs — `TraceStore` (`hugr-agent/src/store.rs:135`), `BlobStore` (`hugr-replay/src/blob.rs:36`), `ScratchDir` (`hugr-agent/src/scratch.rs:46`); there is not a single storage trait in the workspace. The goal is *not* to ship Postgres/browser backends but to make an agent implementation able to swap one in from its own crate.
 - Design — three narrow async traits, defined in `hugr-agent` (the layer that consumes them), mirroring the existing method sets exactly:

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_agent::{
     Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, AnswerHook, Ask, AskHook,
-    Pricing, TraceStore, depth_exceeded_resolver,
+    FsScratch, Pricing, StorageOverrides, TraceStore, depth_exceeded_resolver,
 };
 use hugr_core::{ModelSelector, SamplingParams};
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
@@ -48,7 +48,11 @@ pub fn trace_store_for(def: &AgentDefinition) -> TraceStore {
 /// `HUGR_AGENT_HOME`, then `HUGR_HOME/<agent>`, then `$HOME/.hugr/<agent>`,
 /// then a temp-dir fallback.
 pub fn agent_home_dir(agent_name: &str) -> PathBuf {
-    agent_home_dir_from(agent_name, |key| std::env::var_os(key), std::env::temp_dir())
+    agent_home_dir_from(
+        agent_name,
+        |key| std::env::var_os(key),
+        std::env::temp_dir(),
+    )
 }
 
 fn agent_home_dir_from(
@@ -146,6 +150,7 @@ pub struct RuntimeOptions {
     response_contracts: std::collections::BTreeMap<String, ResponseContract>,
     ask_hooks: Vec<AskHook>,
     answer_hooks: Vec<AnswerHook>,
+    storage: Option<StorageOverrides>,
 }
 
 impl RuntimeOptions {
@@ -193,6 +198,11 @@ impl RuntimeOptions {
         self
     }
 
+    pub fn with_storage(mut self, storage: StorageOverrides) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
     pub fn response_contract(&self, rust_type: &str) -> Option<ResponseContract> {
         self.response_contracts.get(rust_type).cloned()
     }
@@ -209,6 +219,10 @@ impl RuntimeOptions {
 
     pub fn answer_hooks(&self) -> Vec<AnswerHook> {
         self.answer_hooks.clone()
+    }
+
+    pub fn storage(&self) -> Option<StorageOverrides> {
+        self.storage.clone()
     }
 }
 
@@ -241,7 +255,12 @@ pub async fn build_agent_with_options(
     } else {
         def.agent.version.as_str()
     };
-    let mut agent = Agent::new(def.agent.name.clone(), version, store);
+    let uses_storage_override = options.storage().is_some();
+    let mut agent = if let Some(storage) = options.storage() {
+        Agent::with_storage(def.agent.name.clone(), version, storage)
+    } else {
+        Agent::new(def.agent.name.clone(), version, store)
+    };
     agent.description = def.agent.description.clone();
 
     // The provider API key rides an env var — never the manifest. When
@@ -336,12 +355,16 @@ pub async fn build_agent_with_options(
     }
     agent.limits = limits;
 
-    agent.scratch_root = def
-        .scratchpad
-        .root
-        .as_deref()
-        .map(|root| resolve(&base_dir, root))
-        .unwrap_or_else(|| home.join(DEFAULT_SCRATCH_DIRNAME));
+    if !uses_storage_override {
+        let scratch_root = def
+            .scratchpad
+            .root
+            .as_deref()
+            .map(|root| resolve(&base_dir, root))
+            .unwrap_or_else(|| home.join(DEFAULT_SCRATCH_DIRNAME));
+        agent.scratch = Arc::new(FsScratch::new(&scratch_root));
+        agent.scratch_scope = serde_json::json!({ "root": scratch_root.display().to_string() });
+    }
 
     Ok((agent, warnings))
 }

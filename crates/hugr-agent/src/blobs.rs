@@ -24,18 +24,97 @@
 //! address string (`"sha256:<hex>"`), so it resolves directly via
 //! [`BlobStore::get`] — inbound and outbound speak the same address form.
 
-use std::path::{Component, Path, PathBuf};
+use std::collections::BTreeMap;
+use std::path::{Component, Path};
+use std::sync::Mutex;
 
+use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hugr_replay::{BlobStore, TraceError};
+use hugr_replay::{BlobRef as StoredBlobRef, BlobStore, TraceError};
 
 use crate::contract::{BlobHandle, BlobRef};
+use crate::scratch::{ScratchEntryKind, ScratchSession};
 
 /// Subdirectory of the ask's scratch working directory swept for outbound
 /// blobs after the turn. The agent writes files here (e.g. `out/report.md`) to
 /// return them; `scratch_write` creates the directory on first write.
 pub(crate) const OUT_DIRNAME: &str = "out";
+
+#[async_trait]
+pub trait BlobBackend: Send + Sync {
+    async fn put(&self, bytes: &[u8], media: String) -> Result<StoredBlobRef, TraceError>;
+
+    async fn put_file(&self, path: &Path, media: String) -> Result<StoredBlobRef, TraceError> {
+        let bytes = std::fs::read(path).map_err(TraceError::Io)?;
+        self.put(&bytes, media).await
+    }
+
+    async fn get(&self, hash: &str) -> Result<Vec<u8>, TraceError>;
+
+    async fn contains(&self, hash: &str) -> bool;
+}
+
+pub type FsBlobStore = BlobStore;
+
+#[async_trait]
+impl BlobBackend for BlobStore {
+    async fn put(&self, bytes: &[u8], media: String) -> Result<StoredBlobRef, TraceError> {
+        BlobStore::put(self, bytes, media)
+    }
+
+    async fn put_file(&self, path: &Path, media: String) -> Result<StoredBlobRef, TraceError> {
+        let bytes = std::fs::read(path).map_err(TraceError::Io)?;
+        BlobStore::put(self, &bytes, media)
+    }
+
+    async fn get(&self, hash: &str) -> Result<Vec<u8>, TraceError> {
+        BlobStore::get(self, hash)
+    }
+
+    async fn contains(&self, hash: &str) -> bool {
+        BlobStore::contains(self, hash)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MemBlobStore {
+    blobs: Mutex<BTreeMap<String, (Vec<u8>, String)>>,
+}
+
+impl MemBlobStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl BlobBackend for MemBlobStore {
+    async fn put(&self, bytes: &[u8], media: String) -> Result<StoredBlobRef, TraceError> {
+        let hash = BlobStore::hash(bytes);
+        self.blobs
+            .lock()
+            .unwrap()
+            .entry(hash.clone())
+            .or_insert_with(|| (bytes.to_vec(), media.clone()));
+        Ok(StoredBlobRef::new(hash, bytes.len() as u64, media))
+    }
+
+    async fn get(&self, hash: &str) -> Result<Vec<u8>, TraceError> {
+        self.blobs
+            .lock()
+            .unwrap()
+            .get(hash)
+            .map(|(bytes, _)| bytes.clone())
+            .ok_or_else(|| TraceError::BlobNotFound {
+                hash: hash.to_string(),
+            })
+    }
+
+    async fn contains(&self, hash: &str) -> bool {
+        self.blobs.lock().unwrap().contains_key(hash)
+    }
+}
 
 /// Failures preparing inbound blobs or sweeping outbound ones. These are
 /// *infrastructure* failures of an ask (a malformed hand-in, a missing store
@@ -63,26 +142,26 @@ pub enum BlobError {
     /// Filesystem access failed materializing or sweeping a blob.
     #[error("blob IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// The scratch backend rejected a read/write/list operation.
+    #[error("scratchpad error: {0}")]
+    Scratch(String),
 }
 
 /// Materialize every inbound blob into `working` (the ask's scratch working
 /// directory) before the turn starts.
-pub(crate) fn materialize_inbound(
-    working: &Path,
+pub(crate) async fn materialize_inbound(
+    scratch: &ScratchSession,
     blobs: &[BlobHandle],
-    store: &BlobStore,
+    store: &dyn BlobBackend,
 ) -> Result<(), BlobError> {
     for (index, handle) in blobs.iter().enumerate() {
-        let bytes = load_bytes(handle, store)?;
+        let bytes = load_bytes(handle, store).await?;
         let name = inbound_name(handle, index, &bytes)?;
-        let dest = working.join(&name);
-        // A fresh file each ask: an inbound blob rides the Ask, never the
-        // scratch lineage, so an existing (possibly read-only) file at this
-        // path from a copy-on-fork seed must be replaced, not appended to.
-        if dest.exists() {
-            std::fs::remove_file(&dest)?;
-        }
-        std::fs::write(&dest, &bytes)?;
+        scratch
+            .write_bytes(&name, &bytes)
+            .await
+            .map_err(BlobError::Scratch)?;
     }
     Ok(())
 }
@@ -90,26 +169,35 @@ pub(crate) fn materialize_inbound(
 /// Sweep the `out/` subtree of `working` into the content-addressed store,
 /// returning one [`BlobHandle`] per produced file (deterministic order). Missing
 /// `out/` yields no blobs. Identical files dedupe by hash in the store.
-pub(crate) fn sweep_outbound(
-    working: &Path,
-    store: &BlobStore,
+pub(crate) async fn sweep_outbound(
+    scratch: &ScratchSession,
+    store: &dyn BlobBackend,
 ) -> Result<Vec<BlobHandle>, BlobError> {
-    let out_root = working.join(OUT_DIRNAME);
-    if !out_root.is_dir() {
+    let mut files = Vec::new();
+    match collect_scratch_files(scratch, OUT_DIRNAME, &mut files).await {
+        Ok(()) => {}
+        Err(error) if error.starts_with("path does not exist inside scratch root:") => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(BlobError::Scratch(error)),
+    }
+    if files.is_empty() {
         return Ok(Vec::new());
     }
-    let mut files = Vec::new();
-    collect_files(&out_root, &mut files)?;
-    // Deterministic order regardless of directory-entry order.
     files.sort();
 
     let mut handles = Vec::new();
-    for path in files {
-        let bytes = std::fs::read(&path)?;
-        let media = guess_media(&path);
-        // Content-addressed put — dedup by hash lives in the store.
-        let stored = store.put(&bytes, media.clone())?;
-        let rel = rel_name(&out_root, &path);
+    for rel_path in files {
+        let bytes = scratch
+            .read_bytes(&rel_path)
+            .await
+            .map_err(BlobError::Scratch)?;
+        let media = guess_media(&rel_path);
+        let stored = store.put(&bytes, media.clone()).await?;
+        let rel = rel_path
+            .strip_prefix(&format!("{OUT_DIRNAME}/"))
+            .unwrap_or(&rel_path)
+            .to_string();
         handles.push(BlobHandle {
             blob_ref: BlobRef::Sha256 {
                 sha256: stored.hash,
@@ -122,14 +210,14 @@ pub(crate) fn sweep_outbound(
 }
 
 /// Read the bytes behind one inbound handle, resolving all three ref kinds.
-fn load_bytes(handle: &BlobHandle, store: &BlobStore) -> Result<Vec<u8>, BlobError> {
+async fn load_bytes(handle: &BlobHandle, store: &dyn BlobBackend) -> Result<Vec<u8>, BlobError> {
     match &handle.blob_ref {
         BlobRef::Bytes { base64 } => BASE64.decode(base64).map_err(|source| BlobError::Decode {
             name: handle.name.clone().unwrap_or_else(|| "<bytes>".to_string()),
             source,
         }),
         BlobRef::Path { path } => Ok(std::fs::read(path)?),
-        BlobRef::Sha256 { sha256 } => Ok(store.get(sha256)?),
+        BlobRef::Sha256 { sha256 } => Ok(store.get(sha256).await?),
     }
 }
 
@@ -172,42 +260,29 @@ fn sanitize_name(hint: &str) -> Result<String, BlobError> {
     part.to_str().map(str::to_string).ok_or_else(bad)
 }
 
-/// Recursively collect regular files under `dir` into `out`.
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let path = entry.path();
-        if file_type.is_dir() {
-            collect_files(&path, out)?;
-        } else if file_type.is_file() {
-            out.push(path);
+async fn collect_scratch_files(
+    scratch: &ScratchSession,
+    rel_dir: &str,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    let mut stack = vec![rel_dir.to_string()];
+    while let Some(dir) = stack.pop() {
+        for entry in scratch.list(&dir).await? {
+            match entry.kind {
+                ScratchEntryKind::Dir => stack.push(entry.path),
+                ScratchEntryKind::File => out.push(entry.path),
+            }
         }
-        // Symlinks and exotic entries are skipped — the jail deals in plain
-        // files/dirs only (mirrors the scratch copy_tree discipline).
     }
     Ok(())
 }
 
-/// The `/`-joined path of `path` relative to the `out/` root — the name hint
-/// returned on the outbound handle so an orchestrator can reconstruct layout.
-fn rel_name(out_root: &Path, path: &Path) -> String {
-    let rel = path.strip_prefix(out_root).unwrap_or(path);
-    rel.components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 /// A best-effort media type from the file extension; unknown → octet-stream.
 /// The media type is advisory metadata on the handle, never load-bearing.
-fn guess_media(path: &Path) -> String {
+fn guess_media(path: &str) -> String {
     let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
         .unwrap_or("")
         .to_ascii_lowercase();
     let media = match ext.as_str() {

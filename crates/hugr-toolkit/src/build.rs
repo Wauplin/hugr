@@ -251,6 +251,7 @@ pub(crate) struct ResponseDependency {
     model_rust_type: String,
     schema_name: String,
     has_answer_hooks: bool,
+    has_storage: bool,
 }
 
 impl ResponseDependency {
@@ -293,6 +294,9 @@ impl ResponseDependency {
                 self.dep_name
             ));
         }
+        if self.has_storage {
+            options.push_str(&format!(".with_storage({}::storage())", self.dep_name));
+        }
         options
     }
 }
@@ -322,12 +326,14 @@ pub(crate) fn response_dependency(
     let package_name = cargo_package_name(&path)?;
     let package = (package_name != dep_name).then_some(package_name);
     let has_answer_hooks = has_pub_fn(&path, "answer_hooks")?;
+    let has_storage = has_pub_fn(&path, "storage")?;
     Ok(Some(ResponseDependency {
         dep_name: dep_name.to_string(),
         package,
         path,
         model_rust_type,
         has_answer_hooks,
+        has_storage,
         schema_name: schema_name_from_rust_type(&rust_type),
         rust_type,
     }))
@@ -477,6 +483,35 @@ model = "m"
         assert!(main.contains(".with_answer_hooks(hugr_docs::answer_hooks())"));
         assert!(main.contains("hugr_docs::RESPONSE_RUST_TYPE"));
         assert!(main.contains("\"hugr_docs__DocsResponse\""));
+    }
+
+    #[test]
+    fn typed_response_build_wires_storage_override_when_exported() {
+        let root = std::env::temp_dir().join(format!("hugr-build-storage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"storage-agent\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"pub const RESPONSE_RUST_TYPE: &str = "storage_agent::Response";
+pub fn storage() -> hugr_agent::StorageOverrides { todo!() }
+"#,
+        )
+        .unwrap();
+        let src = "[agent]\nname = \"storage\"\n[models.medium]\nmodel = \"m\"\n";
+        let mut def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        def.source_dir = Some(root.clone());
+
+        let dep = response_dependency(&def).unwrap().unwrap();
+        let toml = cli_cargo_toml("storage", &Some(dep.clone()));
+        let main = main_rs(&Some(dep));
+        assert!(toml.contains("storage_agent = { package = \"storage-agent\", path ="));
+        assert!(main.contains(".with_storage(storage_agent::storage())"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

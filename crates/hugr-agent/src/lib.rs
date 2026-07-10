@@ -28,14 +28,17 @@ mod store;
 
 pub use agent::{
     Agent, AgentCard, AgentLimits, AnswerHook, AskError, AskHook, ModelTierCard, Pricing,
-    ResponseContract, TierPrice, ToolCard,
+    ResponseContract, StorageOverrides, TierPrice, ToolCard,
 };
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
-pub use blobs::BlobError;
+pub use blobs::{BlobBackend, BlobError, FsBlobStore, MemBlobStore};
 pub use contract::{
     Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, STATUS_SUCCESS, TraceId,
 };
-pub use store::{StoreError, TraceHead, TraceHeader, TraceStore};
+pub use scratch::{FsScratch, MemScratch, ScratchBackend, ScratchEntry, ScratchEntryKind};
+pub use store::{
+    FsTraceStore, MemTraceStore, StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore,
+};
 
 /// The content-addressed blob store outbound blobs land in, re-exported from
 /// `hugr-replay` so orchestrators can resolve an

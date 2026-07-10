@@ -158,7 +158,7 @@ async fn ask_hook_runs_before_the_turn() {
 
     assert_eq!(answer.status, STATUS_SUCCESS);
     assert_eq!(answer.response["text"], "hooked");
-    let head = agent.store.head(&answer.trace_id).unwrap();
+    let head = agent.store().head(&answer.trace_id).unwrap();
     assert_eq!(head.question, "hooked: question");
 }
 

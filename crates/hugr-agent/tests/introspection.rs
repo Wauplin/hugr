@@ -192,7 +192,7 @@ async fn traces_lists_header_lineage() {
         .await
         .unwrap();
 
-    let traces = agent.traces().unwrap();
+    let traces = agent.traces().await.unwrap();
     assert_eq!(traces.len(), 2);
     assert!(
         traces

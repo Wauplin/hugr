@@ -163,7 +163,7 @@ max_cost_micro_usd = 50000
 timeout_s = 120
 ```
 
-`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. The Rust response contract belongs to the current agent crate: `src/lib.rs` must expose `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` and define that public `serde` + `schemars` type. `hugr run`/`hugr build` infer the crate from `Cargo.toml` beside `hugr.toml`, fail explicitly if `RESPONSE_RUST_TYPE` is missing, derive a provider schema name from the Rust type, derive JSON Schema from the type, pass it to the model provider, and cast final JSON with `serde`. An agent crate may also expose `pub const MODEL_RESPONSE_RUST_TYPE: &str = "crate_name::ModelType";` when the model should produce a narrower shape than the public answer, plus `pub fn answer_hooks() -> Vec<hugr_agent::AnswerHook>` for deterministic final-answer enrichment. In that case the model schema comes from `MODEL_RESPONSE_RUST_TYPE`, `--config` and language surfaces expose `RESPONSE_RUST_TYPE`, and the hooks run after trace/blob/scratch finalization immediately before the answer crosses the surface boundary. Response repair uses the runtime's fixed default attempt limit for now, not manifest configuration. `[response].schema` remains the legacy manifest-owned JSON Schema path. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
+`SYSTEM.md` beside it is the system prompt, with a small template-var set (`{{agent_name}}`, `{{tools}}`, `{{date}}`). Reviewing a subagent's blast radius = reading `hugr.toml`: a tool that is not granted is not registered, and an unregistered capability **cannot** be invoked — sandbox-by-registration, not sandbox-by-policy (Part IV). `[runtime.args.<name>]` is the only way to make invocation-time config part of the surface: the toolkit adds it to the built CLI and MCP `ask` schema, then patches the declared target before registering tools or model adapters. Runtime path values are resolved from the caller's current directory, so one docs binary can be used on a different folder per invocation without recompilation. The Rust response contract belongs to the current agent crate: `src/lib.rs` must expose `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` and define that public `serde` + `schemars` type. `hugr run`/`hugr build` infer the crate from `Cargo.toml` beside `hugr.toml`, fail explicitly if `RESPONSE_RUST_TYPE` is missing, derive a provider schema name from the Rust type, derive JSON Schema from the type, pass it to the model provider, and cast final JSON with `serde`. An agent crate may also expose `pub const MODEL_RESPONSE_RUST_TYPE: &str = "crate_name::ModelType";` when the model should produce a narrower shape than the public answer, plus `pub fn answer_hooks() -> Vec<hugr_agent::AnswerHook>` for deterministic final-answer enrichment and `pub fn storage() -> hugr_agent::StorageOverrides` for custom trace/blob/scratch backends. In that case the model schema comes from `MODEL_RESPONSE_RUST_TYPE`, `--config` and language surfaces expose `RESPONSE_RUST_TYPE`, hooks run after trace/blob/scratch finalization immediately before the answer crosses the surface boundary, and a storage override replaces the manifest/default filesystem stores for that generated surface. Response repair uses the runtime's fixed default attempt limit for now, not manifest configuration. `[response].schema` remains the legacy manifest-owned JSON Schema path. `[limits]` are enforced host-side on every ask: an exceeded limit yields an ordinary `status: "error"` answer with a persisted, still-verifying partial trace.
 
 ### 7. The tool library
 
@@ -192,9 +192,9 @@ Because every agent exposes the same ask contract, granting one agent to another
 crates/hugr-core/       # the sans-IO brain (Part III). NO tokio, NO reqwest, NO fs.
 crates/hugr-host/       # native tokio host: driver loop, capability/model registries, MCP client.
 crates/hugr-providers/  # OpenAI-compatible streaming model adapter.
-crates/hugr-replay/     # the trace format + content-addressed blob store + replay/verify/inspect.
-crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore (trace_id/depends_on),
-                        #   scratchpad, blob exchange, limits, cost accounting, agent-as-tool.
+crates/hugr-replay/     # the trace format + fs content-addressed blob store + replay/verify/inspect.
+crates/hugr-agent/      # the subagent runtime: Ask/Answer, storage backends (trace/blob/scratch),
+                        #   resume/fork, blob exchange, limits, cost accounting, agent-as-tool.
 crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library,
                         #   the `hugr` CLI (new / run / build / traces / replay / verify), and
                         #   the language-surface generators (CLI shim, PyO3/maturin — §4.1).
@@ -337,7 +337,7 @@ It does **not**: any IO or model calls; running tools; rendering; resolving what
 
 - **Durable state is an append-only log** of `LogEntry { seq, at, record }` — user messages, consolidated model outputs, tool results, op endings. `BrainState` (including the op table) is a fold over the log and can always be rebuilt (`Brain::from_log`). Resume = replay the fold. Fork = copy a prefix.
 - **Model context is a projection, not the log.** Per turn, the policy produces a `ContextPlan` from the log (which blocks are included, with token estimates), and the reducer renders the `ModelRequest` from it. Projection keeps tool-call transcripts provider-valid (tool results render immediately after their originating assistant tool-call block). Subagent sessions are short and bounded by `[limits]`, so there is no in-session summarization/compaction machinery — the projection includes the log.
-- **Large payloads are content-addressed blobs.** Tool outputs and file exchange are stored by SHA-256 in `hugr-replay::BlobStore`; the log holds the reference. Identical content dedupes to one file.
+- **Large payloads are content-addressed blobs.** Tool outputs and file exchange are stored by SHA-256 through the host-layer `BlobBackend`; the default `FsBlobStore` wraps `hugr-replay::BlobStore`, and `MemBlobStore` is the in-memory reference backend. The log holds the reference. Identical content dedupes to one object.
 - **Token counts come from the host, at ingestion.** The brain cannot tokenize (provider-specific, not sans-IO-friendly); the host annotates records with estimates and the brain's projection just sums them. Authoritative accounting comes from the returned `Usage` per call.
 
 ### 17. In-flight operations & concurrency
@@ -373,8 +373,9 @@ pub struct Trace {
 
 - **The log is the truth, not state.** `BrainState` is never stored — always rederivable.
 - **`verify()`** re-folds the events into a fresh brain and asserts the reconstructed log **and** command sequence equal the recorded ones, bit-for-bit. This is the release gate: any new control-flow path ships with a replay test.
-- **The `TraceStore`** (`<agent-home>/traces` by default) holds immutable traces keyed by content-derived `trace_id`, with `depends_on` lineage in the header; `head()` reads metadata without folding events; file creation is atomic (`create_new`) so parallel asks are collision-free.
+- **The `TraceBackend`** holds immutable traces keyed by content-derived `trace_id`, with `depends_on` lineage in the header; `head()` reads metadata without folding events. The default filesystem implementation is `FsTraceStore`/`TraceStore` rooted at `<agent-home>/traces`, using atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
 - **Agent home** resolves the same for dev and built surfaces: `HUGR_AGENT_HOME` as a full override, else `HUGR_HOME/<agent-name>`, else `$HOME/.hugr/<agent-name>`, else a temp-dir fallback. The default scratch root is `<agent-home>/scratch`; `[traces].store` and `[scratchpad].root` remain explicit manifest overrides.
+- **Storage is pluggable at the host layer.** `hugr-agent` defines `TraceBackend`, `BlobBackend`, and `ScratchBackend`; `Agent::new` is the convenience filesystem constructor, while `Agent::with_storage` / `StorageOverrides` accepts custom `Arc<dyn ...>` implementations. A generated agent crate can opt in by exporting `pub fn storage() -> hugr_agent::StorageOverrides`; no core type changes and no manifest enum are needed.
 - **Resume after crash** is the same machinery: fold the persisted log, append `OpCancelled` for ops that were in flight, continue live.
 
 ### 20. Risks & mitigations
@@ -417,6 +418,8 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 
 **External grants (`mcp`, `agent`).** `[tools.mcp.*]` runs an operator-declared external process; its jail is the process boundary plus whatever the server enforces — Hugr does not sandbox its filesystem/network. Granting one is equivalent to trusting that command; `--config` surfaces the command/args for audit. `[tools.agent.*]` spawns a built Hugr agent whose own manifest is its jail; privileges compose downward only.
 
+**Custom storage backends.** A backend is trusted host code, the same class as a custom capability or model adapter. It sees trace contents, blob bytes, and scratch data for the agent that registers it; Hugr enforces the model-facing jail before calls reach the backend, but it does not sandbox a backend implementation.
+
 ## Part V — Reference
 
 ### 23. Open questions
@@ -424,7 +427,6 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Trace schema migration.** Long-lived traces need a migration story as `Record`/`Event` evolve (`format_version` exists; migrations do not).
 - **Trace garbage collection.** Fork trees accumulate; pruning policy is undecided (delete by hand for now).
 - **Concurrent asks on one agent.** Default: each ask is an independent session/process (traces make this safe); a serving mode with a session pool is future work.
-- **Storage backends.** Scratchpad, traces, and blobs assume a local filesystem today; the store boundaries are narrow enough to swap (a database, object storage) when a real need appears.
 - **Browser packaging.** The split is done (generic `hugr-wasm` bindings + `bindings/typescript` + the Chrome-extension example with a vendor/pkg build script); what remains open is typed TS packaging and store-signed distribution.
 
 ### 24. Glossary

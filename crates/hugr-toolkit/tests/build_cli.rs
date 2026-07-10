@@ -82,7 +82,7 @@ async fn embedded_definition_answers_and_resumes_from_a_temp_home() {
     );
 
     // Both traces are visible from the store the binary would read.
-    let heads = agent.traces().unwrap();
+    let heads = agent.traces().await.unwrap();
     assert!(heads.len() >= 2, "root + child persisted: {}", heads.len());
     let child = heads
         .iter()

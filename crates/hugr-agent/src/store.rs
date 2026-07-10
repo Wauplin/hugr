@@ -35,13 +35,24 @@
 //! [`head`]: TraceStore::head
 //! [`get`]: TraceStore::get
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use async_trait::async_trait;
 use hugr_replay::{Trace, TraceError, TraceMeta};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::contract::TraceId;
+
+#[async_trait]
+pub trait TraceBackend: Send + Sync {
+    async fn put(&self, trace: Trace, header: TraceHeader) -> Result<TraceId, StoreError>;
+    async fn get(&self, id: &TraceId) -> Result<Trace, StoreError>;
+    async fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError>;
+    async fn list(&self) -> Result<Vec<TraceHead>, StoreError>;
+}
 
 /// The header of one stored trace: everything a lineage listing needs, readable
 /// without folding events. A projection of the stored trace's [`TraceMeta`] with
@@ -133,6 +144,8 @@ impl TraceHeader {
 pub struct TraceStore {
     root: PathBuf,
 }
+
+pub type FsTraceStore = TraceStore;
 
 /// Deserialization target for [`TraceStore::head`]: only the `meta` header is
 /// parsed out of the file; `events`, `commands`, `log`, `blobs`, and
@@ -288,6 +301,92 @@ impl TraceStore {
             question: meta.question.ok_or_else(|| field_err("question"))?,
             status: meta.status.ok_or_else(|| field_err("status"))?,
         })
+    }
+}
+
+#[async_trait]
+impl TraceBackend for TraceStore {
+    async fn put(&self, trace: Trace, header: TraceHeader) -> Result<TraceId, StoreError> {
+        TraceStore::put(self, trace, header)
+    }
+
+    async fn get(&self, id: &TraceId) -> Result<Trace, StoreError> {
+        TraceStore::get(self, id)
+    }
+
+    async fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError> {
+        TraceStore::head(self, id)
+    }
+
+    async fn list(&self) -> Result<Vec<TraceHead>, StoreError> {
+        TraceStore::list(self)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MemTraceStore {
+    traces: Mutex<BTreeMap<TraceId, Trace>>,
+}
+
+impl MemTraceStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn allocate_id(
+        traces: &BTreeMap<TraceId, Trace>,
+        trace: &Trace,
+    ) -> Result<TraceId, StoreError> {
+        let digest = Sha256::digest(trace.to_json()?);
+        let base = format!("{digest:x}");
+        let base = &base[..16];
+        let mut candidate = TraceId::new(base);
+        let mut counter = 1u64;
+        while traces.contains_key(&candidate) {
+            candidate = TraceId::new(format!("{base}-{counter}"));
+            counter += 1;
+        }
+        Ok(candidate)
+    }
+}
+
+#[async_trait]
+impl TraceBackend for MemTraceStore {
+    async fn put(&self, mut trace: Trace, header: TraceHeader) -> Result<TraceId, StoreError> {
+        trace.meta.depends_on = header.depends_on.map(String::from);
+        trace.meta.agent_name = Some(header.agent_name);
+        trace.meta.agent_version = Some(header.agent_version);
+        trace.meta.question = Some(header.question);
+        trace.meta.status = Some(header.status);
+        let mut traces = self.traces.lock().unwrap();
+        let id = Self::allocate_id(&traces, &trace)?;
+        trace.meta.trace_id = Some(id.as_str().to_string());
+        traces.insert(id.clone(), trace);
+        Ok(id)
+    }
+
+    async fn get(&self, id: &TraceId) -> Result<Trace, StoreError> {
+        self.traces
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| StoreError::NotFound { id: id.clone() })
+    }
+
+    async fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError> {
+        let trace = self.get(id).await?;
+        TraceStore::head_from_meta(id, trace.meta)
+    }
+
+    async fn list(&self) -> Result<Vec<TraceHead>, StoreError> {
+        let ids: Vec<_> = self.traces.lock().unwrap().keys().cloned().collect();
+        let mut heads = Vec::new();
+        for id in ids {
+            heads.push(self.head(&id).await?);
+        }
+        heads.sort_by(|a, b| a.trace_id.cmp(&b.trace_id));
+        Ok(heads)
     }
 }
 
