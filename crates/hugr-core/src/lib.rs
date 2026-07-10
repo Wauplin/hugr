@@ -44,7 +44,9 @@ pub use model::{
     ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,
     SamplingParams, TokenBudget, ToolCall, ToolSchema, Usage,
 };
-pub use policy::{PolicyDecoder, PolicyRegistry, StaticPolicy, TurnPolicy, decode_policy};
+pub use policy::{
+    BudgetPolicy, PolicyDecoder, PolicyRegistry, StaticPolicy, TurnPolicy, decode_policy,
+};
 pub use primitives::{OpId, Seq, Timestamp, Value};
 pub use record::{LogEntry, OpMeta, OpOutcome, Record};
 pub use state::{BrainState, InflightOp, OpKind};

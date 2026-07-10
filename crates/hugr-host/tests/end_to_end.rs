@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hugr_core::{
-    BrainState, ContentPart, ContextPlan, DoneReason, LogEntry, ModelOutput, ModelRequest,
-    ModelSelector, OpOutcome, OutputEvent, PolicyRegistry, Record, Role, StaticPolicy, ToolCall,
-    ToolSchema, TurnPolicy, Usage, Value,
+    BrainState, BudgetPolicy, ContentPart, ContextPlan, DoneReason, LogEntry, ModelOutput,
+    ModelRequest, ModelSelector, OpOutcome, OutputEvent, PolicyRegistry, Record, Role,
+    StaticPolicy, ToolCall, ToolSchema, TurnPolicy, Usage, Value,
 };
 use hugr_host::mcp::{self, McpServerConfig};
 use hugr_host::{Capability, ChunkSink, Engine, Frontend, ModelAdapter, ModelSink};
@@ -1121,6 +1121,34 @@ async fn custom_policy_controls_model_and_verifies_through_registry() {
     let replay = hugr_host::hugr_replay::verify_with_registry(&trace, &registry)
         .expect("custom policy trace verifies with its registry");
     assert_eq!(replay.log, trace.log);
+}
+
+#[tokio::test]
+async fn budget_policy_wraps_default_policy_and_records_config() {
+    let model = MockModel::new([ModelOutput::text("ok")]);
+    let mut engine = Engine::builder()
+        .record(true)
+        .clock(deterministic_clock())
+        .model(ModelSelector::named("medium"), model.clone())
+        .budget_policy(
+            BudgetPolicy::new(8)
+                .with_trigger_tokens(8)
+                .with_keep_recent_tokens(2)
+                .with_max_block_tokens(2),
+        )
+        .build();
+
+    engine
+        .user_turn("long enough question to compact later".into())
+        .await;
+    engine.session_end();
+
+    let trace = engine.trace().unwrap();
+    let policy = trace.policy.as_ref().expect("recorded policy");
+    assert_eq!(policy["kind"], "budget");
+    assert_eq!(policy["budget_tokens"], 8);
+    assert_eq!(policy["base"]["kind"], "static");
+    hugr_host::hugr_replay::verify(&trace).expect("budget policy trace verifies");
 }
 
 /// Regression: a resumed engine must start **quiescent**. Resuming a trace

@@ -14,7 +14,7 @@ use hugr_agent::{
     BlobRef, FsBlobStore, FsScratch, Pricing, StorageOverrides, TraceStore,
     depth_exceeded_resolver,
 };
-use hugr_core::{ModelSelector, SamplingParams};
+use hugr_core::{BudgetPolicy, ModelSelector, SamplingParams};
 use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
 use hugr_providers::OpenAiAdapter;
 use schemars::JsonSchema;
@@ -340,6 +340,7 @@ pub async fn build_agent_with_options(
         agent.default_model = Some(ModelSelector::named(default.to_string()));
     }
     agent.pricing = pricing;
+    agent.context_policy = context_policy(def);
     agent.response_contract = response_contract(def, options)?;
     agent.ask_hooks = options.ask_hooks();
     agent.answer_hooks = options.answer_hooks();
@@ -410,6 +411,28 @@ fn response_contract(
         .as_ref()
         .map(|schema| ResponseContract::from_schema("agent_response", schema.clone()))
         .or_else(|| options.single_response_contract()))
+}
+
+fn context_policy(def: &AgentDefinition) -> Option<BudgetPolicy> {
+    if def.context.compaction.as_deref().unwrap_or("none") != "truncate" {
+        return None;
+    }
+    let budget_tokens = def.context.budget_tokens.unwrap_or(128_000);
+    let mut policy = BudgetPolicy::new(budget_tokens);
+    if let Some(trigger_tokens) = def.context.trigger_tokens {
+        policy = policy.with_trigger_tokens(trigger_tokens);
+    }
+    if let Some(keep_recent_tokens) = def.context.keep_recent_tokens {
+        policy = policy.with_keep_recent_tokens(keep_recent_tokens);
+    }
+    if let Some(max_block_tokens) = def.context.max_block_tokens {
+        policy = policy.with_max_block_tokens(max_block_tokens);
+    }
+    Some(
+        policy
+            .with_tool_ttl(def.context.forget.tool_ttl.clone())
+            .with_keep_last_per_tool(def.context.forget.keep_last_per_tool.clone()),
+    )
 }
 
 /// Extract `command` (required) and `args` (optional string array) from an
@@ -732,6 +755,36 @@ root = "."
         assert!(tool_names.contains(&"fs_search"));
         assert!(tool_names.contains(&"scratch_write"));
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[tokio::test]
+    async fn context_config_builds_budget_policy() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models.medium]
+model = "m"
+
+[context]
+budget_tokens = 64
+compaction = "truncate"
+trigger_tokens = 48
+keep_recent_tokens = 16
+max_block_tokens = 8
+
+[context.forget.keep_last_per_tool]
+page_snapshot = 1
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let (agent, warnings) = build_agent(&def).await.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let policy = agent.context_policy.expect("budget policy");
+        let value = serde_json::to_value(policy).unwrap();
+        assert_eq!(value["kind"], "budget");
+        assert_eq!(value["budget_tokens"], 64);
+        assert_eq!(value["trigger_tokens"], 48);
+        assert_eq!(value["keep_last_per_tool"]["page_snapshot"], 1);
     }
 
     /// Write a minimal agent crate folder and return its path.

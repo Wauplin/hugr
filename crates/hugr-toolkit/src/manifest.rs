@@ -43,6 +43,8 @@ pub struct AgentDefinition {
     pub tools: Vec<ToolGrant>,
     /// Declared runtime limits (`[limits]`).
     pub limits: LimitsConfig,
+    /// Context projection and deterministic compaction (`[context]`).
+    pub context: ContextConfig,
     /// Scratchpad configuration (`[scratchpad]`).
     pub scratchpad: ScratchpadConfig,
     /// Trace-store configuration (`[traces]`).
@@ -141,6 +143,34 @@ pub struct LimitsConfig {
     pub max_cost_micro_usd: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
+}
+
+/// The `[context]` block.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_recent_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_block_tokens: Option<u32>,
+    #[serde(default)]
+    pub forget: ContextForgetConfig,
+}
+
+/// Deterministic tool-result forget rules under `[context.forget]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextForgetConfig {
+    #[serde(default)]
+    pub tool_ttl: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub keep_last_per_tool: BTreeMap<String, u32>,
 }
 
 /// The `[scratchpad]` block.
@@ -310,6 +340,8 @@ impl AgentDefinition {
         let models = parse_models(&table, path)?;
         let tools = parse_tools(&table, path)?;
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
+        let context: ContextConfig = parse_section(&table, "context", path)?;
+        validate_context(&context, path)?;
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
         let traces: TracesConfig = parse_section(&table, "traces", path)?;
         let runtime = parse_runtime(&table, path)?;
@@ -320,6 +352,7 @@ impl AgentDefinition {
             models,
             tools,
             limits,
+            context,
             scratchpad,
             traces,
             runtime,
@@ -575,6 +608,44 @@ fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestErr
     Ok(())
 }
 
+fn validate_context(context: &ContextConfig, path: &Path) -> Result<(), ManifestError> {
+    let compaction = context.compaction.as_deref().unwrap_or("none");
+    if !matches!(compaction, "none" | "truncate") {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: "[context].compaction must be \"none\" or \"truncate\"".to_string(),
+        });
+    }
+    for (key, value) in [
+        ("budget_tokens", context.budget_tokens),
+        ("trigger_tokens", context.trigger_tokens),
+        ("max_block_tokens", context.max_block_tokens),
+    ] {
+        if matches!(value, Some(0)) {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!("[context].{key} must be greater than zero"),
+            });
+        }
+    }
+    for (table, map) in [
+        ("tool_ttl", &context.forget.tool_ttl),
+        ("keep_last_per_tool", &context.forget.keep_last_per_tool),
+    ] {
+        for (name, value) in map {
+            if name.trim().is_empty() || *value == 0 {
+                return Err(ManifestError::Validate {
+                    path: path.to_path_buf(),
+                    message: format!(
+                        "[context.forget.{table}] entries need non-empty names and positive values"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Parse a fixed-schema optional section into `T` — unknown keys are hard
 /// errors via each section type's `deny_unknown_fields`.
 fn parse_section<T>(table: &toml::Table, section: &str, path: &Path) -> Result<T, ManifestError>
@@ -601,6 +672,7 @@ fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), Mani
         "models",
         "tools",
         "limits",
+        "context",
         "scratchpad",
         "traces",
         "runtime",
@@ -641,6 +713,62 @@ model = "google/gemma-4-31B-it"
         assert_eq!(def.agent.name, "policy-docs");
         assert_eq!(def.default_tier(), Some("medium"));
         assert!(def.tools.is_empty());
+        assert_eq!(def.context, ContextConfig::default());
+    }
+
+    #[test]
+    fn context_section_parses() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models.medium]
+model = "m"
+
+[context]
+budget_tokens = 4096
+compaction = "truncate"
+trigger_tokens = 3500
+keep_recent_tokens = 500
+max_block_tokens = 200
+
+[context.forget.tool_ttl]
+page_snapshot = 2
+
+[context.forget.keep_last_per_tool]
+browser_observation = 1
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        assert_eq!(def.context.budget_tokens, Some(4096));
+        assert_eq!(def.context.compaction.as_deref(), Some("truncate"));
+        assert_eq!(def.context.forget.tool_ttl["page_snapshot"], 2);
+        assert_eq!(
+            def.context.forget.keep_last_per_tool["browser_observation"],
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_context_is_a_validation_error() {
+        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        for (src, needle) in [
+            (
+                format!("{base}[context]\ncompaction = \"summarize\"\n"),
+                "compaction".to_string(),
+            ),
+            (
+                format!("{base}[context]\nbudget_tokens = 0\n"),
+                "budget_tokens".to_string(),
+            ),
+            (
+                format!("{base}[context.forget.keep_last_per_tool]\npage_snapshot = 0\n"),
+                "keep_last_per_tool".to_string(),
+            ),
+        ] {
+            let err = AgentDefinition::parse(&src, "hugr.toml").unwrap_err();
+            assert!(matches!(err, ManifestError::Validate { .. }), "{src}");
+            assert!(err.to_string().contains(&needle), "{err}");
+        }
     }
 
     #[test]

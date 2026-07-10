@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
-    Brain, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
+    Brain, BudgetPolicy, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
     PolicyRegistry, SamplingParams, StaticPolicy, Timestamp, TurnPolicy, Value,
 };
 use serde_json::json;
@@ -472,6 +472,7 @@ pub struct EngineBuilder {
     model_request_extra: Value,
     sampling: SamplingParams,
     policy: Option<(Box<dyn TurnPolicy>, Value)>,
+    budget_policy: Option<BudgetPolicy>,
     policy_registry: PolicyRegistry,
     record: bool,
     /// When set, the brain is pre-seeded by replaying this trace's recorded
@@ -493,6 +494,7 @@ impl Default for EngineBuilder {
             model_request_extra: Value::Null,
             sampling: SamplingParams::default(),
             policy: None,
+            budget_policy: None,
             policy_registry: PolicyRegistry::default(),
             record: false,
             resume: None,
@@ -563,6 +565,11 @@ impl EngineBuilder {
 
     pub fn policy(mut self, policy: Box<dyn TurnPolicy>, config: Value) -> Self {
         self.policy = Some((policy, config));
+        self
+    }
+
+    pub fn budget_policy(mut self, policy: BudgetPolicy) -> Self {
+        self.budget_policy = Some(policy);
         self
     }
 
@@ -640,7 +647,7 @@ impl EngineBuilder {
                         policy_config,
                     )
                 } else {
-                    let mut policy = StaticPolicy::default()
+                    let mut static_policy = StaticPolicy::default()
                         .with_model(default_model.clone())
                         .with_tools(self.caps.schemas())
                         .with_permissioned(self.caps.permissioned_names())
@@ -648,15 +655,21 @@ impl EngineBuilder {
                         .with_params(self.sampling)
                         .with_extra(self.model_request_extra);
                     if let Some(system) = self.system_prompt {
-                        policy = policy.with_system_prompt(system);
+                        static_policy = static_policy.with_system_prompt(system);
                     }
-                    // Serialize the policy once (for recorded traces) before it
-                    // moves into the brain; best-effort.
-                    let policy_config = self
-                        .record
-                        .then(|| serde_json::to_value(&policy).ok())
-                        .flatten();
-                    let brain = Brain::new(Box::new(policy));
+                    let policy: Box<dyn TurnPolicy>;
+                    let policy_value;
+                    if let Some(budget_policy) = self.budget_policy {
+                        let budget_policy = budget_policy.with_base(static_policy);
+                        policy_value = serde_json::to_value(&budget_policy).ok();
+                        policy = Box::new(budget_policy);
+                    } else {
+                        policy_value = serde_json::to_value(&static_policy).ok();
+                        policy = Box::new(static_policy);
+                    }
+                    // Serialize the policy once (for recorded traces) before it moves into the brain; best-effort.
+                    let policy_config = self.record.then_some(policy_value).flatten();
+                    let brain = Brain::new(policy);
                     (brain, self.record.then(Recorder::default), policy_config)
                 }
             }

@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use hugr_core::{
-    DoneReason, LogEntry, ModelSelector, OpId, OutputEvent, Record, SamplingParams, ToolSchema,
-    Usage,
+    BudgetPolicy, DoneReason, LogEntry, ModelSelector, OpId, OutputEvent, Record, SamplingParams,
+    ToolSchema, Usage,
 };
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter};
 use hugr_replay::{BlobStore, Trace};
@@ -130,6 +130,7 @@ pub struct Agent {
     pub default_model: Option<ModelSelector>,
     pub capabilities: Vec<Arc<dyn Capability>>,
     pub sampling: Option<SamplingParams>,
+    pub context_policy: Option<BudgetPolicy>,
     pub clock: Option<Clock>,
     pub scratch: Arc<dyn ScratchBackend>,
     pub scratch_scope: Value,
@@ -160,6 +161,7 @@ impl Clone for Agent {
             default_model: self.default_model.clone(),
             capabilities: self.capabilities.clone(),
             sampling: self.sampling.clone(),
+            context_policy: self.context_policy.clone(),
             clock: self.clock.clone(),
             scratch: self.scratch.clone(),
             scratch_scope: self.scratch_scope.clone(),
@@ -208,6 +210,7 @@ impl Agent {
             default_model: None,
             capabilities: Vec::new(),
             sampling: None,
+            context_policy: None,
             clock: None,
             scratch: storage.scratch,
             scratch_scope: storage.scratch_scope,
@@ -384,6 +387,9 @@ impl Agent {
         }
         if let Some(sampling) = &self.sampling {
             builder = builder.sampling(sampling.clone());
+        }
+        if let Some(policy) = &self.context_policy {
+            builder = builder.budget_policy(policy.clone());
         }
         if let Some(contract) = &self.response_contract {
             builder = builder.model_request_extra(contract.request_extra());

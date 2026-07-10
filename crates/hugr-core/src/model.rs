@@ -171,6 +171,8 @@ impl ContextSource {
 #[non_exhaustive]
 pub enum ContextDisposition {
     Included { block: ContextBlock },
+    Truncated { block: ContextBlock },
+    Dropped { note: Option<String> },
     Omitted,
 }
 
@@ -183,10 +185,20 @@ impl ContextDisposition {
         Self::Omitted
     }
 
+    pub fn truncated(block: ContextBlock) -> Self {
+        Self::Truncated { block }
+    }
+
+    pub fn dropped(note: Option<String>) -> Self {
+        Self::Dropped { note }
+    }
+
     fn as_request_block(&self) -> Option<&ContextBlock> {
         match self {
-            ContextDisposition::Included { block } => Some(block),
-            ContextDisposition::Omitted => None,
+            ContextDisposition::Included { block } | ContextDisposition::Truncated { block } => {
+                Some(block)
+            }
+            ContextDisposition::Dropped { .. } | ContextDisposition::Omitted => None,
         }
     }
 }
@@ -199,6 +211,8 @@ impl ContextDisposition {
 pub struct ContextBudgetTotals {
     pub used_tokens: u64,
     pub omitted_tokens: u64,
+    pub truncated_tokens: u64,
+    pub dropped_tokens: u64,
 }
 
 impl ContextBudgetTotals {
@@ -211,6 +225,14 @@ impl ContextBudgetTotals {
         match disposition {
             ContextDisposition::Included { .. } => {
                 self.used_tokens += est_tokens;
+            }
+            ContextDisposition::Truncated { .. } => {
+                self.used_tokens += est_tokens;
+                self.truncated_tokens += est_tokens;
+            }
+            ContextDisposition::Dropped { .. } => {
+                self.omitted_tokens += est_tokens;
+                self.dropped_tokens += est_tokens;
             }
             ContextDisposition::Omitted => {
                 self.omitted_tokens += est_tokens;

@@ -3,10 +3,13 @@
 
 mod common;
 
+use std::collections::BTreeMap;
+
 use common::*;
 use hugr_core::{
-    Brain, Command, ContentPart, ContextDisposition, ContextSource, DoneReason, Event,
-    ModelSelector, OpId, Record, Role, StaticPolicy, TokenBudget, ToolSchema, TurnPolicy,
+    Brain, BudgetPolicy, Command, ContentPart, ContextDisposition, ContextSource, DoneReason,
+    Event, ModelSelector, OpId, PolicyRegistry, Record, Role, StaticPolicy, TokenBudget,
+    ToolSchema, TurnPolicy,
 };
 use serde_json::json;
 
@@ -371,6 +374,138 @@ fn context_plan_explains_dispositions_and_renders_request() {
     assert!(
         matches!(plan.entries[2].source, ContextSource::LogEntry { .. })
             && matches!(plan.entries[2].disposition, ContextDisposition::Omitted)
+    );
+}
+
+#[test]
+fn budget_policy_compacts_old_context_deterministically() {
+    let mut brain = Brain::with_default_policy();
+    run_script(
+        &mut brain,
+        vec![
+            user("old user block with enough text to be truncated"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: text_output("old answer block with enough text to be truncated"),
+                usage: usage(),
+                est_tokens: 16,
+            },
+            user("recent question"),
+            Event::ModelDone {
+                op: OpId(1),
+                output: text_output("recent answer"),
+                usage: usage(),
+                est_tokens: 2,
+            },
+        ],
+    );
+
+    let policy = BudgetPolicy::new(12)
+        .with_trigger_tokens(12)
+        .with_keep_recent_tokens(5)
+        .with_max_block_tokens(3);
+    let plan = policy.project_context(brain.state().log(), TokenBudget::new(12));
+    let request = plan.to_model_request();
+
+    assert!(plan.totals.used_tokens <= 12);
+    assert!(plan.totals.dropped_tokens > 0 || plan.totals.truncated_tokens > 0);
+    assert!(plan.entries.iter().any(|entry| matches!(
+        entry.disposition,
+        ContextDisposition::Dropped { .. } | ContextDisposition::Truncated { .. }
+    )));
+    assert!(request.blocks.iter().any(|block| {
+        block.role == Role::System
+            && block.content.iter().any(|part| {
+                matches!(
+                    part,
+                    ContentPart::Text(text) if text.contains("Context compacted")
+                )
+            })
+    }));
+    assert!(
+        request
+            .blocks
+            .iter()
+            .any(|block| block.content.iter().any(|part| {
+                matches!(part, ContentPart::Text(text) if text.contains("recent answer"))
+            }))
+    );
+}
+
+#[test]
+fn budget_policy_forget_rules_drop_stale_tool_transcripts() {
+    let mut brain = Brain::with_default_policy();
+    run_script(
+        &mut brain,
+        vec![
+            user("capture the page"),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("call-1", "page_snapshot", json!({})),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::CapabilityDone {
+                op: OpId(1),
+                result: json!({ "text": "old page" }),
+                est_tokens: 8,
+            },
+            Event::ModelDone {
+                op: OpId(2),
+                output: text_output("captured"),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            user("capture it again"),
+            Event::ModelDone {
+                op: OpId(3),
+                output: tool_output("call-2", "page_snapshot", json!({})),
+                usage: usage(),
+                est_tokens: 1,
+            },
+            Event::CapabilityDone {
+                op: OpId(4),
+                result: json!({ "text": "fresh page" }),
+                est_tokens: 8,
+            },
+        ],
+    );
+
+    let policy = BudgetPolicy::new(100)
+        .with_trigger_tokens(100)
+        .with_keep_last_per_tool(BTreeMap::from([("page_snapshot".to_string(), 1)]));
+    let plan = policy.project_context(brain.state().log(), TokenBudget::new(100));
+    let request = plan.to_model_request();
+
+    assert!(
+        plan.entries
+            .iter()
+            .any(|entry| matches!(entry.disposition, ContextDisposition::Dropped { .. }))
+    );
+    assert!(!request.blocks.iter().any(|block| block.content.iter().any(|part| {
+        matches!(part, ContentPart::ToolUse { id, .. } if id == "call-1")
+            || matches!(part, ContentPart::ToolResult { id, .. } if id == "call-1")
+            || matches!(part, ContentPart::ToolResult { result, .. } if result["text"] == "old page")
+    })));
+    assert!(request.blocks.iter().any(|block| block.content.iter().any(|part| {
+        matches!(part, ContentPart::ToolUse { id, .. } if id == "call-2")
+            || matches!(part, ContentPart::ToolResult { result, .. } if result["text"] == "fresh page")
+    })));
+}
+
+#[test]
+fn policy_registry_decodes_budget_policy() {
+    let value = serde_json::json!({
+        "kind": "budget",
+        "budget_tokens": 32,
+        "trigger_tokens": 40,
+        "keep_recent_tokens": 8,
+        "max_block_tokens": 4
+    });
+    let registry = PolicyRegistry::default();
+    assert!(
+        registry.decode(&value).is_some(),
+        "built-in registry decodes budget policies"
     );
 }
 

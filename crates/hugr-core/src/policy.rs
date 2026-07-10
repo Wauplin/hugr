@@ -34,6 +34,7 @@ impl PolicyRegistry {
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
         registry.register("static", decode_static_policy);
+        registry.register("budget", decode_budget_policy);
         registry
     }
 
@@ -74,6 +75,12 @@ pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
 
 fn decode_static_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
     serde_json::from_value::<StaticPolicy>(value.clone())
+        .ok()
+        .map(|policy| Box::new(policy) as Box<dyn TurnPolicy>)
+}
+
+fn decode_budget_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
+    serde_json::from_value::<BudgetPolicy>(value.clone())
         .ok()
         .map(|policy| Box::new(policy) as Box<dyn TurnPolicy>)
 }
@@ -393,6 +400,358 @@ impl TurnPolicy for StaticPolicy {
     fn is_background(&self, capability: &str) -> bool {
         self.background.iter().any(|c| c == capability)
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BudgetPolicy {
+    #[serde(default = "budget_policy_kind")]
+    kind: String,
+    #[serde(default)]
+    base: StaticPolicy,
+    budget_tokens: u32,
+    trigger_tokens: u32,
+    keep_recent_tokens: u32,
+    max_block_tokens: u32,
+    #[serde(default)]
+    tool_ttl: BTreeMap<String, u32>,
+    #[serde(default)]
+    keep_last_per_tool: BTreeMap<String, u32>,
+}
+
+fn budget_policy_kind() -> String {
+    "budget".to_string()
+}
+
+impl BudgetPolicy {
+    pub fn new(budget_tokens: u32) -> Self {
+        let budget_tokens = budget_tokens.max(1);
+        Self {
+            kind: budget_policy_kind(),
+            base: StaticPolicy::default()
+                .with_context_budget(TokenBudget::new(budget_tokens.into())),
+            budget_tokens,
+            trigger_tokens: budget_tokens,
+            keep_recent_tokens: budget_tokens / 3,
+            max_block_tokens: (budget_tokens / 4).max(1),
+            tool_ttl: BTreeMap::new(),
+            keep_last_per_tool: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_base(mut self, base: StaticPolicy) -> Self {
+        self.base = base.with_context_budget(TokenBudget::new(self.budget_tokens.into()));
+        self
+    }
+
+    pub fn with_trigger_tokens(mut self, trigger_tokens: u32) -> Self {
+        self.trigger_tokens = trigger_tokens.max(1);
+        self
+    }
+
+    pub fn with_keep_recent_tokens(mut self, keep_recent_tokens: u32) -> Self {
+        self.keep_recent_tokens = keep_recent_tokens;
+        self
+    }
+
+    pub fn with_max_block_tokens(mut self, max_block_tokens: u32) -> Self {
+        self.max_block_tokens = max_block_tokens.max(1);
+        self
+    }
+
+    pub fn with_tool_ttl(mut self, tool_ttl: BTreeMap<String, u32>) -> Self {
+        self.tool_ttl = tool_ttl
+            .into_iter()
+            .filter(|(name, ttl)| !name.trim().is_empty() && *ttl > 0)
+            .collect();
+        self
+    }
+
+    pub fn with_keep_last_per_tool(mut self, keep_last_per_tool: BTreeMap<String, u32>) -> Self {
+        self.keep_last_per_tool = keep_last_per_tool
+            .into_iter()
+            .filter(|(name, keep)| !name.trim().is_empty() && *keep > 0)
+            .collect();
+        self
+    }
+}
+
+impl TurnPolicy for BudgetPolicy {
+    fn choose_model(&self, state: &BrainState) -> ModelSelector {
+        self.base.choose_model(state)
+    }
+
+    fn context_budget(&self, _state: &BrainState) -> TokenBudget {
+        TokenBudget::new(self.budget_tokens.into())
+    }
+
+    fn project_context(&self, log: &[LogEntry], budget: TokenBudget) -> ContextPlan {
+        let mut plan = self.base.project_context(log, budget);
+        if plan.totals.used_tokens <= u64::from(self.trigger_tokens) {
+            apply_forget_rules(
+                log,
+                &mut plan.entries,
+                &self.tool_ttl,
+                &self.keep_last_per_tool,
+            );
+            plan.totals = totals_for(&plan.entries);
+            return plan;
+        }
+
+        apply_forget_rules(
+            log,
+            &mut plan.entries,
+            &self.tool_ttl,
+            &self.keep_last_per_tool,
+        );
+        plan.totals = totals_for(&plan.entries);
+        let recent = recent_indices(&plan.entries, self.keep_recent_tokens);
+        let mut used = plan.totals.used_tokens;
+        let target = u64::from(self.budget_tokens);
+        let mut dropped = 0u64;
+        let mut truncated = 0u64;
+
+        for (idx, entry) in plan.entries.iter_mut().enumerate() {
+            if used <= target {
+                break;
+            }
+            if recent.contains(&idx) || matches!(entry.source, ContextSource::System) {
+                continue;
+            }
+            let est = u64::from(entry.est_tokens);
+            let disposition =
+                std::mem::replace(&mut entry.disposition, ContextDisposition::Omitted);
+            match disposition {
+                ContextDisposition::Included { block }
+                | ContextDisposition::Truncated { block } => {
+                    if entry.est_tokens > self.max_block_tokens {
+                        let block = truncate_block(block, self.max_block_tokens);
+                        used = used.saturating_sub(est) + u64::from(self.max_block_tokens);
+                        truncated += est.saturating_sub(u64::from(self.max_block_tokens));
+                        entry.est_tokens = self.max_block_tokens;
+                        entry.disposition = ContextDisposition::truncated(block);
+                    } else {
+                        used = used.saturating_sub(est);
+                        dropped += est;
+                        entry.disposition = ContextDisposition::dropped(Some(
+                            "dropped by deterministic budget policy".to_string(),
+                        ));
+                    }
+                }
+                other => {
+                    entry.disposition = other;
+                }
+            }
+        }
+
+        if used > target {
+            for (idx, entry) in plan.entries.iter_mut().enumerate() {
+                if used <= target {
+                    break;
+                }
+                if recent.contains(&idx) || matches!(entry.source, ContextSource::System) {
+                    continue;
+                }
+                if matches!(
+                    entry.disposition,
+                    ContextDisposition::Included { .. } | ContextDisposition::Truncated { .. }
+                ) {
+                    let est = u64::from(entry.est_tokens);
+                    used = used.saturating_sub(est);
+                    dropped += est;
+                    entry.disposition = ContextDisposition::dropped(Some(
+                        "dropped by deterministic budget policy".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if dropped > 0 || truncated > 0 {
+            let note = format!(
+                "Context compacted deterministically: dropped approximately {dropped} token(s), truncated approximately {truncated} token(s)."
+            );
+            let note_entry = ContextPlanEntry::new(
+                ContextSource::system(),
+                0,
+                ContextDisposition::included(ContextBlock::new(
+                    Role::System,
+                    vec![ContentPart::Text(note)],
+                )),
+            );
+            let insert_at = plan
+                .entries
+                .iter()
+                .position(|entry| !matches!(entry.source, ContextSource::System))
+                .unwrap_or(plan.entries.len());
+            plan.entries.insert(insert_at, note_entry);
+        }
+        balance_tool_call_groups(&mut plan.entries);
+        plan.totals = totals_for(&plan.entries);
+        plan
+    }
+
+    fn needs_permission(&self, capability: &str) -> bool {
+        self.base.needs_permission(capability)
+    }
+
+    fn is_background(&self, capability: &str) -> bool {
+        self.base.is_background(capability)
+    }
+}
+
+fn apply_forget_rules(
+    log: &[LogEntry],
+    entries: &mut [ContextPlanEntry],
+    tool_ttl: &BTreeMap<String, u32>,
+    keep_last_per_tool: &BTreeMap<String, u32>,
+) {
+    if tool_ttl.is_empty() && keep_last_per_tool.is_empty() {
+        return;
+    }
+
+    let mut newer_turns = 0u32;
+    let mut newer_by_tool: BTreeMap<String, u32> = BTreeMap::new();
+    let mut forgotten = HashSet::new();
+    for entry in log.iter().rev() {
+        match &entry.record {
+            Record::UserMessage { .. } => newer_turns = newer_turns.saturating_add(1),
+            Record::ToolResult { name, .. } => {
+                let newer_same = newer_by_tool.get(name).copied().unwrap_or(0);
+                let expired_by_ttl = tool_ttl.get(name).is_some_and(|ttl| newer_turns >= *ttl);
+                let expired_by_keep_last = keep_last_per_tool
+                    .get(name)
+                    .is_some_and(|keep| newer_same >= *keep);
+                if expired_by_ttl || expired_by_keep_last {
+                    forgotten.insert(entry.seq);
+                }
+                newer_by_tool.insert(name.clone(), newer_same.saturating_add(1));
+            }
+            Record::ModelOutput { .. } | Record::OpEnded { .. } => {}
+        }
+    }
+
+    for entry in &mut *entries {
+        if let ContextSource::LogEntry { seq } = entry.source
+            && forgotten.contains(&seq)
+        {
+            entry.disposition = ContextDisposition::dropped(Some(
+                "dropped by deterministic forget rule".to_string(),
+            ));
+        }
+    }
+    balance_tool_call_groups(entries);
+}
+
+fn balance_tool_call_groups(entries: &mut [ContextPlanEntry]) {
+    loop {
+        let included_tool_uses = entries
+            .iter()
+            .flat_map(|entry| match &entry.disposition {
+                ContextDisposition::Included { block }
+                | ContextDisposition::Truncated { block } => block
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::ToolUse { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                ContextDisposition::Dropped { .. } | ContextDisposition::Omitted => Vec::new(),
+            })
+            .collect::<HashSet<_>>();
+        let included_tool_results = entries
+            .iter()
+            .flat_map(|entry| match &entry.disposition {
+                ContextDisposition::Included { block }
+                | ContextDisposition::Truncated { block } => block
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::ToolResult { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                ContextDisposition::Dropped { .. } | ContextDisposition::Omitted => Vec::new(),
+            })
+            .collect::<HashSet<_>>();
+
+        let mut changed = false;
+        for entry in entries.iter_mut() {
+            let should_drop = match &entry.disposition {
+                ContextDisposition::Included { block }
+                | ContextDisposition::Truncated { block } => {
+                    block.content.iter().any(|part| match part {
+                        ContentPart::ToolUse { id, .. } => !included_tool_results.contains(id),
+                        ContentPart::ToolResult { id, .. } => !included_tool_uses.contains(id),
+                        ContentPart::Text(_) => false,
+                    })
+                }
+                ContextDisposition::Dropped { .. } | ContextDisposition::Omitted => false,
+            };
+            if should_drop {
+                entry.disposition = ContextDisposition::dropped(Some(
+                    "dropped with paired tool transcript block".to_string(),
+                ));
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn recent_indices(entries: &[ContextPlanEntry], keep_recent_tokens: u32) -> HashSet<usize> {
+    let mut keep = HashSet::new();
+    let mut tokens = 0u64;
+    let limit = u64::from(keep_recent_tokens);
+    for (idx, entry) in entries.iter().enumerate().rev() {
+        if matches!(
+            entry.disposition,
+            ContextDisposition::Included { .. } | ContextDisposition::Truncated { .. }
+        ) {
+            let est = u64::from(entry.est_tokens);
+            if !keep.is_empty() && limit > 0 && tokens.saturating_add(est) > limit {
+                break;
+            }
+            keep.insert(idx);
+            tokens = tokens.saturating_add(est);
+            if tokens >= limit {
+                break;
+            }
+        }
+    }
+    keep
+}
+
+fn truncate_block(mut block: ContextBlock, max_tokens: u32) -> ContextBlock {
+    let max_chars = (max_tokens as usize).saturating_mul(4).max(1);
+    for part in &mut block.content {
+        if let ContentPart::Text(text) = part {
+            *text = truncate_string(text, max_chars);
+            return block;
+        }
+    }
+    block.content.push(ContentPart::Text(format!(
+        "[content truncated to approximately {max_tokens} token(s)]"
+    )));
+    block
+}
+
+fn truncate_string(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars).collect();
+    out.push_str("\n[...truncated...]");
+    out
+}
+
+fn totals_for(entries: &[ContextPlanEntry]) -> ContextBudgetTotals {
+    let mut totals = ContextBudgetTotals::new();
+    for entry in entries {
+        totals.add(&entry.disposition, entry.est_tokens);
+    }
+    totals
 }
 
 fn find_tool_result_for_call<'a>(
