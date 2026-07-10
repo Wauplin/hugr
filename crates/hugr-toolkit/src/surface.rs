@@ -16,6 +16,7 @@
 //! surfaces: they print JSON and exit non-zero on failure.
 
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -48,6 +49,8 @@ pub struct SurfaceArgs {
     describe: bool,
     config: bool,
     traces: bool,
+    feedback: Option<String>,
+    feedback_payload: Option<String>,
     mcp_serve: bool,
     runtime: RuntimeValues,
 }
@@ -58,6 +61,7 @@ enum Mode {
     Ask,
     Describe,
     Traces,
+    Feedback,
 }
 
 /// Entry point a built agent binary calls from `main`. Parses `std::env::args`,
@@ -115,6 +119,8 @@ where
         Mode::Describe
     } else if args.traces {
         Mode::Traces
+    } else if args.feedback.is_some() {
+        Mode::Feedback
     } else {
         Mode::Ask
     };
@@ -158,6 +164,16 @@ where
                 1
             }
         },
+        Mode::Feedback => {
+            run_feedback(
+                &agent,
+                args.feedback,
+                args.feedback_payload,
+                started,
+                pretty,
+            )
+            .await
+        }
         Mode::Ask => {
             run_ask(
                 &agent,
@@ -209,6 +225,8 @@ where
         describe: matches.get_flag("describe"),
         config: matches.get_flag("config"),
         traces: matches.get_flag("traces"),
+        feedback: matches.get_one::<String>("feedback").cloned(),
+        feedback_payload: matches.get_one::<String>("feedback-payload").cloned(),
         mcp_serve: matches.get_flag("mcp-serve"),
         runtime,
     }
@@ -268,6 +286,18 @@ fn surface_command(def: &AgentDefinition) -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("feedback")
+                .long("feedback")
+                .help("Append feedback for an existing trace id.")
+                .value_name("TRACE_ID"),
+        )
+        .arg(
+            Arg::new("feedback-payload")
+                .long("feedback-payload")
+                .help("JSON feedback payload; when omitted, JSON is read from stdin if present.")
+                .value_name("JSON"),
+        )
+        .arg(
             Arg::new("mcp-serve")
                 .long("mcp-serve")
                 .help("Run as a stdio MCP server exposing an ask tool.")
@@ -300,6 +330,46 @@ fn surface_command(def: &AgentDefinition) -> Command {
             .help("The question to ask (omit when using --describe/--config/--traces).")
             .index(index),
     )
+}
+
+async fn run_feedback(
+    agent: &Agent,
+    trace_id: Option<String>,
+    payload: Option<String>,
+    started: Instant,
+    pretty: bool,
+) -> i32 {
+    let Some(trace_id) = trace_id else {
+        return print_answer(
+            &error_answer("--feedback requires a trace id", started),
+            pretty,
+        );
+    };
+    let payload = match feedback_payload(payload) {
+        Ok(payload) => payload,
+        Err(err) => return print_answer(&error_answer(err, started), pretty),
+    };
+    match agent.feedback(TraceId::new(trace_id), payload).await {
+        Ok(feedback) => print_json_or_die(&feedback, pretty),
+        Err(err) => print_answer(&error_answer(err.to_string(), started), pretty),
+    }
+}
+
+fn feedback_payload(explicit: Option<String>) -> Result<serde_json::Value, String> {
+    let src = match explicit {
+        Some(src) => src,
+        None => {
+            let mut src = String::new();
+            std::io::stdin()
+                .read_to_string(&mut src)
+                .map_err(|err| format!("reading feedback payload from stdin: {err}"))?;
+            if src.trim().is_empty() {
+                return Ok(json!({}));
+            }
+            src
+        }
+    };
+    serde_json::from_str(&src).map_err(|err| format!("feedback payload is not valid JSON: {err}"))
 }
 
 fn runtime_id(name: &str) -> String {
@@ -772,6 +842,56 @@ required = true
 
         unsafe { std::env::remove_var("HUGR_AGENT_HOME") };
         let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn feedback_mode_appends_for_existing_trace() {
+        use hugr_agent::TraceHeader;
+
+        let name = format!(
+            "feedback-cli-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let home = crate::runtime::agent_home_dir(&name);
+        let _ = std::fs::remove_dir_all(&home);
+
+        let def = AgentDefinition::parse(
+            &format!("[agent]\nname = {name:?}\n[models.medium]\nmodel = \"m\"\n"),
+            "hugr.toml",
+        )
+        .unwrap();
+        let store = crate::runtime::trace_store_for(&def);
+        let trace_id = store
+            .put(
+                hugr_replay::Trace::new(Vec::new(), Vec::new(), Some(1)),
+                TraceHeader::new(&name, "0.0.0", "seed", "success"),
+            )
+            .unwrap();
+
+        let code = run_definition_args(
+            def.clone(),
+            [
+                "--feedback".to_string(),
+                trace_id.to_string(),
+                "--feedback-payload".to_string(),
+                "{\"score\":1}".to_string(),
+                "--json".to_string(),
+            ],
+            Instant::now(),
+        )
+        .await;
+        assert_eq!(code, 0);
+
+        let (agent, _) = crate::runtime::build_agent(&def).await.unwrap();
+        let entries = agent.feedback_for(&trace_id).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].payload["score"], 1);
+
         let _ = std::fs::remove_dir_all(&home);
     }
 }

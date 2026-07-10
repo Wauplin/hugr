@@ -110,7 +110,10 @@ pub(crate) async fn handle_message(
             &id,
             initialize_result(&card.name, &card.version, &card.description, &params),
         ),
-        "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema(None)] })),
+        "tools/list" => ok(
+            &id,
+            json!({ "tools": [ask_tool_schema(None), feedback_tool_schema()] }),
+        ),
         "ping" => ok(&id, json!({})),
         "tools/call" => match tools_call(agent, params).await {
             Ok(result) => ok(&id, result),
@@ -144,7 +147,10 @@ async fn handle_definition_message(
                 &params,
             ),
         ),
-        "tools/list" => ok(&id, json!({ "tools": [ask_tool_schema(Some(def))] })),
+        "tools/list" => ok(
+            &id,
+            json!({ "tools": [ask_tool_schema(Some(def)), feedback_tool_schema()] }),
+        ),
         "ping" => ok(&id, json!({})),
         "tools/call" => match tools_call_definition(def, options, params).await {
             Ok(result) => ok(&id, result),
@@ -167,11 +173,33 @@ struct AskArgs {
     runtime: BTreeMap<String, Value>,
 }
 
+#[derive(Deserialize)]
+struct FeedbackArgs {
+    trace_id: String,
+    #[serde(default)]
+    payload: Value,
+}
+
 /// Handle a `tools/call`: only `ask` is exposed. The [`Answer`] rides back as
 /// `structuredContent` plus a text block; run failures are `status: "error"`
 /// answers (not MCP `isError`), so orchestrators branch on the structured data.
 async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    if name == "feedback" {
+        let args: FeedbackArgs =
+            serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
+                .map_err(|e| format!("invalid `feedback` arguments: {e}"))?;
+        let feedback = agent
+            .feedback(TraceId::new(args.trace_id), args.payload)
+            .await
+            .map_err(|e| e.to_string())?;
+        let structured = serde_json::to_value(&feedback).map_err(|e| e.to_string())?;
+        return Ok(json!({
+            "content": [{ "type": "text", "text": "feedback recorded" }],
+            "structuredContent": structured,
+            "isError": false,
+        }));
+    }
     if name != "ask" {
         return Err(format!("unknown tool: {name}"));
     }
@@ -204,6 +232,27 @@ async fn tools_call_definition(
     params: Value,
 ) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    if name == "feedback" {
+        let args: FeedbackArgs =
+            serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
+                .map_err(|e| format!("invalid `feedback` arguments: {e}"))?;
+        let (agent, warnings) = build_agent_with_options(def, options)
+            .await
+            .map_err(|e| e.to_string())?;
+        for warning in &warnings {
+            eprintln!("warning: {warning}");
+        }
+        let feedback = agent
+            .feedback(TraceId::new(args.trace_id), args.payload)
+            .await
+            .map_err(|e| e.to_string())?;
+        let structured = serde_json::to_value(&feedback).map_err(|e| e.to_string())?;
+        return Ok(json!({
+            "content": [{ "type": "text", "text": "feedback recorded" }],
+            "structuredContent": structured,
+            "isError": false,
+        }));
+    }
     if name != "ask" {
         return Err(format!("unknown tool: {name}"));
     }
@@ -326,6 +375,27 @@ fn ask_tool_schema(def: Option<&AgentDefinition>) -> Value {
             "type": "object",
             "properties": properties,
             "required": required
+        }
+    })
+}
+
+fn feedback_tool_schema() -> Value {
+    json!({
+        "name": "feedback",
+        "description": "Append opaque feedback for a previously returned Hugr trace_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "type": "string",
+                    "description": "Trace id returned by an earlier ask."
+                },
+                "payload": {
+                    "description": "Opaque feedback payload."
+                }
+            },
+            "required": ["trace_id"],
+            "additionalProperties": false
         }
     })
 }
@@ -453,11 +523,12 @@ help = "Docs root."
         assert_eq!(init["result"]["serverInfo"]["name"], "mcpsrv");
         assert_eq!(init["result"]["serverInfo"]["version"], "0.2.0");
 
-        // tools/list advertises exactly the `ask` tool.
+        // tools/list advertises `ask` plus the side-channel feedback tool.
         let list = handle_message(&agent, &card, &json!({ "id": 2, "method": "tools/list" }))
             .await
             .unwrap();
         assert_eq!(list["result"]["tools"][0]["name"], "ask");
+        assert_eq!(list["result"]["tools"][1]["name"], "feedback");
 
         // tools/call ask → structured Answer with a persisted trace_id.
         let call = handle_message(
@@ -478,7 +549,7 @@ help = "Docs root."
             &agent,
             &card,
             &json!({ "id": 4, "method": "tools/call",
-                     "params": { "name": "ask", "arguments": { "question": "again", "trace_id": trace_id } } }),
+                     "params": { "name": "ask", "arguments": { "question": "again", "trace_id": trace_id.clone() } } }),
         )
         .await
         .unwrap();
@@ -486,6 +557,21 @@ help = "Docs root."
             .as_str()
             .unwrap();
         assert_ne!(child_id, trace_id, "resume wrote a new child trace");
+
+        // Feedback appends to the sidecar and returns structured feedback.
+        let feedback = handle_message(
+            &agent,
+            &card,
+            &json!({ "id": 45, "method": "tools/call",
+                     "params": { "name": "feedback", "arguments": { "trace_id": trace_id, "payload": { "score": 1 } } } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(feedback["result"]["isError"], false);
+        assert_eq!(
+            feedback["result"]["structuredContent"]["payload"]["score"],
+            1
+        );
 
         // An unknown tool is a JSON-RPC error.
         let bad = handle_message(

@@ -9,13 +9,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use hugr_agent::{
     Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, AnswerHook, Ask, AskHook,
-    BlobRef, FsBlobStore, FsMemory, FsScratch, Pricing, StorageOverrides, TraceStore,
-    depth_exceeded_resolver,
+    BlobRef, FsBlobStore, FsFeedbackStore, FsMemory, FsScratch, Pricing, StorageOverrides,
+    TraceStore, depth_exceeded_resolver,
 };
-use hugr_core::{BudgetPolicy, ModelSelector, SamplingParams};
-use hugr_host::mcp::{McpError, McpServerConfig, load_stdio};
+use hugr_core::{BudgetPolicy, ModelSelector, SamplingParams, ToolSchema, Value};
+use hugr_host::{
+    Capability, ChunkSink,
+    mcp::{McpError, McpServerConfig, load_stdio},
+};
 use hugr_providers::OpenAiAdapter;
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
@@ -33,6 +37,9 @@ pub const DEFAULT_SCRATCH_DIRNAME: &str = "scratch";
 
 /// Default memory directory under the per-agent home.
 pub const DEFAULT_MEMORY_DIRNAME: &str = "memory";
+
+/// Default feedback sidecar directory under the per-agent home.
+pub const DEFAULT_FEEDBACK_DIRNAME: &str = "feedback";
 
 pub const DEFAULT_GLOBAL_BLOB_DIRNAME: &str = "blobs";
 
@@ -373,7 +380,12 @@ pub async fn build_agent_with_options(
                     })?;
                 agent.capabilities.extend(caps);
             }
-            ToolKind::Agent => agent.agent_tools.push(build_agent_tool(grant, &base_dir)?),
+            ToolKind::Agent => {
+                agent.agent_tools.push(build_agent_tool(grant, &base_dir)?);
+                agent
+                    .capabilities
+                    .push(Arc::new(build_agent_feedback_tool(grant, &base_dir)?));
+            }
         }
     }
     if let Some(grant) = def
@@ -420,6 +432,7 @@ pub async fn build_agent_with_options(
         agent.scratch = Arc::new(FsScratch::new(&scratch_root));
         agent.scratch_scope = serde_json::json!({ "root": scratch_root.display().to_string() });
         agent.set_blob_store(FsBlobStore::new(global_blob_store_dir()));
+        agent.set_feedback_store(FsFeedbackStore::new(home.join(DEFAULT_FEEDBACK_DIRNAME)));
     }
 
     Ok((agent, warnings))
@@ -506,10 +519,6 @@ fn remaining_agent_depth() -> u32 {
 /// with one less budget.
 fn build_agent_tool(grant: &ToolGrant, base_dir: &Path) -> Result<AgentToolSpec, RuntimeError> {
     let tool_name = format!("agent_{}", grant.name);
-    let err = |message: String| RuntimeError::Agent {
-        name: grant.name.clone(),
-        message,
-    };
 
     // Depth/cycle cut: no child is ever run.
     let depth = remaining_agent_depth();
@@ -521,6 +530,36 @@ fn build_agent_tool(grant: &ToolGrant, base_dir: &Path) -> Result<AgentToolSpec,
         ));
     }
 
+    let resolved = resolve_agent_artifact(grant, base_dir)?;
+
+    let bin = resolved.clone();
+    let resolver: AgentToolResolver = Arc::new(move |ask: Ask| {
+        let bin = bin.clone();
+        Box::pin(async move { run_subprocess_agent(&bin, ask, depth - 1).await })
+    });
+    Ok(AgentToolSpec::new(
+        tool_name,
+        format!("subagent artifact at {}", resolved.display()),
+        resolver,
+    ))
+}
+
+fn build_agent_feedback_tool(
+    grant: &ToolGrant,
+    base_dir: &Path,
+) -> Result<SubprocessFeedbackTool, RuntimeError> {
+    Ok(SubprocessFeedbackTool {
+        name: format!("agent_{}_feedback", grant.name),
+        child: grant.name.clone(),
+        artifact: resolve_agent_artifact(grant, base_dir)?,
+    })
+}
+
+fn resolve_agent_artifact(grant: &ToolGrant, base_dir: &Path) -> Result<PathBuf, RuntimeError> {
+    let err = |message: String| RuntimeError::Agent {
+        name: grant.name.clone(),
+        message,
+    };
     let artifact = grant
         .config
         .get("artifact")
@@ -533,17 +572,7 @@ fn build_agent_tool(grant: &ToolGrant, base_dir: &Path) -> Result<AgentToolSpec,
             resolved.display()
         )));
     }
-
-    let bin = resolved.clone();
-    let resolver: AgentToolResolver = Arc::new(move |ask: Ask| {
-        let bin = bin.clone();
-        Box::pin(async move { run_subprocess_agent(&bin, ask, depth - 1).await })
-    });
-    Ok(AgentToolSpec::new(
-        tool_name,
-        format!("subagent artifact at {}", resolved.display()),
-        resolver,
-    ))
+    Ok(resolved)
 }
 
 /// Run a built agent artifact as a subprocess over the CLI JSON contract:
@@ -590,6 +619,100 @@ async fn run_subprocess_agent(bin: &Path, ask: Ask, depth: u32) -> Result<Answer
     }
     serde_json::from_slice::<Answer>(&output.stdout)
         .map_err(|e| format!("parsing subagent answer: {e}"))
+}
+
+struct SubprocessFeedbackTool {
+    name: String,
+    child: String,
+    artifact: PathBuf,
+}
+
+#[derive(serde::Deserialize)]
+struct SubprocessFeedbackArgs {
+    trace_id: String,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[async_trait]
+impl Capability for SubprocessFeedbackTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            &self.name,
+            format!(
+                "Append feedback for a trace returned by the `{}` subagent.",
+                self.child
+            ),
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "trace_id": {
+                        "type": "string",
+                        "description": "Trace id returned by the subagent."
+                    },
+                    "payload": {
+                        "description": "Opaque feedback payload."
+                    }
+                },
+                "required": ["trace_id"],
+                "additionalProperties": false
+            }),
+        )
+    }
+
+    fn requires_permission(&self) -> bool {
+        false
+    }
+
+    async fn invoke(&self, args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
+        let args: SubprocessFeedbackArgs = serde_json::from_value(args).map_err(
+            |err| serde_json::json!({ "error": format!("invalid feedback args: {err}") }),
+        )?;
+        run_subprocess_feedback(&self.artifact, args)
+            .await
+            .map_err(|err| serde_json::json!({ "error": err }))
+    }
+}
+
+async fn run_subprocess_feedback(
+    bin: &Path,
+    args: SubprocessFeedbackArgs,
+) -> Result<Value, String> {
+    let payload = serde_json::to_string(&args.payload)
+        .map_err(|e| format!("encoding feedback payload: {e}"))?;
+    let output = tokio::process::Command::new(bin)
+        .arg("--feedback")
+        .arg(&args.trace_id)
+        .arg("--feedback-payload")
+        .arg(payload)
+        .arg("--json")
+        .env(BLOB_STORE_ENV, global_blob_store_dir())
+        .output()
+        .await
+        .map_err(|e| format!("spawning subagent `{}` for feedback: {e}", bin.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "subagent `{}` feedback exited with {}: {}",
+            bin.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("parsing feedback result: {e}"))?;
+    if value.get("status").and_then(Value::as_str) == Some("error") {
+        let message = value
+            .get("response")
+            .and_then(|response| response.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("feedback failed");
+        return Err(message.to_string());
+    }
+    Ok(value)
 }
 
 /// Resolve a manifest path against the agent crate folder (absolute paths pass
@@ -866,7 +989,7 @@ readonly = true
     #[tokio::test]
     async fn agent_as_tool_artifact_grant_registers_agent_tool() {
         // A built-artifact grant (subprocess-only) registers an
-        // `agent_<name>` capability on the parent's card.
+        // `agent_<name>` capability and its feedback sibling on the parent's card.
         let dir = write_def("artifact", "");
         let artifact = dir.join("child-bin");
         std::fs::write(&artifact, b"#!/bin/sh\n").unwrap();
@@ -885,6 +1008,101 @@ readonly = true
             .map(|t| t.name.clone())
             .collect();
         assert!(names.contains(&"agent_helper".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"agent_helper_feedback".to_string()),
+            "{names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agent_feedback_tool_calls_child_feedback_surface() {
+        use std::collections::VecDeque;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Mutex;
+
+        use hugr_core::{ModelOutput, ModelRequest, Record, ToolCall, Usage};
+        use hugr_host::{ModelAdapter, ModelSink};
+
+        struct MockModel {
+            outputs: Mutex<VecDeque<ModelOutput>>,
+        }
+
+        #[async_trait]
+        impl ModelAdapter for MockModel {
+            async fn call(
+                &self,
+                _request: ModelRequest,
+                sink: &ModelSink,
+            ) -> anyhow::Result<(ModelOutput, Usage)> {
+                let output = self
+                    .outputs
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or_else(|| anyhow::anyhow!("mock ran out of outputs"))?;
+                if !output.text.is_empty() {
+                    sink.text(output.text.clone());
+                }
+                Ok((output, Usage::new(1, 1)))
+            }
+        }
+
+        let dir = write_def("feedback-tool", "");
+        let artifact = dir.join("child-feedback.sh");
+        let args_file = dir.join("feedback-args.txt");
+        std::fs::write(
+            &artifact,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {:?}\nTRACE=''\nPAYLOAD='{{}}'\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --feedback) TRACE=\"$2\"; shift 2 ;;\n    --feedback-payload) PAYLOAD=\"$2\"; shift 2 ;;\n    --json) shift ;;\n    *) shift ;;\n  esac\ndone\nprintf '{{\"trace_id\":\"%s\",\"payload\":%s,\"created_at_ms\":123}}\\n' \"$TRACE\" \"$PAYLOAD\"\n",
+                args_file.display().to_string()
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&artifact).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&artifact, perms).unwrap();
+
+        let parent_src = "[agent]\nname = \"parent-feedback\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.helper]\nartifact = \"child-feedback.sh\"\n";
+        let mut def = AgentDefinition::parse(parent_src, "hugr.toml").unwrap();
+        def.source_dir = Some(dir.clone());
+        let (mut agent, warnings) = build_agent(&def).await.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        agent.models.clear();
+        agent.models.push((
+            ModelSelector::named("medium"),
+            Arc::new(MockModel {
+                outputs: Mutex::new(VecDeque::from([
+                    ModelOutput::tool_calls(vec![ToolCall::new(
+                        "fb1",
+                        "agent_helper_feedback",
+                        serde_json::json!({
+                            "trace_id": "child-trace",
+                            "payload": { "score": 1 }
+                        }),
+                    )]),
+                    ModelOutput::text("recorded"),
+                ])),
+            }),
+        ));
+        agent.system_prompt = Some("file feedback".into());
+
+        let answer = agent.ask(Ask::new("file feedback")).await.unwrap();
+        assert_eq!(answer.status, hugr_agent::STATUS_SUCCESS);
+        let args = std::fs::read_to_string(args_file).unwrap();
+        assert!(args.contains("--feedback"));
+        assert!(args.contains("child-trace"));
+        assert!(args.contains("--feedback-payload"));
+
+        let trace = agent.trace_backend().get(&answer.trace_id).await.unwrap();
+        let feedback_result = trace.log.iter().find_map(|entry| match &entry.record {
+            Record::ToolResult { name, result, .. } if name == "agent_helper_feedback" => {
+                Some(result)
+            }
+            _ => None,
+        });
+        assert_eq!(feedback_result.unwrap()["payload"]["score"], 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

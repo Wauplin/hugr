@@ -190,7 +190,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: jail tests (mirror `scratchpad.rs` suite); two sequential asks sharing state; fork isolation of scratch unaffected; readonly mode enforced.
 - Depends on: 1.1; nicer after 1.2.
 
-### 2.3 `[ ]` Feedback mechanism (idea 1) — M
+### 2.3 `[x]` Feedback mechanism (idea 1) — M
 
 - Why: an orchestrator that just used a subagent knows whether the answer helped; capturing that beside the trace enables offline improvement (4.1). Explicitly *not* consumed in real time.
 - Design:

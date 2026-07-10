@@ -28,6 +28,9 @@ use tokio::task::JoinHandle;
 use crate::agent_tool::{AgentTool, AgentToolSpec};
 use crate::blobs::{self, BlobBackend, BlobError, FsBlobStore};
 use crate::contract::{Answer, AnswerMeta, Ask, STATUS_ERROR, STATUS_SUCCESS, TraceId};
+use crate::feedback::{
+    Feedback, FeedbackBackend, FeedbackError, FsFeedbackStore, MemFeedbackStore,
+};
 use crate::limits::{LimitState, LimitedAdapter};
 use crate::scratch::{FsScratch, ScratchBackend, ScratchSession, scratch_tool_schemas};
 use crate::store::{StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore};
@@ -37,11 +40,13 @@ const DEFAULT_BLOBS_DIRNAME: &str = ".blobs";
 
 /// Default scratch subtree directory for direct `Agent::new` users.
 const DEFAULT_SCRATCH_DIRNAME: &str = "scratch";
+const DEFAULT_FEEDBACK_DIRNAME: &str = ".feedback";
 
 #[derive(Clone)]
 pub struct StorageOverrides {
     pub traces: Arc<dyn TraceBackend>,
     pub blobs: Arc<dyn BlobBackend>,
+    pub feedback: Arc<dyn FeedbackBackend>,
     pub scratch: Arc<dyn ScratchBackend>,
     pub scratch_scope: Value,
 }
@@ -103,9 +108,15 @@ impl StorageOverrides {
         Self {
             traces,
             blobs,
+            feedback: Arc::new(MemFeedbackStore::new()),
             scratch,
             scratch_scope: Value::Null,
         }
+    }
+
+    pub fn with_feedback(mut self, feedback: Arc<dyn FeedbackBackend>) -> Self {
+        self.feedback = feedback;
+        self
     }
 
     pub fn with_scratch_scope(mut self, scope: Value) -> Self {
@@ -135,6 +146,7 @@ pub struct Agent {
     pub scratch: Arc<dyn ScratchBackend>,
     pub scratch_scope: Value,
     pub blobs: Arc<dyn BlobBackend>,
+    pub feedback: Arc<dyn FeedbackBackend>,
     /// Per-tier pricing used to derive `AnswerMeta.cost_micro_usd` from trace-recorded usage. Missing tiers price at zero.
     pub pricing: Pricing,
     pub limits: AgentLimits,
@@ -147,6 +159,7 @@ pub struct Agent {
     pub agent_tools: Vec<AgentToolSpec>,
     fs_trace_store: Option<TraceStore>,
     fs_blob_store: Option<FsBlobStore>,
+    fs_feedback_store: Option<FsFeedbackStore>,
 }
 
 impl Clone for Agent {
@@ -166,6 +179,7 @@ impl Clone for Agent {
             scratch: self.scratch.clone(),
             scratch_scope: self.scratch_scope.clone(),
             blobs: self.blobs.clone(),
+            feedback: self.feedback.clone(),
             pricing: self.pricing.clone(),
             limits: self.limits.clone(),
             response_contract: self.response_contract.clone(),
@@ -174,6 +188,7 @@ impl Clone for Agent {
             agent_tools: self.agent_tools.clone(),
             fs_trace_store: self.fs_trace_store.clone(),
             fs_blob_store: self.fs_blob_store.clone(),
+            fs_feedback_store: self.fs_feedback_store.clone(),
         }
     }
 }
@@ -183,6 +198,7 @@ impl Agent {
     pub fn new(name: impl Into<String>, version: impl Into<String>, store: TraceStore) -> Agent {
         let scratch_root = store.root().join(DEFAULT_SCRATCH_DIRNAME);
         let blob_store = BlobStore::new(store.root().join(DEFAULT_BLOBS_DIRNAME));
+        let feedback_store = FsFeedbackStore::new(store.root().join(DEFAULT_FEEDBACK_DIRNAME));
         let storage = StorageOverrides::new(
             Arc::new(store.clone()),
             Arc::new(blob_store.clone()),
@@ -192,6 +208,8 @@ impl Agent {
         let mut agent = Agent::with_storage(name, version, storage);
         agent.fs_trace_store = Some(store);
         agent.fs_blob_store = Some(blob_store);
+        agent.feedback = Arc::new(feedback_store.clone());
+        agent.fs_feedback_store = Some(feedback_store);
         agent
     }
 
@@ -215,6 +233,7 @@ impl Agent {
             scratch: storage.scratch,
             scratch_scope: storage.scratch_scope,
             blobs: storage.blobs,
+            feedback: storage.feedback,
             pricing: Pricing::default(),
             limits: AgentLimits::default(),
             response_contract: None,
@@ -223,6 +242,7 @@ impl Agent {
             agent_tools: Vec::new(),
             fs_trace_store: None,
             fs_blob_store: None,
+            fs_feedback_store: None,
         }
     }
 
@@ -251,6 +271,29 @@ impl Agent {
     pub fn set_blob_store(&mut self, store: FsBlobStore) {
         self.blobs = Arc::new(store.clone());
         self.fs_blob_store = Some(store);
+    }
+
+    pub fn set_feedback_store(&mut self, store: FsFeedbackStore) {
+        self.feedback = Arc::new(store.clone());
+        self.fs_feedback_store = Some(store);
+    }
+
+    pub async fn feedback(
+        &self,
+        trace_id: TraceId,
+        payload: Value,
+    ) -> Result<Feedback, FeedbackError> {
+        self.traces.head(&trace_id).await.map_err(|err| match err {
+            crate::StoreError::NotFound { .. } => FeedbackError::UnknownTrace(trace_id.clone()),
+            other => FeedbackError::Trace(other),
+        })?;
+        let feedback = Feedback::new(trace_id, payload);
+        self.feedback.append(feedback.clone()).await?;
+        Ok(feedback)
+    }
+
+    pub async fn feedback_for(&self, trace_id: &TraceId) -> Result<Vec<Feedback>, FeedbackError> {
+        self.feedback.list(trace_id).await
     }
 
     /// Describe this agent's public card: identity, tools + privileges, model tiers, pricing, and declared limits.
