@@ -56,6 +56,12 @@ pub const CATALOG: &[LibraryToolSpec] = &[
         summary: "Per-lineage scratch directory (read/write/list).",
     },
     LibraryToolSpec {
+        id: "memory",
+        privilege: "memory",
+        tools: &["memory_read", "memory_write", "memory_list"],
+        summary: "Agent-wide durable memory directory (read/write/list).",
+    },
+    LibraryToolSpec {
         id: "web_fetch",
         privilege: "network",
         tools: &["web_fetch"],
@@ -123,9 +129,8 @@ pub fn build_library_grant(
             let tool = WebFetch::from_config(&grant.config).map_err(cfg)?;
             Ok(vec![Arc::new(tool)])
         }
-        // Provided by the agent runtime. Recognized for audit; registers
-        // nothing here.
-        "scratchpad" => Ok(Vec::new()),
+        // Provided by the agent runtime. Recognized for audit; registers nothing here.
+        "scratchpad" | "memory" => Ok(Vec::new()),
         other => Err(ToolError::Unknown(other.to_string())),
     }
 }
@@ -146,7 +151,7 @@ mod tests {
     #[test]
     fn catalog_covers_the_v1_library() {
         let ids: Vec<_> = CATALOG.iter().map(|s| s.id).collect();
-        assert_eq!(ids, vec!["fs_read", "scratchpad", "web_fetch"]);
+        assert_eq!(ids, vec!["fs_read", "scratchpad", "memory", "web_fetch"]);
     }
 
     #[test]
@@ -162,6 +167,13 @@ mod tests {
         assert!(caps.is_empty());
         // But it is a recognized, audited grant.
         assert_eq!(spec("scratchpad").unwrap().privilege, "scratchpad");
+    }
+
+    #[test]
+    fn memory_grant_registers_nothing_here() {
+        let caps = build_library_grant(&grant("memory", json!({})), Path::new(".")).unwrap();
+        assert!(caps.is_empty());
+        assert_eq!(spec("memory").unwrap().privilege, "memory");
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_agent::{
     Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, AnswerHook, Ask, AskHook,
-    BlobRef, FsBlobStore, FsScratch, Pricing, StorageOverrides, TraceStore,
+    BlobRef, FsBlobStore, FsMemory, FsScratch, Pricing, StorageOverrides, TraceStore,
     depth_exceeded_resolver,
 };
 use hugr_core::{BudgetPolicy, ModelSelector, SamplingParams};
@@ -30,6 +30,9 @@ pub const DEFAULT_TRACE_DIRNAME: &str = "traces";
 
 /// Default scratchpad directory under the per-agent home.
 pub const DEFAULT_SCRATCH_DIRNAME: &str = "scratch";
+
+/// Default memory directory under the per-agent home.
+pub const DEFAULT_MEMORY_DIRNAME: &str = "memory";
 
 pub const DEFAULT_GLOBAL_BLOB_DIRNAME: &str = "blobs";
 
@@ -372,6 +375,26 @@ pub async fn build_agent_with_options(
             }
             ToolKind::Agent => agent.agent_tools.push(build_agent_tool(grant, &base_dir)?),
         }
+    }
+    if let Some(grant) = def
+        .tools
+        .iter()
+        .find(|grant| grant.kind == ToolKind::Library && grant.name == "memory")
+    {
+        let readonly = grant
+            .config
+            .get("readonly")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let root = grant
+            .config
+            .get("root")
+            .and_then(|value| value.as_str())
+            .map(|root| resolve(&base_dir, root))
+            .unwrap_or_else(|| home.join(DEFAULT_MEMORY_DIRNAME));
+        agent
+            .capabilities
+            .extend(FsMemory::new(root, readonly).capabilities());
     }
 
     // Declared limits, enforced host-side per ask by `hugr-agent`.
@@ -800,6 +823,28 @@ page_snapshot = 1
         assert_eq!(value["summary_selector"], "small");
         assert_eq!(value["keep_last_per_tool"]["page_snapshot"], 1);
         assert_eq!(agent.describe().context["kind"], "budget");
+    }
+
+    #[tokio::test]
+    async fn memory_grant_registers_runtime_tools() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models.medium]
+model = "m"
+
+[tools.memory]
+readonly = true
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let (agent, warnings) = build_agent(&def).await.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let card = agent.describe();
+        let tools: Vec<_> = card.tools.iter().map(|tool| tool.name.clone()).collect();
+        assert!(tools.contains(&"memory_read".to_string()), "{tools:?}");
+        assert!(tools.contains(&"memory_write".to_string()), "{tools:?}");
+        assert!(tools.contains(&"memory_list".to_string()), "{tools:?}");
     }
 
     /// Write a minimal agent crate folder and return its path.

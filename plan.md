@@ -178,7 +178,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: golden `ContextPlan` fixtures across configs; determinism tests re-feeding event streams; a long-session scripted test proving the projection shrinks while the log grows; replay of a summarizing session.
 - Depends on: 1.3.
 
-### 2.2 `[ ]` Shared memory between runs (idea 2) — M
+### 2.2 `[x]` Shared memory between runs (idea 2) — M
 
 - Why: scratch is per-lineage copy-on-fork (`agent.rs:prepare_scratch:414`) — siblings and unrelated runs never share notes. Some agents want a durable, agent-wide memory (e.g. "remember the docs layout I discovered last week").
 - Design: an opt-in library tool, not a change to scratch semantics:

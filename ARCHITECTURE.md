@@ -159,6 +159,9 @@ command = "gh-mcp"
 [tools.agent.receipts]                # another built Hugr agent as a tool (§8)
 artifact = "./receipts-agent"
 
+[tools.memory]                        # optional durable, agent-wide notes
+readonly = false
+
 [limits]
 max_model_calls = 20
 max_cost_micro_usd = 50000
@@ -184,6 +187,7 @@ Vetted, parameterized capabilities selectable by manifest grant, each jailed to 
 
 - **`fs_read`** — root-jailed read-only family: `fs_list` / `fs_search` / `fs_read` / `fs_read_range` / `fs_read_many` / `fs_outline`.
 - **`scratchpad`** — ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime, always on).
+- **`memory`** — optional `memory_read` / `memory_write` / `memory_list`, jailed to durable agent-wide memory at `<agent-home>/memory` by default; `readonly = true` makes writes semantic errors.
 - **`web_fetch`** — host-allowlisted GET-only fetch, fail-closed on an empty allowlist, no automatic redirects.
 
 The library is **exec-free**: no shell tool exists, and nothing in the library spawns a process except granted child agents. A sandboxed `code_exec` (pinned interpreter, cwd = scratchpad, no network, capped) is a designed future addition; a general `shell` never enters the library.
@@ -390,7 +394,7 @@ pub struct Trace {
 - **`verify()`** re-folds the events into a fresh brain and asserts the reconstructed log **and** command sequence equal the recorded ones, bit-for-bit. This is the release gate: any new control-flow path ships with a replay test.
 - **Policy config is replay input.** Traces carry the host-recorded policy config as opaque JSON; built-in configs use `kind = "static"` or `kind = "budget"`, and custom host policies use their own open string kind plus a registered pure decoder. A trace with an unknown policy kind can still be replayed with an explicitly supplied policy, but faithful automatic replay/resume needs the registry that knows that kind.
 - **The `TraceBackend`** holds immutable traces keyed by content-derived `trace_id`, with `depends_on` lineage in the header; `head()` reads metadata without folding events. The default filesystem implementation is `FsTraceStore`/`TraceStore` rooted at `<agent-home>/traces`, using atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
-- **Agent home** resolves the same for dev and built surfaces: `HUGR_AGENT_HOME` as a full override, else `HUGR_HOME/<agent-name>`, else `$HOME/.hugr/<agent-name>`, else a temp-dir fallback. The default scratch root is `<agent-home>/scratch`; `[traces].store` and `[scratchpad].root` remain explicit manifest overrides. The default blob store is shared across agents: `HUGR_BLOB_STORE`, else `HUGR_HOME/blobs`, else `$HOME/.hugr/blobs`, else a temp-dir fallback.
+- **Agent home** resolves the same for dev and built surfaces: `HUGR_AGENT_HOME` as a full override, else `HUGR_HOME/<agent-name>`, else `$HOME/.hugr/<agent-name>`, else a temp-dir fallback. The default scratch root is `<agent-home>/scratch`; the default memory root is `<agent-home>/memory`; `[traces].store` and `[scratchpad].root` remain explicit manifest overrides. The default blob store is shared across agents: `HUGR_BLOB_STORE`, else `HUGR_HOME/blobs`, else `$HOME/.hugr/blobs`, else a temp-dir fallback.
 - **Storage is pluggable at the host layer.** `hugr-agent` defines `TraceBackend`, `BlobBackend`, and `ScratchBackend`; `Agent::new` is the convenience filesystem constructor, while `Agent::with_storage` / `StorageOverrides` accepts custom `Arc<dyn ...>` implementations. A generated agent crate can opt in by exporting `pub fn storage() -> hugr_agent::StorageOverrides`; no core type changes and no manifest enum are needed.
 - **Resume after crash** is the same machinery: fold the persisted log, append `OpCancelled` for ops that were in flight, continue live.
 
@@ -425,6 +429,11 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/hugr-agent/tests/scratchpad.rs`.
 - **Cross-ask / sibling leakage.** Each ask gets its own working copy, seeded copy-on-fork from the parent's finalized subtree — a fork sees ancestor notes but never a sibling's writes.
 - **Blob hardlinks.** Filesystem-backed `Sha256` inbound blobs may be hardlinked into scratch and outbound files may be hardlinked into the shared blob store; store objects are made read-only, and `scratch_write` removes an existing file before replacing it so overwriting a hardlinked inbound path does not mutate the store object. Hashes are capabilities, not secrets: any agent handed a `sha256:<hash>` can read that object from the shared store.
+
+**`memory`** (agent-wide durable memory, opt-in — persistence is the feature and the risk):
+
+- **Persistence channel.** Content written by one ask can influence unrelated future asks for the same agent. This is useful for notes and equally useful for stored prompt injection, so the grant is opt-in, supports `readonly = true`, and is wipeable by deleting `<agent-home>/memory`.
+- **Jail and writes.** Memory uses the same relative-path rejection and post-canonicalization root check as scratch. Filesystem writes are last-write-wins with a process mutex plus an advisory lock file; memory is not a coordination database. Tests: `crates/hugr-agent/tests/memory.rs`.
 
 **`web_fetch`** (network; host allowlist + GET-only default + byte cap; empty allowlist ⇒ fail-closed):
 

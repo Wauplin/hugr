@@ -23,6 +23,7 @@ mod agent_tool;
 mod blobs;
 mod contract;
 mod limits;
+mod memory;
 mod scratch;
 mod store;
 
@@ -35,6 +36,7 @@ pub use blobs::{BlobBackend, BlobError, FsBlobStore, MemBlobStore};
 pub use contract::{
     Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, STATUS_SUCCESS, TraceId,
 };
+pub use memory::{FsMemory, memory_tool_schemas};
 pub use scratch::{FsScratch, MemScratch, ScratchBackend, ScratchEntry, ScratchEntryKind};
 pub use store::{
     FsTraceStore, MemTraceStore, StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore,
