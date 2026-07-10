@@ -188,7 +188,7 @@ serde_json = "1"
 /// The PyO3 `src/lib.rs`: one `ask_json` function driving the real runtime
 /// in-process and returning the `Answer` as a JSON string. All strong typing
 /// lives in the generated Python; this layer is a thin, opaque JSON bridge
-/// (narrow waist, §14).
+/// across the narrow waist.
 fn lib_rs(response_dep: &Option<ResponseDependency>) -> String {
     let options = response_dep
         .as_ref()
@@ -284,7 +284,7 @@ module-name = "{module}._native"
 }
 
 /// The generated `_models.py`: the response dataclasses from the schema, plus
-/// the stable Ask/Answer contract types (§18.1) wired to the root response type.
+/// the stable Ask/Answer contract types wired to the root response type.
 fn models_py(generated: &schema_py::Generated) -> String {
     let root = &generated.root_class;
     format!(
@@ -308,7 +308,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 @dataclass
 class BlobHandle:
-    """A file handed into or out of an ask (§18.3)."""
+    """A file handed into or out of an ask."""
 
     ref: Dict[str, Any]
     media_type: str
@@ -325,7 +325,7 @@ class BlobHandle:
 
 @dataclass
 class AnswerMeta:
-    """Mandatory accounting on every Answer (§18.4)."""
+    """Mandatory accounting on every Answer."""
 
     duration_ms: int = 0
     cost_micro_usd: int = 0
@@ -348,7 +348,7 @@ class AnswerMeta:
 
 @dataclass
 class Answer:
-    """The uniform result of one ask (§18.1). Branch on ``status``: on success
+    """The uniform result of one ask. Branch on ``status``: on success
     ``response`` is set to the typed response and ``error`` is None; on error
     ``response`` is None and ``error`` carries the message."""
 

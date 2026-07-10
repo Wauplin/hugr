@@ -221,7 +221,7 @@ async fn fork_writes_do_not_leak_into_the_sibling() {
         .unwrap();
 
     // Each branch sees only its own write to shared.txt — the sibling's write
-    // never leaked in (copy-on-fork isolation, §19.3).
+    // never leaked in through copy-on-fork isolation.
     let reads_a = tool_results(&store, &read_a.trace_id, "scratch_read");
     assert_eq!(reads_a[0]["content"], json!("from-A"));
     // And the ancestor's note is visible across the fork.

@@ -268,7 +268,7 @@ pub struct ResponseConfig {
     pub schema: Option<String>,
 }
 
-/// Failure to load or parse a definition. Run failures are *answers* (§18.1);
+/// Failure to load or parse a definition. Run failures are *answers*;
 /// these are strictly load-time problems.
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {

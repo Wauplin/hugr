@@ -4,24 +4,24 @@ Guidance for working in the Hugr repository.
 
 ## What this is
 
-Hugr is a **toolkit for building tiny, self-contained, domain-specific subagents** — "build your subagent, ship it anywhere" — on a runtime-free, sans-IO Rust core. A subagent is a small Rust crate plus a system prompt and a set of tools with declared privileges; Hugr turns that agent crate folder into one standalone binary exposing the ask/answer contract (and an MCP server via `--mcp-serve`), with traces, forking, a scratchpad, blob exchange, and cost accounting built in.
+Hugr is a **toolkit for building small, self-contained, domain-specific subagents** on a runtime-free, sans-IO Rust core. A subagent is a small Rust crate plus a system prompt and a set of tools with declared privileges; Hugr turns that agent crate folder into one standalone binary exposing the ask/answer contract (and an MCP server via `--mcp-serve`), with traces, forking, a scratchpad, blob exchange, and cost accounting built in.
 
-There is exactly one spec, keep it in sync with reality: `ARCHITECTURE.md` (design + architecture + threat model — **the spec**; read it before non-trivial changes). `docs/tutorials/` is teaching material: narrative on-ramps that must not restate the spec — they link to it instead. A behavior change is not done until the spec matches reality and any tutorial that demonstrates the changed behavior still works.
+The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality. `docs/tutorials/` contains teaching material that links to the reference documentation instead of restating it. A behavior change is not complete until the reference documentation matches reality and every tutorial that shows the changed behavior still works.
 
 ## The one rule that matters most
 
 **`hugr-core` is sans-IO and pure.** It is a reducer: `submit(event)` folds an event into state and queues commands; `poll()` drains them. It must never do IO.
 
-Hard invariants — do not break these:
+Hard invariants:
 
 - **No environmental dependencies in `hugr-core`.** No `tokio`, no `reqwest`, no `std::fs`, no sockets, no clock, no RNG, no threads. Only pure-data crates (`serde`, `serde_json`). Verify with `cargo tree -p hugr-core`.
 - **The brain is single-threaded.** All concurrency lives in the host. The moment the brain is multithreaded, we lose sans-IO, replay, and easy bindings.
-- **All nondeterminism is injected** as events (`Tick` for time; model output, tool results, user input as events). The brain never reads a clock or RNG. This is what makes replay bit-for-bit deterministic — protect it.
+- **All nondeterminism is injected** as events (`Tick` for time; model output, tool results, user input as events). The brain never reads a clock or RNG. This makes replay bit-for-bit deterministic.
 - **The log is the source of truth.** `BrainState` is a *fold* over the log and must stay rebuildable from it. Don't add un-derived state.
 - **Deltas are transport, never durable.** `ModelDelta`/`CapabilityChunk` feed live op buffers but are *never* written to the log. One consolidated `Record` is appended per logical message/tool-result.
 - **Streaming is the only model mode.** Adapters stream deltas live via the sink and return the consolidated output; there is no non-streaming path.
 
-## The narrow-waist rule (ARCHITECTURE §14)
+## The narrow-waist rule
 
 > **Type only what the brain branches on. Everything else is an opaque payload.**
 
@@ -33,9 +33,9 @@ Hard invariants — do not break these:
 
 ## Where logic goes
 
-- **Agent strategy** (which model selector, how to project context, whether a capability is gated) lives in the pluggable `TurnPolicy` — never hardcoded in the reducer. `StaticPolicy` is the trivial pass-through projection; custom policy decoders registered in `PolicyRegistry` must be pure so replay/resume stay deterministic.
-- **The reducer** (`brain.rs`) only: maintains the log + op table; drives the turn loop; asks the policy; routes opaque payloads; decides done/checkpoint. If you're adding "smarts", it probably belongs in a policy, not the reducer.
-- **Everything hard** (IO, HTTP, model resolution, storage) is the *host's* job — not in `hugr-core`.
+- **Agent strategy** (which model selector, how to project context, whether a capability is gated) lives in the pluggable `TurnPolicy`, never hardcoded in the reducer. `StaticPolicy` is the trivial pass-through projection. Custom policy decoders registered in `PolicyRegistry` must be pure so replay/resume stay deterministic.
+- **The reducer** (`brain.rs`) maintains the log and op table, drives the turn loop, asks the policy, routes opaque payloads, and decides when to finish or checkpoint. Strategy belongs in a policy, not the reducer.
+- **IO, HTTP, model resolution, and storage** belong in the host, not in `hugr-core`.
 
 ## Project layout
 
@@ -83,11 +83,11 @@ examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   language/browser surfaces, and trace debugging
 ```
 
-`hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.
+`hugr-replay` is a host-side **persistence** crate. It may use `std::fs`, but it depends on `hugr-core` as pure data only. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`, then `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals; these layers are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier. Put them in the host crate.
 
-Subagent-layer conventions (ARCHITECTURE Part I): the `Ask`/`Answer` contract is the one-way door — `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), the user-facing payload rides `Answer.response` as a JSON object, and typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`. Traces are immutable; a resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.hugr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.hugr/blobs` (override with `HUGR_AGENT_HOME`, `HUGR_HOME`, or `HUGR_BLOB_STORE`), and custom `StorageOverrides` are trusted host code that must stay outside `hugr-core`. Tools are granted in the manifest and jailed to their declared scope — sandbox-by-registration, so never register a capability the manifest doesn't grant. A built Hugr agent is itself grantable as a tool (`[tools.agent.<name>]`, subprocess over the CLI JSON contract) — delegation never widens privileges and the child's cost folds into the caller's `AnswerMeta`. The tool library is exec-free (the planned sandboxed `code_exec` is the only future exception) — never add a `shell` to the library. MCP (`[tools.mcp.<name>]`) is the **only** external-process tool escape hatch.
+Subagent-layer conventions are documented in `docs/agents.md`. The `Ask`/`Answer` contract is the stable boundary: `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), the user-facing payload uses `Answer.response` as a JSON object, and typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`. Traces are immutable; a resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.hugr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.hugr/blobs` (override with `HUGR_AGENT_HOME`, `HUGR_HOME`, or `HUGR_BLOB_STORE`). Custom `StorageOverrides` are trusted host code and must stay outside `hugr-core`. Tools are granted in the manifest and jailed to their declared scope through sandbox-by-registration, so never register a capability that the manifest does not grant. A built Hugr agent can be granted as a tool (`[tools.agent.<name>]`, subprocess over the CLI JSON contract). Delegation never widens privileges, and the child's cost folds into the caller's `AnswerMeta`. The tool library is exec-free except for the planned sandboxed `code_exec`; never add a `shell` to the library. MCP (`[tools.mcp.<name>]`) is the **only** external-process tool escape hatch.
 
-When extending the host: capabilities are uniform (no privileged built-ins); a model call is "an effect the host provides" registered like a capability; transport errors (retries, 429s) are the adapter's job, semantic errors route back to the model as tool results.
+When extending the host, keep capabilities uniform with no privileged built-ins. A model call is an effect provided by the host and registered like a capability. The adapter handles transport errors such as retries and 429s, while semantic errors return to the model as tool results.
 
 ## Commands
 
@@ -103,11 +103,11 @@ hugr cron <agent-dir>       # run configured [cron.<name>] recurring asks
 
 ## Conventions
 
-- **Keep the docs and agent skills in sync — it's part of "done".** After completing a task update `ARCHITECTURE.md` if behavior changed and any tutorial that demonstrates it. A manifest, tool, surface, packaging, or trace-workflow change is not finished until the relevant `.agents/skills/*/SKILL.md` cheat sheet matches reality.
+- **Keep the docs and agent skills in sync.** After a behavior change, update the relevant reference documentation under `docs/` and every tutorial that demonstrates it. A manifest, tool, surface, packaging, or trace-workflow change is not complete until the relevant `.agents/skills/*/SKILL.md` cheat sheet matches reality.
 - **Keep Rust and Python API types in sync in both directions.** Any change to a Rust-serialized runtime input or output type (contracts, events, cards, trace listings, feedback, stats, or nested values) must update the corresponding `bindings/python/python/hugr_agents/_types.py` `TypedDict`/dataclass, caster, exports, and tests; any change to those public Python mirrors must update the corresponding Rust type and serde wire shape plus its tests.
 - **Prefer deletion over abstraction.** One way to do each thing; if two mechanisms do the same job, keep the one the live stack uses and delete the other.
-- **Markdown is single-line.** One physical line per paragraph or bullet — never hard-wrap prose; rely on soft-wrap. (Fenced code blocks and table rows are exempt.)
-- **Comments state what the code cannot.** No references to other docs (`ARCHITECTURE §X` etc.), no "how it works" narration, no comments restating the signature or the next line, no section banners. A comment is justified only for a non-obvious constraint, failure mode, or safety/jail invariant; public items keep one concise doc line stating the contract.
+- **Markdown is single-line.** Use one physical line per paragraph or bullet. Do not hard-wrap prose; rely on soft wrapping. Fenced code blocks and table rows are exempt.
+- **Comments state what the code cannot.** No references to numbered documentation sections, no "how it works" narration, no comments restating the signature or the next line, no section banners. A comment is justified only for a non-obvious constraint, failure mode, or safety/jail invariant; public items keep one concise doc line stating the contract.
 - Keep event handlers O(1)-ish (append to a buffer); no heavy work in the reducer.
 - When you add a `Command`/`Event`/`Record` variant: update the reducer's match and add a scripted test that pins the resulting command sequence.
 - Determinism is testable: any new control-flow path should have a replay test asserting identical commands on a re-fed event stream; `verify()` is the release gate.

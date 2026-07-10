@@ -5,7 +5,7 @@ description: Define and run Hugr subagents in Python with typed contract objects
 
 # Build Hugr agents with Python
 
-Choose the surface first:
+Select the surface based on where the agent is defined:
 
 - To define the system prompt, model config, and tools in Python, use the `hugr-agents` runtime API below.
 - To consume an existing Rust-defined agent as a typed Python package, keep its definition in Rust and run `hugr build <agent-dir> --surface python --release`; follow [tutorial 04](../../../docs/tutorials/04-agent-binary-from-python.md).
@@ -26,7 +26,7 @@ Import the package as `hugr_agents`. It runs the native Rust runtime; the Python
 
 ## Define tools and the agent
 
-Give every callable an explicit JSON Schema. Sync and async callables are both supported; exceptions become semantic tool errors returned to the model.
+Define an explicit JSON Schema for every callable. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
 
 ```python
 import hugr_agents as hugr

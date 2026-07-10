@@ -942,7 +942,7 @@ struct FinalResponse {
 
 /// Extract the final response from the durable log: the last model output with
 /// no tool calls is the turn's answer. No text means the run failed before
-/// answering — an error *answer* (§18.1), with the terminal error surfaced.
+/// answering: an error *answer* with the terminal error surfaced.
 fn final_response(log: &[LogEntry], contract: Option<&ResponseContract>) -> FinalResponse {
     let final_text = log.iter().rev().find_map(|entry| match &entry.record {
         Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {

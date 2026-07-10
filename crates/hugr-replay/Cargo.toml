@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 # hugr-core is pure data here: we serialize its Event/LogEntry types. This crate
 # is a *host-side persistence* crate — it MAY touch the filesystem (std::fs). That
-# does NOT make hugr-core impure; the IO lives only here. (ARCHITECTURE §10/§12.)
+# does NOT make hugr-core impure; the IO lives only here (see docs/project-structure.md).
 hugr-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,18 +1,18 @@
 # Hugr
 
-> **Build your subagent, ship it anywhere.** A toolkit for tiny, self-contained, domain-specific agents on a runtime-free, sans-IO Rust core.
+> Build a subagent and ship it anywhere as a small, self-contained artifact on a runtime-free, sans-IO Rust core.
 
-A **subagent** is, at its essence, a small Rust crate plus a system prompt and a set of tools with declared privileges. Hugr turns that agent crate folder into **one self-contained binary** — which also serves MCP via `--mcp-serve` — with the shared infrastructure every subagent needs built in:
+A **subagent** is a small Rust crate plus a system prompt and a set of tools with declared privileges. Hugr turns that agent crate folder into **one self-contained binary**, which also serves MCP through `--mcp-serve`, and includes the shared infrastructure used by every subagent:
 
-- **One invocation contract.** A question (string) in; a structured response object + mandatory metadata out — status, **cost**, **duration**, tokens, and a **trace id**. Every Hugr agent, every surface, same shape. Errors are answers (`status: "error"`, exit 0), so callers branch on data, not exceptions.
-- **Resumable & forkable traces.** Every run persists an immutable trace. Pass its `trace_id` back to continue the conversation; pass an *older* id to fork a sibling branch. Orchestrators explore many directions without ever growing one shared context — replay is instant and bit-for-bit deterministic.
-- **Sandboxed by construction.** An agent registers exactly the tools its manifest grants. No shell granted = no shell exists in the binary (and the tool library is exec-free). Plus a private, jailed scratchpad and blob exchange with the caller.
-- **Token-efficient by design.** A handful of domain tools and a focused prompt, not fifty generic ones. Small agents are cheaper, faster, and more reliable — and an orchestrator pays one tool call to use them.
-- **Agents compose.** A built Hugr agent *is* a tool: grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and it's called like any capability — delegation never widens privileges, and the child's cost folds into the caller's metadata.
+- **One invocation contract.** The input is a question string. The output is a structured response object with mandatory status, **cost**, **duration**, token, and **trace id** metadata. Every Hugr agent and surface uses this shape. Errors are answers (`status: "error"`, exit 0), so callers branch on data instead of exceptions.
+- **Resumable and forkable traces.** Every run persists an immutable trace. Pass its `trace_id` back to continue the conversation, or pass an older id to fork a sibling branch. Orchestrators can explore multiple directions without growing one shared context. Replay is immediate and bit-for-bit deterministic.
+- **Sandboxed by construction.** An agent registers only the tools granted by its manifest. If the manifest does not grant a shell, the binary has no shell capability; the tool library is exec-free. Each agent also gets a private, jailed scratchpad and explicit blob exchange with the caller.
+- **Token-efficient by design.** Agents use a focused prompt and a small set of domain tools instead of many generic tools. Small agents are cheaper, faster, and more reliable, and an orchestrator pays one tool call to use them.
+- **Agents compose.** A built Hugr agent is a tool. Grant one to another with a manifest line (`[tools.agent.<name>] artifact = "..."`) and call it like any capability. Delegation never widens privileges, and the child's cost folds into the caller's metadata.
 
 The reference agent, [`hugr-docs`](examples/hugr-docs/), is a checked-in docs-Q&A agent crate: `hugr.toml` + `SYSTEM.md` live beside the Rust response contract. `hugr-toolkit` does not depend on it. The generic `hugr run` path still works for typed agents by compiling a cached dev shim that links the current agent crate.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) (design, architecture, threat model — the spec) for more details, or start with the [tutorials](docs/tutorials/README.md) for a guided tour of every surface.
+See [the documentation](docs/README.md) for the design, architecture, and threat model, or start with the [tutorials](docs/tutorials/README.md) for a guided tour of every surface.
 
 ## Quickstart
 
@@ -63,29 +63,29 @@ env = "HUGR_DOCS_PATH"
 help = "Folder containing the documentation to search."
 ```
 
-Auditable by reading: the manifest *is* the blast radius. Unknown keys are hard errors, so a typo can't silently widen or narrow it. The tool library today: `fs_read` (six read-only `fs_*` tools), `web_fetch`, `memory`, `traces_read` (read-only trace/feedback mining), the scratchpad — plus `[tools.mcp.<name>]` (the one external-process escape hatch) and `[tools.agent.<name>]` (another built agent as a tool).
+The manifest defines the agent's blast radius and is the document to audit. Unknown keys are hard errors, so a typo cannot silently widen or narrow it. The current tool library includes `fs_read` (six read-only `fs_*` tools), `web_fetch`, `memory`, `traces_read` (read-only trace and feedback mining), and the scratchpad. It also supports `[tools.mcp.<name>]` (the one external-process escape hatch) and `[tools.agent.<name>]` (another built agent as a tool).
 
 ## The core underneath
 
-The runtime is built on `hugr-core`, a pure, **sans-IO**, single-threaded brain — a reducer over an append-only event log. The entire brain ↔ host surface is two enums and two methods:
+The runtime is built on `hugr-core`, a pure, **sans-IO**, single-threaded reducer over an append-only event log. The brain and host communicate through two enums and two methods:
 
 ```rust
 loop {
     for cmd in brain.poll() {        // drain commands the brain wants performed
         host.perform(cmd);
     }
-    let event = host.next_event().await;  // the only await — host-side only
+    let event = host.next_event().await;  // the only await; host-side only
     brain.submit(event);             // pure, instant, no IO
 }
 ```
 
-Four separations most harnesses conflate — durable state (event log) vs model context (projection) vs IO (host) vs permissions (externalized policy) — are why the subagent features fall out for free: a **trace** is the log made durable, **resume** is re-folding a trace, a **fork** is copying a log prefix, and **cost** is arithmetic over per-op metadata already in the log. All nondeterminism is injected as events, so replay is bit-for-bit deterministic.
+Hugr separates four concerns that many harnesses combine: durable state (the event log), model context (a projection), IO (the host), and permissions (externalized policy). A **trace** is a durable log, **resume** re-folds a trace, a **fork** copies a log prefix, and **cost** is calculated from per-op metadata in the log. All nondeterminism is injected as events, so replay is bit-for-bit deterministic.
 
 ## Crate layout
 
 ```
 crates/
-  hugr-core/          # the sans-IO brain — log, projection, op table, reducer. NO tokio, NO reqwest, NO fs.
+  hugr-core/          # the sans-IO brain; log, projection, op table, reducer. NO tokio, NO reqwest, NO fs.
   hugr-host/          # native tokio host: engine driver loop, capability/model registries, MCP stdio client, JSON-line framing.
   hugr-providers/     # OpenAI-compatible streaming adapter (retries inside).
   hugr-replay/        # trace format + content-addressed blob store + replay/verify/inspect.
@@ -105,7 +105,7 @@ examples/
 
 ## The reference subagent: `hugr-docs`
 
-One folder in, one question in, one JSON response out — with cost metadata. No shell, no writes, no network tool; the read-only, folder-jailed `fs_*` tools.
+The agent accepts one folder and one question, then returns one JSON response with cost metadata. It has no shell, write, or network tools; it uses the read-only, folder-jailed `fs_*` tools.
 
 ```bash
 export HUGR_DOCS_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
@@ -117,7 +117,7 @@ cargo run -p hugr-toolkit --bin hugr -- run examples/hugr-docs ./docs "What is t
   "status": "success",
   "response": {
     "response": "The narrow-waist rule is ...",
-    "related_documents": ["ARCHITECTURE.md"]
+    "related_documents": ["docs/README.md"]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
   "metadata": { "duration_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "cost_micro_usd": 1300, "model_calls": 2, "tool_calls": 3 }

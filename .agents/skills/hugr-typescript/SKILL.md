@@ -5,7 +5,7 @@ description: Define and run Hugr subagents in TypeScript or JavaScript through t
 
 # Build Hugr agents with TypeScript
 
-Use the root package for platform-neutral types and in-memory stores, `hugr-agents/node` for filesystem-backed Node agents, and `hugr-agents/browser` for IndexedDB-backed browser agents. Read [tutorial 06](../../../docs/tutorials/06-agent-entirely-in-typescript.md) for the complete surface.
+Use the root package for platform-neutral types and in-memory stores. Use `hugr-agents/node` for filesystem-backed Node agents and `hugr-agents/browser` for IndexedDB-backed browser agents. Read [tutorial 06](../../../docs/tutorials/06-agent-entirely-in-typescript.md) for the complete surface.
 
 ## Build the package
 
@@ -49,7 +49,7 @@ const answer = await agent.ask("Can I expense a train ticket?");
 await agent.verify(answer.trace_id);
 ```
 
-Tool functions are trusted host code. Registration limits what the model can invoke; it does not sandbox the implementation body. Throwing from `invoke` produces a semantic tool error routed back to the model.
+Tool functions are trusted host code. Registration limits what the model can invoke but does not sandbox the implementation body. An exception from `invoke` becomes a semantic tool error returned to the model.
 
 ## Stream and resume
 

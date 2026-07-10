@@ -1,6 +1,6 @@
 # Your first agent from the CLI
 
-In this tutorial you'll scaffold a weather-answering subagent with `hugr new`, look at every file it generates, ask it a question with `hugr run`, resume and fork past conversations by trace id, inspect the agent card with `--describe`, and finally compile it into one self-contained binary with `hugr build`. No prior Hugr knowledge is assumed; for the design rationale behind any step, see [ARCHITECTURE.md](../../ARCHITECTURE.md#3-what-a-subagent-is).
+In this tutorial you'll scaffold a weather-answering subagent with `hugr new`, look at every file it generates, ask it a question with `hugr run`, resume and fork past conversations by trace id, inspect the agent card with `--describe`, and finally compile it into one self-contained binary with `hugr build`. No prior Hugr knowledge is assumed; for the design rationale behind any step, see [the subagent overview](../overview.md#what-a-subagent-is).
 
 ## 1. Scaffold the agent
 
@@ -10,7 +10,7 @@ From the directory where you want the new folder to appear, run:
 hugr new my-agent
 ```
 
-This creates `./my-agent` from the default `weather` template (the checked-in `examples/hugr-weather` crate, embedded at compile time with the name substituted — pass `--template blank` for a tool-free starting point instead). The command refuses to overwrite an existing folder and tells you the next step on stderr.
+This creates `./my-agent` from the default `weather` template (the checked-in `examples/hugr-weather` crate, embedded at compile time with the name substituted; pass `--template blank` for a tool-free starting point instead). The command refuses to overwrite an existing folder and tells you the next step on stderr.
 
 ## 2. Anatomy of the generated files
 
@@ -27,7 +27,7 @@ my-agent/
 
 ### hugr.toml
 
-The manifest is the whole privilege story — the agent can use exactly what is granted here and nothing else (see [the manifest](../../ARCHITECTURE.md#6-the-manifest)). The weather template's manifest has four sections:
+The manifest defines the agent's privileges. The agent can use only what is granted here (see [the manifest reference](../agents.md#the-manifest)). The weather template's manifest has four sections:
 
 ```toml
 [agent]
@@ -62,7 +62,7 @@ timeout_s = 120
 
 ### SYSTEM.md
 
-The system prompt, in plain Markdown. Template variables like `{{agent_name}}` are substituted at assembly time. The weather prompt tells the model exactly which two Open-Meteo endpoints to hit with `web_fetch` and to answer in one short sentence — edit this file first when you want different behavior.
+The system prompt, in plain Markdown. Template variables like `{{agent_name}}` are substituted at assembly time. The weather prompt tells the model exactly which two Open-Meteo endpoints to hit with `web_fetch` and to answer in one short sentence; edit this file first when you want different behavior.
 
 ### src/lib.rs — the response contract
 
@@ -89,7 +89,7 @@ export HUGR_API_KEY=...   # e.g. an hf_... token for router.huggingface.co
 hugr run my-agent "what's the weather in Paris?"
 ```
 
-You get one pretty-printed JSON `Answer` on stdout (diagnostics go to stderr). Add `--json` for compact single-line output. The `Answer` carries `status`, your typed `response` object, a `trace_id`, and mandatory `metadata` (duration, cost in micro-USD, tokens, model/tool call counts). One important contract: **the ask path always exits 0** — a missing key, a bad manifest, or a blown limit comes back as a `status: "error"` answer, not a crash (see [Ask/Answer](../../ARCHITECTURE.md#part-i--what-hugr-is)).
+You get one pretty-printed JSON `Answer` on stdout (diagnostics go to stderr). Add `--json` for compact single-line output. The `Answer` carries `status`, your typed `response` object, a `trace_id`, and mandatory `metadata` (duration, cost in micro-USD, tokens, model/tool call counts). **The ask path always exits 0.** A missing key, a bad manifest, or a blown limit returns a `status: "error"` answer instead of crashing (see [the Ask and Answer contract](../agents.md#the-ask-and-answer-contract)).
 
 Because this agent has a typed Rust contract, the first `hugr run` compiles a small cached shim crate that links your `src/lib.rs`; later runs reuse it, so only the first ask pays the compile.
 
@@ -107,11 +107,11 @@ To continue a conversation, pass the parent's trace id back in:
 hugr run my-agent --trace <TRACE_ID> "and in London?"
 ```
 
-A resumed ask never mutates the old trace — it writes a **new** trace with `depends_on` pointing at the parent. That means resuming the *same* id twice forks the conversation into two branches, and `hugr traces` shows the tree. Two more inspection commands close the loop: `hugr verify my-agent <TRACE_ID>` proves a trace replays bit-for-bit, and `hugr replay my-agent <TRACE_ID> --step` walks it event by event (why this works: [determinism and replay](../../ARCHITECTURE.md#19-determinism-replay-and-the-trace-format)). `hugr stats my-agent` aggregates cost/tokens/tool usage across stored traces.
+A resumed ask never mutates the old trace. It writes a **new** trace with `depends_on` pointing at the parent. Resuming the same id twice forks the conversation into two branches, and `hugr traces` shows the tree. `hugr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit, while `hugr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../runtime.md#determinism-replay-and-traces) for the underlying design. `hugr stats my-agent` aggregates cost, tokens, and tool usage across stored traces.
 
 ## 5. Inspect the agent card
 
-Every agent surface answers `--describe` with its agent card — name, tools with their scopes, model tiers with pricing, and limits — and `--config` with the parsed manifest as JSON (the API key env *name* and whether it resolves, never the secret):
+Every agent surface answers `--describe` with its agent card, including its name, scoped tools, priced model tiers, and limits. `--config` returns the parsed manifest as JSON, including the API key environment variable name and whether it resolves, but never the secret:
 
 ```bash
 hugr run my-agent -- --describe
@@ -125,7 +125,7 @@ hugr run my-agent -- --describe
 hugr build my-agent --release
 ```
 
-This generates a shim crate under `my-agent/dist/` (override with `--out <dir>`) that embeds the whole agent bundle — manifest, prompt, response contract — and compiles it with cargo. The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repo checkout: on startup it unpacks its bundle into `~/.hugr/<name>/`, so traces persist across runs and `--trace` resume works anywhere you copy it. (`--surface python` additionally generates a pip-installable Python module.)
+This generates a shim crate under `my-agent/dist/` (override with `--out <dir>`) that embeds the agent bundle, including the manifest, prompt, and response contract, then compiles it with cargo. The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repository checkout. On startup, it unpacks its bundle into `~/.hugr/<name>/`, so traces persist across runs and `--trace` resume works anywhere you copy it. `--surface python` also generates a pip-installable Python module.
 
 The built binary speaks the same universal surface as `hugr run`:
 
@@ -140,13 +140,13 @@ my_agent --cron-serve [--allow-uncapped]
 - `--trace <ID>` resumes/forks exactly as with `hugr run`; `--json` switches from the default pretty printing to compact.
 - `--blob <PATH>` (repeatable) hands local files in as inbound blobs.
 - `--stream` emits one JSON event per line as the run progresses, then the final `Answer` line.
-- `--describe`, `--config`, `--traces`, and `--stats` are the audit views (JSON out, non-zero exit on failure — unlike the ask path).
+- `--describe`, `--config`, `--traces`, and `--stats` are the audit views. They return JSON and exit non-zero on failure, unlike the ask path.
 - `--feedback <TRACE_ID>` appends a JSON feedback payload to a stored trace (from `--feedback-payload` or stdin).
-- `--mcp-serve` turns the binary into a stdio MCP server exposing an ask tool — register the command in any MCP client and your agent becomes a tool.
+- `--mcp-serve` turns the binary into a stdio MCP server exposing an ask tool; register the command in any MCP client and your agent becomes a tool.
 - `--cron-serve` runs any `[cron.<name>]` jobs from the manifest until stopped.
 
-That's the whole loop: scaffold, edit two text files, run, inspect, ship one binary.
+The workflow is: scaffold the agent, edit two text files, run it, inspect it, and ship one binary.
 
 ## Next
 
-[Tutorial 2 — Typed responses and answer hooks](02-typed-responses-and-hooks.md): grow the response contract beyond a single string, give the model a different schema than your users see, and post-process answers deterministically with `answer_hooks()`.
+[Tutorial 2: Typed responses and answer hooks](02-typed-responses-and-hooks.md): grow the response contract beyond a single string, give the model a different schema than your users see, and post-process answers deterministically with `answer_hooks()`.

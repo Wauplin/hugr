@@ -124,7 +124,7 @@ fn verify_compares_recorded_commands_and_passes() {
 /// The regression this whole feature exists for: a trace whose recorded
 /// `commands` disagree with what re-feeding its events re-emits must FAIL
 /// verification — command-order divergence that never touches the log is now
-/// caught (§6.3).
+/// caught.
 #[test]
 fn verify_rejects_a_divergent_command_sequence() {
     let events = session_events();

@@ -209,7 +209,7 @@ fn markdown_heading(line: &str) -> Option<(usize, String)> {
 }
 
 /// Wrap a fallible impl as the standard tool result: `Ok`/`Err(error)` both
-/// become tool results the model reads (§5.4).
+/// become tool results the model reads.
 fn wrap(result: Result<Value>) -> std::result::Result<Value, Value> {
     result.map_err(|error| json!({ "error": error.to_string() }))
 }

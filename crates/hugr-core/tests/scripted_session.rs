@@ -756,8 +756,8 @@ fn model_error_ends_the_turn_with_error() {
 }
 
 /// A model error while a **background** op is still running must defer the
-/// terminal `Done(Error)` (mirroring `on_model_done`'s deferral, ARCHITECTURE
-/// §4.2): the turn is not over while work is in flight. Once the background op
+/// terminal `Done(Error)` (mirroring `on_model_done`'s deferral): the turn is
+/// not over while work is in flight. Once the background op
 /// drains, `Done(Error)` fires with the original reason — never a
 /// `StartModelCall` after a terminal `Done`.
 #[test]

@@ -725,7 +725,7 @@ fn manifest_identity(manifest: &[u8]) -> String {
 }
 
 /// For an audit view, a preparation failure is a stderr error + non-zero exit;
-/// for the ask path it is an error answer at exit 0 (§18.1).
+/// for the ask path it is an error answer at exit 0.
 fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: bool) -> i32 {
     if mode == Mode::Ask {
         print_answer(&error_answer(message, started), pretty)
@@ -736,7 +736,7 @@ fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: 
 }
 
 /// An error-status [`Answer`] stamped with the elapsed duration. Shared by
-/// every surface that must turn a failure into an answer (§18.1).
+/// every surface that must turn a failure into an answer.
 pub fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
     Answer {
         status: STATUS_ERROR.to_string(),

@@ -10,7 +10,7 @@
 //!     host.poll()         ◀──  drains the commands the brain wants performed
 //! ```
 //!
-//! See `ARCHITECTURE.md` for the full rationale. The
+//! See `docs/runtime.md` for the full rationale. The
 //! short version of the contract:
 //!
 //! - **Durable state is an append-only [`log`](state::BrainState::log).** The

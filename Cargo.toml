@@ -16,7 +16,7 @@ members = [
 # (bindings/python), never via `cargo test --workspace`.
 exclude = ["crates/hugr-python"]
 
-# Crate layout (see ARCHITECTURE.md §10): `hugr-core` is the pure, sans-IO
+# Crate layout (see docs/project-structure.md): `hugr-core` is the pure, sans-IO
 # brain; every other crate is a host layer and may touch IO — never `hugr-core`.
 
 [workspace.package]
@@ -48,13 +48,13 @@ thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
 # Content-addressed blob hashing (host-side persistence; never in hugr-core).
 sha2 = "0.10"
-# base64 for inline blob transport on the Ask/Answer contract (host-side; §18.3).
+# base64 for inline blob transport on the host-side Ask/Answer contract.
 base64 = "0.22"
 wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4.76"
 js-sys = "0.3.103"
 
-# Release profile leaning toward the "tiny footprint" goal (ARCHITECTURE §11).
+# Release profile leaning toward the small-footprint goal in docs/overview.md.
 # NOTE: `panic = "abort"` is intentionally NOT set here — it conflicts with the
 # unwinding test harness (`cargo test --release`). It belongs in a WASM-specific
 # profile in Phase 4, where module size is actually validated.

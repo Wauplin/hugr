@@ -1,6 +1,6 @@
 # An agent entirely in Python
 
-In this tutorial you'll define a Hugr subagent from scratch in pure Python — system prompt as a string, model config as a dict, tools as ordinary callables — running on the same Rust runtime every other surface uses. You'll learn the `hugr-agents` package end to end: the `@hugr.tool` decorator for sync and async tools, the `Agent` constructor and its config keys (mirroring `hugr.toml` 1:1), `agent.ask()` for blocking runs, `async for event in agent.run(...)` for streaming, `agent.feedback()` and `agent.stats()`, and how the traces it writes under `~/.hugr/<name>/` verify with the Rust CLI without Python in the loop. Prerequisite: [tutorial 01](01-first-agent-cli.md) for the ask/answer/trace vocabulary. For the design rationale behind runtime embedding and why it's distinct from `hugr build --surface python`, see [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
+In this tutorial you'll define a Hugr subagent from scratch in pure Python, with the system prompt as a string, model config as a dict, and tools as ordinary callables. It runs on the same Rust runtime as every other surface. You'll learn the `hugr-agents` package end to end: the `@hugr.tool` decorator for sync and async tools, the `Agent` constructor and its config keys (mirroring `hugr.toml` 1:1), `agent.ask()` for blocking runs, `async for event in agent.run(...)` for streaming, `agent.feedback()` and `agent.stats()`, and how the traces it writes under `~/.hugr/<name>/` verify with the Rust CLI without Python in the loop. Prerequisite: [tutorial 01](01-first-agent-cli.md) for the ask/answer/trace vocabulary. For the design rationale behind runtime embedding and why it's distinct from `hugr build --surface python`, see [the language surfaces documentation](../agents.md#language-surfaces).
 
 ## Install the package
 
@@ -19,11 +19,11 @@ maturin develop --release
 import hugr_agents as hugr
 ```
 
-The native crate (`hugr_agents._native`) embeds a tokio runtime and drives the real `hugr-agent` assembly path — so a Python-defined agent behaves exactly like a manifest-defined one. The boundary between the two layers is JSON strings: the native module owns the runtime and all validation, while the pure-Python layer declares inputs with `TypedDict`s and recursively casts structured outputs into dataclasses.
+The native crate (`hugr_agents._native`) embeds a tokio runtime and drives the real `hugr-agent` assembly path, so a Python-defined agent behaves like a manifest-defined one. The boundary between the two layers is JSON strings: the native module owns the runtime and all validation, while the pure-Python layer declares inputs with `TypedDict`s and recursively casts structured outputs into dataclasses.
 
 ## Define a tool
 
-A tool is a callable plus an explicit JSON Schema — the advertised surface stays auditable, and Hugr never infers a schema from your signature. Wrap any callable with `@hugr.tool`:
+A tool is a callable plus an explicit JSON Schema; the advertised surface stays auditable, and Hugr never infers a schema from your signature. Wrap any callable with `@hugr.tool`:
 
 ```python
 import hugr_agents as hugr
@@ -41,11 +41,11 @@ def lookup_policy(args):
     return {"matches": search_policy_text(args["query"])}
 ```
 
-The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@hugr.tool`), called (`hugr.tool(fn, ...)`), or as a decorator factory (`@hugr.tool(...)`). When `name` is omitted it defaults to `fn.__name__`; when `description` is omitted it falls back to the function's docstring. When `schema` is omitted the tool gets `{"type": "object"}` — no required fields, any args dict. The callable takes one argument, a `dict` of decoded JSON args matching the schema, and returns a JSON-serializable result.
+The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@hugr.tool`), called (`hugr.tool(fn, ...)`), or as a decorator factory (`@hugr.tool(...)`). When `name` is omitted it defaults to `fn.__name__`; when `description` is omitted it falls back to the function's docstring. When `schema` is omitted, the tool gets `{"type": "object"}` with no required fields and accepts any args dict. The callable takes one argument, a `dict` of decoded JSON args matching the schema, and returns a JSON-serializable result.
 
 ### Async tools
 
-The callable may be `async` — the runtime awaits it inside the tokio worker pool:
+The callable may be `async`. The runtime awaits it inside the tokio worker pool:
 
 ```python
 @hugr.tool(name="lookup", description="d", schema={"type": "object"})
@@ -54,15 +54,15 @@ async def lookup(args):
     return {"definition": "async ok"}
 ```
 
-Sync and async tools are interchangeable from the agent's perspective; pick whichever fits your I/O. A tool that raises an exception does not crash the run — the exception message is sent back to the model as a tool error result, so the model can recover and try again (or finish the answer anyway).
+Sync and async tools are interchangeable from the agent's perspective, so choose the form that fits your I/O. A tool that raises an exception does not crash the run. The exception message is sent back to the model as a tool error result, allowing the model to recover and try again or finish the answer.
 
 ### The `requires_permission` and `background` flags
 
-`requires_permission=True` marks a tool as gated — the model can *call* it but the host's permission policy must approve before it executes. `background=True` marks a tool as fire-and-forget — the result is not fed back to the model. Both are advanced flags for specific trust models; for this tutorial leave them at their defaults (`False`).
+`requires_permission=True` marks a tool as gated. The model can call it, but the host's permission policy must approve it before execution. `background=True` marks a tool as fire-and-forget, so the result is not fed back to the model. Both are advanced flags for specific trust models; leave them at their defaults (`False`) for this tutorial.
 
 ## Assemble the agent
 
-`hugr.Agent` is keyword-only — every argument is named. The constructor is:
+`hugr.Agent` is keyword-only, so every argument is named. The constructor is:
 
 ```python
 agent = hugr.Agent(
@@ -84,19 +84,19 @@ agent = hugr.Agent(
 )
 ```
 
-The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`. Each config key mirrors the corresponding `hugr.toml` section — same names, same shapes — so anything you learned in [tutorial 01](01-first-agent-cli.md) about the manifest transfers directly. The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes as `TypedDict`s for static checking. `ModelsConfig` and the nested `mcp`/`agent` instance tables are typed mappings because tier selectors and external grant instance names are deliberately open strings.
+The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`. Each config key mirrors the corresponding `hugr.toml` section with the same names and shapes, so the manifest details from [tutorial 01](01-first-agent-cli.md) transfer directly. The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes as `TypedDict`s for static checking. `ModelsConfig` and the nested `mcp`/`agent` instance tables are typed mappings because tier selectors and external grant instance names are deliberately open strings.
 
 ### `models`
 
-The `models` dict has three reserved knob keys — `base_url`, `api_key_env`, `default` — plus one nested table per tier. A tier table requires a `model` id and optionally carries `temperature`, `max_tokens`, and per-million-token pricing (`input_usd_per_m_tokens`, `output_usd_per_m_tokens`). The `default` knob names which tier the agent uses. This is the exact shape of the `[models]` manifest block.
+The `models` dict has three reserved keys (`base_url`, `api_key_env`, and `default`) plus one nested table per tier. A tier table requires a `model` id and optionally carries `temperature`, `max_tokens`, and per-million-token pricing (`input_usd_per_m_tokens`, `output_usd_per_m_tokens`). The `default` knob names which tier the agent uses. This is the exact shape of the `[models]` manifest block.
 
 ### `limits`
 
-The `limits` dict accepts `max_model_calls`, `max_cost_micro_usd`, and `timeout_s` — the same keys as the manifest's `[limits]`. Each key is optional; an unset key is unbounded.
+The `limits` dict accepts `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`, matching the manifest's `[limits]` keys. Each key is optional; an unset key is unbounded.
 
 ### `grants`
 
-`grants` is the Python name for the manifest's `[tools]` block — library tools, plus the `mcp` and `agent` namespaces. Library tools are keyed by tool id (`{"fs_read": {...}, "web_fetch": {"allow_hosts": [...]}}`). MCP and agent grants nest one level deeper:
+`grants` is the Python name for the manifest's `[tools]` block, including library tools and the `mcp` and `agent` namespaces. Library tools are keyed by tool id (`{"fs_read": {...}, "web_fetch": {"allow_hosts": [...]}}`). MCP and agent grants nest one level deeper:
 
 ```python
 agent = hugr.Agent(
@@ -110,11 +110,11 @@ agent = hugr.Agent(
 )
 ```
 
-Tools you define in Python (the `tools=[...]` list) are registered as capabilities alongside the granted library and external tools — they all show up in the agent card together.
+Tools you define in Python (the `tools=[...]` list) are registered as capabilities alongside the granted library and external tools; they all show up in the agent card together.
 
 ### `context` and `response_schema`
 
-`context` mirrors the manifest's `[context]` block (context projection and deterministic compaction). `response_schema` is an optional JSON Schema dict: when set, the schema rides the provider request as `response_format`, and the final JSON is validated against it. This is the pure-Python equivalent of the Rust `RESPONSE_RUST_TYPE` contract from [tutorial 02](02-typed-responses-and-hooks.md) — but without a Rust type, so the validation is schema-level, not a `serde` cast.
+`context` mirrors the manifest's `[context]` block (context projection and deterministic compaction). `response_schema` is an optional JSON Schema dict: when set, the schema rides the provider request as `response_format`, and the final JSON is validated against it. This is the pure-Python equivalent of the Rust `RESPONSE_RUST_TYPE` contract from [tutorial 02](02-typed-responses-and-hooks.md). Without a Rust type, validation occurs at the schema level rather than through a `serde` cast.
 
 ### `traces` and `scratchpad`
 
@@ -129,15 +129,15 @@ answer = agent.ask("Can I expense a train ticket?")
 print(answer.status, answer.response, answer.trace_id)
 ```
 
-The full signature is `ask(question, *, trace_id=None, blobs=(), extra=None)`. `trace_id` resumes a prior conversation (the parent is re-folded into a fresh brain; a new trace is written with `depends_on` set — forking is just resuming the same parent twice). `blobs` is a sequence of `BlobHandle` objects (see below). `extra` is an opaque JSON-serializable value stamped into the trace header.
+The full signature is `ask(question, *, trace_id=None, blobs=(), extra=None)`. `trace_id` resumes a prior conversation (the parent is re-folded into a fresh brain; a new trace is written with `depends_on` set; forking is just resuming the same parent twice). `blobs` is a sequence of `BlobHandle` objects (see below). `extra` is an opaque JSON-serializable value stamped into the trace header.
 
 ### The `Answer` type
 
-`Answer` is a dataclass: `status` (a string — `hugr.STATUS_SUCCESS` or `hugr.STATUS_ERROR`), `response` (a dict — your user-facing payload), `trace_id` (a string), `metadata` (an `AnswerMeta`), `blobs` (a list of `BlobHandle`), and `extra`. The `.ok` property is shorthand for `status == STATUS_SUCCESS`. Errors are answers, not exceptions — a blown limit, a missing key, or a model error comes back as `status == "error"` with `response == {"error": ...}` and `trace_id` still set so you can inspect what happened.
+`Answer` is a dataclass: `status` (a string; `hugr.STATUS_SUCCESS` or `hugr.STATUS_ERROR`), `response` (a dict; your user-facing payload), `trace_id` (a string), `metadata` (an `AnswerMeta`), `blobs` (a list of `BlobHandle`), and `extra`. The `.ok` property is shorthand for `status == STATUS_SUCCESS`. Errors are answers, not exceptions; a blown limit, a missing key, or a model error comes back as `status == "error"` with `response == {"error": ...}` and `trace_id` still set so you can inspect what happened.
 
 ### `AnswerMeta`
 
-`AnswerMeta` carries the mandatory cost accounting: `duration_ms`, `cost_micro_usd`, `tokens_in`, `tokens_out`, `model_calls`, `tool_calls`. Every field is an int defaulting to zero. These numbers come from the runtime's per-op fold — the same ones `hugr stats` aggregates.
+`AnswerMeta` carries the mandatory cost accounting: `duration_ms`, `cost_micro_usd`, `tokens_in`, `tokens_out`, `model_calls`, `tool_calls`. Every field is an int defaulting to zero. These numbers come from the runtime's per-op fold; the same ones `hugr stats` aggregates.
 
 ### Passing blobs
 
@@ -171,21 +171,21 @@ asyncio.run(stream())
 
 Every event dataclass retains its literal `type` attribute for discriminated-union narrowing, while `isinstance` gives the most direct Python branch. The vocabulary is:
 
-- `ask_started` — the turn began; carries `trace_parent` (the resumed parent's id, or `None`).
-- `model_started` — a model call started; carries `op` and `tier` (the selector string).
-- `text_delta` — a chunk of streamed assistant text; carries `op` and `text`.
-- `model_ended` — a `ModelEndedEvent`; carries `op` and a `Usage` dataclass.
-- `tool_started` — a tool call fired; carries `op`, `name`, and `args` (the decoded JSON).
-- `tool_ended` — a tool call returned; carries `op`, `name`, `is_error` (bool), and `result`.
-- `notice` — a free-form status message; carries `message`.
-- `done` — a `DoneEvent`; carries a normalized `DoneReason` dataclass (`kind` is `end_turn`, `cancelled`, or `error`, with an optional error `message`).
-- `answer_ready` — an `AnswerReadyEvent`; carries the full `Answer` dataclass.
+- `ask_started`: the turn began; carries `trace_parent` (the resumed parent's id, or `None`).
+- `model_started`: a model call started; carries `op` and `tier` (the selector string).
+- `text_delta`: a chunk of streamed assistant text; carries `op` and `text`.
+- `model_ended`: a `ModelEndedEvent`; carries `op` and a `Usage` dataclass.
+- `tool_started`: a tool call fired; carries `op`, `name`, and `args` (the decoded JSON).
+- `tool_ended`: a tool call returned; carries `op`, `name`, `is_error` (bool), and `result`.
+- `notice`: a free-form status message; carries `message`.
+- `done`: a `DoneEvent`; carries a normalized `DoneReason` dataclass (`kind` is `end_turn`, `cancelled`, or `error`, with an optional error `message`).
+- `answer_ready`: an `AnswerReadyEvent`; carries the full `Answer` dataclass.
 
 The stream is guaranteed to start with `AskStartedEvent` and end with `AnswerReadyEvent`; the final answer is already available as `event.answer`.
 
 ## File feedback
 
-Feedback is the asynchronous back-channel — a way to record, beside an immutable trace, that an answer helped or didn't. It is never read during a live ask; it's for offline analysis (see [tutorial 08](08-traces-replay-debugging.md)).
+Feedback is the asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask and is intended for offline analysis (see [tutorial 08](08-traces-replay-debugging.md)).
 
 ```python
 answer = agent.ask("Can I expense a train ticket?")
@@ -193,7 +193,7 @@ fb = agent.feedback(answer.trace_id, {"score": 5, "note": "correct policy cited"
 assert fb.trace_id == answer.trace_id
 ```
 
-`feedback(trace_id, payload)` returns a `Feedback` dataclass (`trace_id`, `payload`, `created_at_ms`). The payload is opaque JSON — Hugr never interprets it. Read it back with `feedback_for(trace_id)` which returns a `List[Feedback]`. Filing feedback on a nonexistent trace raises `RuntimeError`.
+`feedback(trace_id, payload)` returns a `Feedback` dataclass (`trace_id`, `payload`, `created_at_ms`). The payload is opaque JSON; Hugr never interprets it. Read it back with `feedback_for(trace_id)` which returns a `List[Feedback]`. Filing feedback on a nonexistent trace raises `RuntimeError`.
 
 ## Inspect and aggregate
 
@@ -218,18 +218,18 @@ If the assembly produced any warnings (e.g., a grant referencing an unknown libr
 
 ## Where traces land
 
-Traces persist under `~/.hugr/<agent-name>/traces/` — the same per-agent home as every other surface. The agent name in the constructor is what names the directory. Override the root with the `HUGR_HOME` environment variable (sets the shared root) or `HUGR_AGENT_HOME` (sets one agent's home directly). The scratchpad lives alongside at `~/.hugr/<name>/scratch/`, and the shared blob store at `~/.hugr/blobs`; override the latter with `HUGR_BLOB_STORE`. The pytest suite in `bindings/python/tests/` pins this by setting `HUGR_HOME` to a temp dir per test.
+Traces persist under `~/.hugr/<agent-name>/traces/`, the same per-agent home used by every other surface. The agent name in the constructor is what names the directory. Override the root with the `HUGR_HOME` environment variable (sets the shared root) or `HUGR_AGENT_HOME` (sets one agent's home directly). The scratchpad lives alongside at `~/.hugr/<name>/scratch/`, and the shared blob store at `~/.hugr/blobs`; override the latter with `HUGR_BLOB_STORE`. The pytest suite in `bindings/python/tests/` pins this by setting `HUGR_HOME` to a temp dir per test.
 
 ## Verify with the Rust CLI
 
-A trace written by a Python agent is a plain JSON file in the standard Hugr format — no Python metadata baked in, no Python needed to read it. The Rust CLI verifies it bit-for-bit:
+A trace written by a Python agent is a plain JSON file in the standard Hugr format. It contains no Python metadata and does not need Python to be read. The Rust CLI verifies it bit-for-bit:
 
 ```bash
 hugr verify ~/.hugr/policy-helper <trace_id>
 hugr replay ~/.hugr/policy-helper <trace_id> --step
 ```
 
-This works because capability results (your Python tools' return values) are recorded as events in the trace — the replayed brain re-folds them without calling Python. The brain is sans-IO and pure, so its output is a pure function of the recorded input log. (See [tutorial 08](08-traces-replay-debugging.md) for the full replay/verify workflow.)
+This works because capability results (your Python tools' return values) are recorded as events in the trace; the replayed brain re-folds them without calling Python. The brain is sans-IO and pure, so its output is a pure function of the recorded input log. (See [tutorial 08](08-traces-replay-debugging.md) for the full replay/verify workflow.)
 
 ## A complete runnable example
 
@@ -289,7 +289,7 @@ hugr verify ~/.hugr/policy-helper <trace_id_from_stdout>
 
 ### Resume and fork
 
-Pass a prior answer's `trace_id` to continue the conversation — a new trace is written with `depends_on` pointing at the parent:
+Pass a prior answer's `trace_id` to continue the conversation. A new trace is written with `depends_on` pointing at the parent:
 
 ```python
 follow_up = agent.ask("And what about flights?", trace_id=answer.trace_id)
@@ -301,8 +301,8 @@ assert by_id[follow_up.trace_id].depends_on == answer.trace_id
 
 ## A security note
 
-Python callables are **trusted host code**. Hugr jails what the *model* can invoke (sandbox-by-registration — a tool the agent doesn't grant is a tool the model cannot call), not what your Python does once invoked. A tool that reaches outside its declared scope is a hole you drill, not one Hugr can close. (See the threat model in [`ARCHITECTURE.md`](../../ARCHITECTURE.md) Part IV.)
+Python callables are **trusted host code**. Hugr jails what the *model* can invoke (sandbox-by-registration; a tool the agent doesn't grant is a tool the model cannot call), not what your Python does once invoked. A tool that reaches outside its declared scope is a hole you drill, not one Hugr can close. (See the threat model in [the security documentation](../security.md).)
 
 ## Next
 
-You've defined an agent entirely in Python. Next, see the same runtime from TypeScript — the `hugr-agents` TS package over the WASM brain, in Node and the browser: [An agent entirely in TypeScript](06-agent-entirely-in-typescript.md).
+You've defined an agent entirely in Python. Next, see the same runtime from TypeScript through the `hugr-agents` package over the WASM brain in Node and the browser: [An agent entirely in TypeScript](06-agent-entirely-in-typescript.md).

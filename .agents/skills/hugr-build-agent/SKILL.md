@@ -5,14 +5,14 @@ description: Build, configure, run, test, and package manifest-defined Hugr suba
 
 # Build a Hugr agent
 
-Create the smallest agent that owns one domain, grants only the capabilities it needs, and returns a stable structured response. Use [tutorial 01](../../../docs/tutorials/01-first-agent-cli.md) for a narrative walkthrough and [ARCHITECTURE.md](../../../ARCHITECTURE.md) for rationale.
+Create a focused agent for one domain. Grant only the capabilities it needs and return a stable structured response. Use [tutorial 01](../../../docs/tutorials/01-first-agent-cli.md) for a narrative walkthrough and [the reference documentation](../../../docs/README.md) for the design rationale.
 
 ## Workflow
 
-1. Read the repository's `AGENTS.md` before changing an existing checkout. Read the relevant `ARCHITECTURE.md` sections before changing framework behavior.
+1. Read the repository's `AGENTS.md` before changing an existing checkout. Read the relevant documentation under `docs/` before changing framework behavior.
 2. Install the CLI from a Hugr checkout with `cargo install --path crates/hugr-toolkit`, then scaffold with `hugr new <name>` for the weather template or `hugr new <name> --template blank` for a tool-free start.
 3. Edit `SYSTEM.md`, `hugr.toml`, and `src/lib.rs`. Keep the prompt domain-specific and the manifest privilege-minimal.
-4. Run `hugr run <agent-dir> "question"`; inspect `hugr run <agent-dir> -- --describe` and `--config` before trusting the grant surface.
+4. Run `hugr run <agent-dir> "question"`. Inspect `hugr run <agent-dir> -- --describe` and `--config` before trusting the grant surface.
 5. Resume with `--trace <id>` and verify the resulting immutable trace with `hugr verify <agent-dir> <id>`.
 6. Build with `hugr build <agent-dir> --release`. Use the produced binary directly, as `--mcp-serve`, or generate a typed wheel with `--surface python`.
 

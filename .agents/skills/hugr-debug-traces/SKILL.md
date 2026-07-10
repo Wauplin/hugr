@@ -5,11 +5,11 @@ description: Inspect, replay, verify, compare, and analyze Hugr traces, lineage,
 
 # Debug Hugr traces
 
-Treat trace files as immutable evidence. Never repair a failure by editing a stored trace. Read [tutorial 08](../../../docs/tutorials/08-traces-replay-debugging.md) for trace anatomy and [ARCHITECTURE.md](../../../ARCHITECTURE.md#19-determinism-replay-and-the-trace-format) for the determinism contract.
+Treat trace files as immutable evidence and never repair a failure by editing a stored trace. Read [tutorial 08](../../../docs/tutorials/08-traces-replay-debugging.md) for trace anatomy and [the runtime documentation](../../../docs/runtime.md#determinism-replay-and-traces) for the determinism contract.
 
 ## Locate the right store
 
-Default state is `~/.hugr/<agent>/`: immutable traces under `traces/`, feedback sidecars under `feedback/`, lineage scratch under `scratch/`, and durable notes under `memory/`. Resolution order is `HUGR_AGENT_HOME`, then `HUGR_HOME/<agent>`, then the default home; blobs use `HUGR_BLOB_STORE` or the shared `~/.hugr/blobs`.
+Default state is `~/.hugr/<agent>/`: immutable traces under `traces/`, feedback sidecars under `feedback/`, lineage scratch under `scratch/`, and durable notes under `memory/`. Resolution order is `HUGR_AGENT_HOME`, then `HUGR_HOME/<agent>`, then the default home. Blobs use `HUGR_BLOB_STORE` or the shared `~/.hugr/blobs`.
 
 List lineage before choosing an id:
 
@@ -67,4 +67,4 @@ Cron runs are ordinary traces tagged in `extra` with the job name and fire time.
 
 ## Finish a trace-related code change
 
-Run the focused crate tests, then `cargo test`, `cargo clippy --all-targets`, and `cargo tree -p hugr-core`. Any new `Command`, `Event`, or `Record` variant needs a reducer match, a scripted command-sequence test, and replay coverage. Update `ARCHITECTURE.md`, affected tutorials, and the relevant `.agents/skills/*/SKILL.md` cheat sheet before calling the change done.
+Run the focused crate tests, then `cargo test`, `cargo clippy --all-targets`, and `cargo tree -p hugr-core`. Any new `Command`, `Event`, or `Record` variant needs a reducer match, a scripted command-sequence test, and replay coverage. Update the relevant reference documentation, affected tutorials, and the relevant `.agents/skills/*/SKILL.md` cheat sheet before calling the change done.
