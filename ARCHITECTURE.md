@@ -327,7 +327,7 @@ The reducer (`brain.rs`) does exactly:
 
 1. **Bookkeeping** — maintain the append-only log and the in-flight op table.
 2. **The turn loop** — drive `user → model → (tool calls?) → tools → model → … → done`.
-3. **Ask the pluggable `TurnPolicy`** — which model selector to use, how to project context, whether a capability is gated. Strategy lives in the policy, never hardcoded in the reducer.
+3. **Ask the pluggable `TurnPolicy`** — which model selector to use, how to project context, whether a capability is gated. Strategy lives in the policy, never hardcoded in the reducer. Hosts can pass a custom policy to `EngineBuilder::policy`, record its opaque `{"kind": ...}` config in the trace, and register a pure decoder in `PolicyRegistry` so replay/resume can rebuild it.
 4. **Route opaque payloads** — turn a model's tool calls into `StartCapability` ops; feed results back as context.
 5. **Decide lifecycle** — when a turn is `Done`; when to `Checkpoint`.
 
@@ -373,6 +373,7 @@ pub struct Trace {
 
 - **The log is the truth, not state.** `BrainState` is never stored — always rederivable.
 - **`verify()`** re-folds the events into a fresh brain and asserts the reconstructed log **and** command sequence equal the recorded ones, bit-for-bit. This is the release gate: any new control-flow path ships with a replay test.
+- **Policy config is replay input.** Traces carry the host-recorded policy config as opaque JSON; built-in static-policy configs use `kind = "static"`, and custom host policies use their own open string kind plus a registered pure decoder. A trace with an unknown policy kind can still be replayed with an explicitly supplied policy, but faithful automatic replay/resume needs the registry that knows that kind.
 - **The `TraceBackend`** holds immutable traces keyed by content-derived `trace_id`, with `depends_on` lineage in the header; `head()` reads metadata without folding events. The default filesystem implementation is `FsTraceStore`/`TraceStore` rooted at `<agent-home>/traces`, using atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
 - **Agent home** resolves the same for dev and built surfaces: `HUGR_AGENT_HOME` as a full override, else `HUGR_HOME/<agent-name>`, else `$HOME/.hugr/<agent-name>`, else a temp-dir fallback. The default scratch root is `<agent-home>/scratch`; `[traces].store` and `[scratchpad].root` remain explicit manifest overrides.
 - **Storage is pluggable at the host layer.** `hugr-agent` defines `TraceBackend`, `BlobBackend`, and `ScratchBackend`; `Agent::new` is the convenience filesystem constructor, while `Agent::with_storage` / `StorageOverrides` accepts custom `Arc<dyn ...>` implementations. A generated agent crate can opt in by exporting `pub fn storage() -> hugr_agent::StorageOverrides`; no core type changes and no manifest enum are needed.

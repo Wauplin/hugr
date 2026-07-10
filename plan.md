@@ -127,7 +127,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: run the existing store/scratch/blob test suites generically over fs and mem backends; end-to-end ask on `MemTraceStore` proving no fs writes.
 - Invariant check: traits live in host layers; `hugr-core` never learns storage exists; `hugr-replay`'s pure data stays pure.
 
-### 1.3 `[ ]` TurnPolicy injection + policy registry (prerequisite for 2.1, 3.1, 3.2) — M
+### 1.3 `[x]` TurnPolicy injection + policy registry (prerequisite for 2.1, 3.1, 3.2) — M
 
 - Why: `EngineBuilder::build` hardwires `StaticPolicy` (`hugr-host/src/engine.rs:638-657`) — there is no public way to run the engine with a custom policy — and replay can only reconstruct `StaticPolicy` (`hugr-core/src/policy.rs:decode_policy:25`, tried by `hugr-replay/src/replay.rs:policy_from_trace:61`). Built-in compaction (2.1) and Python/TS-configured policies need both.
 - Design:

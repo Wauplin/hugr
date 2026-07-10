@@ -5,7 +5,7 @@
 //! log, and whether a capability needs permission — but never hardcodes those
 //! decisions. Swap the policy to change behaviour without touching the reducer.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +17,62 @@ use crate::primitives::Value;
 use crate::record::{LogEntry, Record};
 use crate::state::BrainState;
 
+pub type PolicyDecoder = fn(&Value) -> Option<Box<dyn TurnPolicy>>;
+
+#[derive(Clone)]
+pub struct PolicyRegistry {
+    decoders: BTreeMap<String, PolicyDecoder>,
+}
+
+impl PolicyRegistry {
+    pub fn new() -> Self {
+        Self {
+            decoders: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_builtins() -> Self {
+        let mut registry = Self::new();
+        registry.register("static", decode_static_policy);
+        registry
+    }
+
+    pub fn register(&mut self, kind: impl Into<String>, decoder: PolicyDecoder) {
+        self.decoders.insert(kind.into(), decoder);
+    }
+
+    pub fn decode(&self, value: &Value) -> Option<Box<dyn TurnPolicy>> {
+        match value.get("kind").and_then(Value::as_str) {
+            Some(kind) => self.decoders.get(kind).and_then(|decode| decode(value)),
+            None => decode_static_policy(value),
+        }
+    }
+}
+
+impl Default for PolicyRegistry {
+    fn default() -> Self {
+        Self::with_builtins()
+    }
+}
+
+impl std::fmt::Debug for PolicyRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PolicyRegistry")
+            .field("kinds", &self.decoders.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 /// Decode a policy captured as an opaque [`Value`] — e.g. a trace's stored
-/// policy config. Returns `None` when the value does not decode as a
-/// [`StaticPolicy`] (e.g. a custom host policy); the caller picks its own
-/// fallback. Faithful replay needs the *same* policy a session was recorded
-/// under, because the brain branches on its pure decisions.
+/// policy config. Returns `None` when the value does not decode through the
+/// built-in registry; the caller picks its own fallback. Faithful replay needs
+/// the *same* policy a session was recorded under, because the brain branches
+/// on its pure decisions.
 pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
+    PolicyRegistry::default().decode(value)
+}
+
+fn decode_static_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
     serde_json::from_value::<StaticPolicy>(value.clone())
         .ok()
         .map(|policy| Box::new(policy) as Box<dyn TurnPolicy>)
@@ -74,6 +124,8 @@ pub trait TurnPolicy: Send + Sync {
 /// bit-for-bit replay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StaticPolicy {
+    #[serde(default = "static_policy_kind")]
+    kind: String,
     model: ModelSelector,
     tools: Vec<ToolSchema>,
     permissioned: Vec<String>,
@@ -86,9 +138,14 @@ pub struct StaticPolicy {
     context_budget: TokenBudget,
 }
 
+fn static_policy_kind() -> String {
+    "static".to_string()
+}
+
 impl Default for StaticPolicy {
     fn default() -> Self {
         Self {
+            kind: static_policy_kind(),
             model: ModelSelector::named("medium"),
             tools: Vec::new(),
             permissioned: Vec::new(),

@@ -33,7 +33,7 @@ Hard invariants — do not break these:
 
 ## Where logic goes
 
-- **Agent strategy** (which model selector, how to project context, whether a capability is gated) lives in the pluggable `TurnPolicy` — never hardcoded in the reducer. `StaticPolicy` is the trivial pass-through projection.
+- **Agent strategy** (which model selector, how to project context, whether a capability is gated) lives in the pluggable `TurnPolicy` — never hardcoded in the reducer. `StaticPolicy` is the trivial pass-through projection; custom policy decoders registered in `PolicyRegistry` must be pure so replay/resume stay deterministic.
 - **The reducer** (`brain.rs`) only: maintains the log + op table; drives the turn loop; asks the policy; routes opaque payloads; decides done/checkpoint. If you're adding "smarts", it probably belongs in a policy, not the reducer.
 - **Everything hard** (IO, HTTP, model resolution, storage) is the *host's* job — not in `hugr-core`.
 

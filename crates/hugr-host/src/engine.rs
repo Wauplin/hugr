@@ -11,13 +11,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
     Brain, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
-    SamplingParams, StaticPolicy, Timestamp, Value,
+    PolicyRegistry, SamplingParams, StaticPolicy, Timestamp, TurnPolicy, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
-use hugr_replay::{Trace, TraceError, policy_from_trace};
+use hugr_replay::{Trace, TraceError, policy_from_trace_with_registry};
 
 use crate::ChunkSink;
 use crate::capability::CapabilityRegistry;
@@ -471,6 +471,8 @@ pub struct EngineBuilder {
     system_prompt: Option<String>,
     model_request_extra: Value,
     sampling: SamplingParams,
+    policy: Option<(Box<dyn TurnPolicy>, Value)>,
+    policy_registry: PolicyRegistry,
     record: bool,
     /// When set, the brain is pre-seeded by replaying this trace's recorded
     /// events into it (with zero IO), and the recorder is pre-loaded with those
@@ -490,6 +492,8 @@ impl Default for EngineBuilder {
             system_prompt: None,
             model_request_extra: Value::Null,
             sampling: SamplingParams::default(),
+            policy: None,
+            policy_registry: PolicyRegistry::default(),
             record: false,
             resume: None,
         }
@@ -557,6 +561,16 @@ impl EngineBuilder {
         self
     }
 
+    pub fn policy(mut self, policy: Box<dyn TurnPolicy>, config: Value) -> Self {
+        self.policy = Some((policy, config));
+        self
+    }
+
+    pub fn policy_registry(mut self, registry: PolicyRegistry) -> Self {
+        self.policy_registry = registry;
+        self
+    }
+
     /// Record the session: capture the ordered event stream so it can be saved
     /// as a [`Trace`] ([`Engine::trace`]/[`Engine::save_trace`]) and replayed
     /// bit-for-bit. Off by default (zero overhead).
@@ -600,7 +614,10 @@ impl EngineBuilder {
         // capabilities.
         let (brain, recorder, policy_config) = match self.resume {
             Some(trace) => {
-                let mut brain = Brain::new(policy_from_trace(&trace));
+                let mut brain = Brain::new(policy_from_trace_with_registry(
+                    &trace,
+                    &self.policy_registry,
+                ));
                 let events = trace.events;
                 // Reconstruct the resumed session's state with ZERO IO by
                 // re-folding the recorded events. The re-emitted commands are
@@ -615,24 +632,33 @@ impl EngineBuilder {
                 (brain, Some(recorder), trace.policy)
             }
             None => {
-                let mut policy = StaticPolicy::default()
-                    .with_model(default_model.clone())
-                    .with_tools(self.caps.schemas())
-                    .with_permissioned(self.caps.permissioned_names())
-                    .with_background(self.caps.background_names())
-                    .with_params(self.sampling)
-                    .with_extra(self.model_request_extra);
-                if let Some(system) = self.system_prompt {
-                    policy = policy.with_system_prompt(system);
+                if let Some((policy, config)) = self.policy {
+                    let policy_config = self.record.then_some(config);
+                    (
+                        Brain::new(policy),
+                        self.record.then(Recorder::default),
+                        policy_config,
+                    )
+                } else {
+                    let mut policy = StaticPolicy::default()
+                        .with_model(default_model.clone())
+                        .with_tools(self.caps.schemas())
+                        .with_permissioned(self.caps.permissioned_names())
+                        .with_background(self.caps.background_names())
+                        .with_params(self.sampling)
+                        .with_extra(self.model_request_extra);
+                    if let Some(system) = self.system_prompt {
+                        policy = policy.with_system_prompt(system);
+                    }
+                    // Serialize the policy once (for recorded traces) before it
+                    // moves into the brain; best-effort.
+                    let policy_config = self
+                        .record
+                        .then(|| serde_json::to_value(&policy).ok())
+                        .flatten();
+                    let brain = Brain::new(Box::new(policy));
+                    (brain, self.record.then(Recorder::default), policy_config)
                 }
-                // Serialize the policy once (for recorded traces) before it
-                // moves into the brain; best-effort.
-                let policy_config = self
-                    .record
-                    .then(|| serde_json::to_value(&policy).ok())
-                    .flatten();
-                let brain = Brain::new(Box::new(policy));
-                (brain, self.record.then(Recorder::default), policy_config)
             }
         };
 

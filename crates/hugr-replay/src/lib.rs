@@ -50,8 +50,8 @@ mod replay;
 pub mod test_support;
 pub use blob::BlobStore;
 pub use replay::{
-    Inspector, Replay, Step, drive, policy_from_trace, replay, replay_with_policy, verify,
-    verify_with_policy,
+    Inspector, Replay, Step, drive, policy_from_trace, policy_from_trace_with_registry, replay,
+    replay_with_policy, replay_with_registry, verify, verify_with_policy, verify_with_registry,
 };
 
 /// The current trace container format version. Bump on any breaking change to

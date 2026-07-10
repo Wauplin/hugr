@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hugr_core::{
-    ContentPart, DoneReason, ModelOutput, ModelRequest, ModelSelector, OpOutcome, OutputEvent,
-    Record, Role, ToolCall, ToolSchema, Usage, Value,
+    BrainState, ContentPart, ContextPlan, DoneReason, LogEntry, ModelOutput, ModelRequest,
+    ModelSelector, OpOutcome, OutputEvent, PolicyRegistry, Record, Role, StaticPolicy, ToolCall,
+    ToolSchema, TurnPolicy, Usage, Value,
 };
 use hugr_host::mcp::{self, McpServerConfig};
 use hugr_host::{Capability, ChunkSink, Engine, Frontend, ModelAdapter, ModelSink};
@@ -115,6 +116,39 @@ impl Frontend for Capture {
 fn deterministic_clock() -> hugr_host::Clock {
     let counter = Arc::new(AtomicU64::new(1));
     Arc::new(move || counter.fetch_add(1, Ordering::SeqCst))
+}
+
+struct CustomSelectorPolicy {
+    selector: ModelSelector,
+    projection: StaticPolicy,
+}
+
+impl CustomSelectorPolicy {
+    fn new(selector: impl Into<String>) -> Self {
+        Self {
+            selector: ModelSelector::named(selector.into()),
+            projection: StaticPolicy::default(),
+        }
+    }
+}
+
+impl TurnPolicy for CustomSelectorPolicy {
+    fn choose_model(&self, _state: &BrainState) -> ModelSelector {
+        self.selector.clone()
+    }
+
+    fn project_context(&self, log: &[LogEntry], budget: hugr_core::TokenBudget) -> ContextPlan {
+        self.projection.project_context(log, budget)
+    }
+
+    fn needs_permission(&self, _capability: &str) -> bool {
+        false
+    }
+}
+
+fn decode_custom_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
+    let selector = value.get("model")?.as_str()?;
+    Some(Box::new(CustomSelectorPolicy::new(selector)))
 }
 
 fn count_tool_results(log: &[hugr_core::LogEntry]) -> Vec<(String, serde_json::Value)> {
@@ -1055,6 +1089,38 @@ async fn explicit_default_model_is_not_stolen_by_first_registration() {
     );
     assert!(big.requests.lock().unwrap().is_empty());
     assert!(capture.text.lock().unwrap().contains("routed to medium"));
+}
+
+#[tokio::test]
+async fn custom_policy_controls_model_and_verifies_through_registry() {
+    let default = MockModel::new([]);
+    let custom = MockModel::new([ModelOutput::text("custom route")]);
+    let config = json!({ "kind": "custom-selector", "model": "custom" });
+
+    let mut engine = Engine::builder()
+        .record(true)
+        .clock(deterministic_clock())
+        .model(ModelSelector::named("default"), default.clone())
+        .model(ModelSelector::named("custom"), custom.clone())
+        .policy(
+            Box::new(CustomSelectorPolicy::new("custom")),
+            config.clone(),
+        )
+        .build();
+
+    engine.user_turn("route this".into()).await;
+    engine.session_end();
+
+    assert!(default.requests.lock().unwrap().is_empty());
+    assert_eq!(custom.requests.lock().unwrap().len(), 1);
+    let trace = engine.trace().unwrap();
+    assert_eq!(trace.policy, Some(config));
+
+    let mut registry = PolicyRegistry::default();
+    registry.register("custom-selector", decode_custom_policy);
+    let replay = hugr_host::hugr_replay::verify_with_registry(&trace, &registry)
+        .expect("custom policy trace verifies with its registry");
+    assert_eq!(replay.log, trace.log);
 }
 
 /// Regression: a resumed engine must start **quiescent**. Resuming a trace

@@ -9,7 +9,7 @@
 //! - [`Inspector`] wraps the same reconstruction so a debugger can step through
 //!   the session one event at a time.
 
-use hugr_core::{Brain, Command, Event, LogEntry, StaticPolicy, TurnPolicy, decode_policy};
+use hugr_core::{Brain, Command, Event, LogEntry, PolicyRegistry, StaticPolicy, TurnPolicy};
 
 use crate::{Trace, TraceError};
 
@@ -35,6 +35,10 @@ pub fn replay(trace: &Trace) -> Replay {
     replay_with_policy(trace, policy_from_trace(trace))
 }
 
+pub fn replay_with_registry(trace: &Trace, registry: &PolicyRegistry) -> Replay {
+    replay_with_policy(trace, policy_from_trace_with_registry(trace, registry))
+}
+
 /// Reconstruct the [`TurnPolicy`] a trace was recorded under: decode the
 /// captured [`StaticPolicy`] config if present (via [`decode_policy`]), else
 /// the default.
@@ -43,10 +47,17 @@ pub fn replay(trace: &Trace) -> Replay {
 /// branches on the policy's pure decisions, so continuing a session requires
 /// the same policy the trace was recorded with.
 pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
+    policy_from_trace_with_registry(trace, &PolicyRegistry::default())
+}
+
+pub fn policy_from_trace_with_registry(
+    trace: &Trace,
+    registry: &PolicyRegistry,
+) -> Box<dyn TurnPolicy> {
     trace
         .policy
         .as_ref()
-        .and_then(decode_policy)
+        .and_then(|policy| registry.decode(policy))
         // No captured policy, or one we can't decode (e.g. a custom host
         // policy): fall back to the default rather than fail. The caller can
         // supply the right policy via `replay_with_policy`.
@@ -96,6 +107,13 @@ pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay 
 /// the regression replay exists to catch.
 pub fn verify(trace: &Trace) -> Result<Replay, TraceError> {
     verify_with_policy(trace, policy_from_trace(trace))
+}
+
+pub fn verify_with_registry(
+    trace: &Trace,
+    registry: &PolicyRegistry,
+) -> Result<Replay, TraceError> {
+    verify_with_policy(trace, policy_from_trace_with_registry(trace, registry))
 }
 
 /// [`verify`] with an explicit policy.
