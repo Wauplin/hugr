@@ -1,9 +1,9 @@
-//! MCP stdio client adapted into ordinary host capabilities (ROADMAP_2 C1).
+//! MCP stdio client adapted into ordinary host capabilities.
 //!
 //! This is deliberately a host-only integration: MCP servers are subprocesses,
 //! their tools are advertised as [`Capability`](crate::Capability)s, and the
 //! brain only ever sees normal `StartCapability` commands. Tool arguments and
-//! results stay opaque `Value`s (ARCHITECTURE §2.4).
+//! results stay opaque `Value`s.
 
 use std::ffi::OsString;
 use std::process::Stdio;

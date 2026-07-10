@@ -706,7 +706,7 @@ async fn run_chunked(answer: &str, chunk_size: usize) -> (Vec<hugr_core::LogEntr
 /// Keep only the *logical* records (user/model/tool) — the consolidated content
 /// the durable trace is about. (`OpEnded` carries timestamps whose count tracks
 /// the number of injected ticks, which differs with delta count; the consolidated
-/// records do not, and they are what replay keys off — ARCHITECTURE §4.5.)
+/// records do not, and they are what replay keys off.)
 fn logical_records(log: &[hugr_core::LogEntry]) -> Vec<Record> {
     log.iter()
         .filter(|e| {
@@ -747,7 +747,7 @@ async fn streamed_deltas_never_reach_the_durable_log() {
     assert_eq!(logical_a, logical_c);
 
     // 3. The log holds exactly one consolidated model output — never one record
-    //    per delta (deltas are transport, never durable; ARCHITECTURE §4.5).
+    //    per delta.
     for (label, log) in [
         ("per-char", &log_per_char),
         ("chunks", &log_chunks),
@@ -796,7 +796,7 @@ async fn record_then_replay_reconstructs_the_session_bit_for_bit() {
         .system_prompt("You are a test agent.")
         .frontend(Box::new(capture.clone()))
         .clock(deterministic_clock())
-        .record(true) // <-- capture the ordered event stream
+        .record(true)
         .build();
 
     engine.user_turn("greet me using the tool".into()).await;
@@ -818,7 +818,7 @@ async fn record_then_replay_reconstructs_the_session_bit_for_bit() {
     assert_eq!(trace.log, live_log, "recorded log must equal the live log");
 
     // The recorder captured the live command sequence too, so `verify` checks
-    // command ordering (not just the log) bit-for-bit (§6.3).
+    // command ordering (not just the log) bit-for-bit.
     assert!(
         !trace.commands.is_empty(),
         "the recorder captured the live command sequence"
@@ -892,7 +892,7 @@ async fn record_then_replay_reconstructs_the_session_bit_for_bit() {
 /// records AND the new turn's — and which still replays bit-for-bit.
 #[tokio::test]
 async fn resume_from_trace_continues_the_session() {
-    // --- Session 1: record an original session with a tool op, then save it. --
+    // Session 1: record an original session with a tool op, then save it.
     let model1 = MockModel::new([
         ModelOutput::tool_calls(vec![ToolCall::new(
             "call-1",
@@ -925,7 +925,7 @@ async fn resume_from_trace_continues_the_session() {
     let saved = hugr_host::Trace::load(&path).expect("reload the trace");
     let original_event_count = saved.events.len();
 
-    // --- Session 2: resume from the trace and add a NEW user turn. ------------
+    // Session 2: resume from the trace and add a NEW user turn.
     let capture2 = Capture::default();
     // A *fresh* model with only the new turn's responses: if resume re-ran the
     // recorded model calls this mock would be exhausted (proving no IO replay).
@@ -989,7 +989,7 @@ async fn resume_from_trace_continues_the_session() {
         "the new user turn is in the grown log"
     );
 
-    // --- Re-save the grown session: it still replays bit-for-bit. ------------
+    // Re-save the grown session: it still replays bit-for-bit.
     let path2 = dir.join("session.resumed.trace.json");
     resumed
         .save_trace(&path2)

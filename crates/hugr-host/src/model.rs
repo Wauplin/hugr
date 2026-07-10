@@ -1,9 +1,9 @@
 //! The model-adapter interface and its registry.
 //!
 //! A model call is "an effect the host provides", registered much like a
-//! capability (ARCHITECTURE §5.3). The brain names a logical [`ModelSelector`];
-//! the registry resolves it to a concrete adapter. The adapter streams deltas
-//! through a [`ModelSink`] and returns the consolidated output + usage.
+//! capability. The brain names a logical [`ModelSelector`]; the registry
+//! resolves it to a concrete adapter. The adapter streams deltas through a
+//! [`ModelSink`] and returns the consolidated output + usage.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ use tokio::sync::mpsc::UnboundedSender;
 /// render live), then return the consolidated [`ModelOutput`] + [`Usage`] once
 /// the response completes. There is deliberately no non-streaming variant.
 ///
-/// Transport errors (429, timeouts, 5xx) should be retried *inside* the adapter
-/// (ARCHITECTURE §5.4); only return `Err` once the host has genuinely given up.
+/// Transport errors (429, timeouts, 5xx) should be retried *inside* the
+/// adapter; only return `Err` once the adapter has genuinely given up.
 #[async_trait]
 pub trait ModelAdapter: Send + Sync {
     async fn call(
@@ -70,8 +70,8 @@ impl ModelSink {
 
 /// Maps logical [`ModelSelector`]s to concrete adapters.
 ///
-/// `Clone` is cheap (it clones `Arc`s) and lets a sub-agent runner
-/// (ARCHITECTURE §13) reuse the parent's model registry on its own task.
+/// `Clone` is cheap (it clones `Arc`s) and lets a sub-agent runner reuse the
+/// parent's model registry on its own task.
 #[derive(Clone, Default)]
 pub struct ModelRegistry {
     map: HashMap<ModelSelector, Arc<dyn ModelAdapter>>,

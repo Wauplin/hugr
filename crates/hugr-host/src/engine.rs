@@ -1,4 +1,4 @@
-//! The tokio driver loop (ARCHITECTURE §2.3) and its builder.
+//! The tokio driver loop and its builder.
 //!
 //! The driver is the *entire* integration surface: drain `brain.poll()`,
 //! perform each command (spawning one task per in-flight op), await the next
@@ -26,27 +26,23 @@ use crate::model::{ModelRegistry, ModelSink};
 
 /// Captures the exact ordered [`Event`] stream the host feeds the brain **and**
 /// the ordered [`Command`] sequence the brain emits, so the session can be
-/// persisted as a [`Trace`] and replayed bit-for-bit later (ARCHITECTURE
-/// §6.2/§12). It records the *input* (events, including the injected `Tick`s) in
-/// submission order and the *output* (commands) in the order the driver drains
-/// them from `brain.poll()`; the durable *log* is read from the brain at save
-/// time (it is always a fold over these same events).
+/// persisted as a [`Trace`] and replayed bit-for-bit later. The durable *log*
+/// is read from the brain at save time (it is always a fold over these events).
 ///
 /// The recorded commands let [`hugr_replay::verify`] assert that re-feeding the
 /// events reproduces the same command sequence bit-for-bit — command *ordering*
 /// never reaches the log, so without this a divergence (e.g. a `HashMap`-ordered
-/// cancel-all) would pass verification undetected (§6.3).
+/// cancel-all) would pass verification undetected.
 ///
 /// Recording is opt-in (`Engine::builder().record()`); a non-recording engine
 /// pays nothing.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Recorder {
     pub(crate) events: Vec<Event>,
-    /// The brain→host commands, in the order the driver drained them from
-    /// `brain.poll()` (the replay *output* verified against replay, §6.3).
+    /// Brain→host commands, in the order the driver drained them from
+    /// `brain.poll()`.
     pub(crate) commands: Vec<Command>,
-    /// The first injected timestamp, used as the trace's `created_at` (the
-    /// `seq 0` tick — never a syscall in the core).
+    /// The first injected timestamp, used as the trace's `created_at`.
     pub(crate) created_at: Option<u64>,
 }
 
@@ -62,20 +58,18 @@ impl Recorder {
     }
 
     /// Record commands in the order the driver drained them from the brain, so
-    /// the trace's command sequence matches what replay re-emits (§6.3).
+    /// the trace's command sequence matches what replay re-emits.
     pub(crate) fn record_commands(&mut self, commands: &[Command]) {
         self.commands.extend_from_slice(commands);
     }
 
     /// Pre-load the recorder with a trace's already-recorded events **and** the
     /// commands re-derived by re-folding them, so a **resumed** session re-saves
-    /// the full history (old + new) and still verifies bit-for-bit. The events
-    /// are copied verbatim (including the recorded `Tick`s); `commands` come
-    /// from the resume re-fold (see [`hugr_replay::drive`]) rather than the old
-    /// trace's `commands`, so a resumed *old* trace (empty commands) still gets
-    /// a complete, self-consistent command sequence. `created_at` is taken from
-    /// the trace's metadata so the resumed trace keeps the original session's
-    /// creation time, not a new one.
+    /// the full history (old + new) and still verifies bit-for-bit. `commands`
+    /// come from the resume re-fold (see [`hugr_replay::drive`]) rather than the
+    /// old trace's `commands`, so a resumed trace with empty commands still gets
+    /// a complete, self-consistent command sequence. `created_at` keeps the
+    /// original session's creation time.
     fn seed(events: Vec<Event>, commands: Vec<Command>, created_at: Option<u64>) -> Self {
         Self {
             events,
@@ -86,7 +80,7 @@ impl Recorder {
 }
 
 /// A source of (host-side) wall-clock time, injected into the brain as `Tick`
-/// events so the brain itself never reads a clock (ARCHITECTURE §6.1).
+/// events so the brain itself never reads a clock.
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// A handle for injecting [`Event`]s into a running [`Engine`] from outside a
@@ -111,7 +105,7 @@ impl EventSender {
 }
 
 /// The default front-end: renders nothing. The subagent runtime's product is
-/// its `Answer` + trace, not a live render (ARCHITECTURE §18).
+/// its `Answer` + trace, not a live render.
 struct SilentFrontend;
 
 impl Frontend for SilentFrontend {}
@@ -130,12 +124,11 @@ pub struct Engine {
     /// Capability name per in-flight op, so tool results can be labelled when
     /// the engine observes their completion events.
     op_labels: HashMap<OpId, String>,
-    /// When recording is enabled, the captured event stream for the trace
-    /// (ARCHITECTURE §12). `None` when recording is off (zero overhead).
+    /// `None` when recording is off (zero overhead).
     recorder: Option<Recorder>,
     /// The brain's policy config, serialized once at build time, so a recorded
     /// trace can carry it (the brain branches on the policy's pure decisions —
-    /// permission/background — so replay needs the same policy, §6.3).
+    /// permission/background — so replay needs the same policy).
     policy_config: Option<serde_json::Value>,
 }
 
@@ -169,9 +162,9 @@ impl Engine {
     /// *outside* a turn — e.g. a Ctrl-C / signal handler sending
     /// [`Event::UserAbort`] while [`user_turn`](Self::user_turn) is awaiting the
     /// model stream. The event lands in the same inbox the per-op tasks feed, so
-    /// the brain folds it in order (ARCHITECTURE §4.2): `UserAbort` makes the
-    /// brain emit a [`Command::Cancel`] per in-flight op, the loop aborts those
-    /// tasks, and the turn ends `Cancelled`.
+    /// the brain folds it in order: `UserAbort` makes the brain emit a
+    /// [`Command::Cancel`] per in-flight op, the loop aborts those tasks, and
+    /// the turn ends `Cancelled`.
     pub fn event_sender(&self) -> EventSender {
         EventSender {
             tx: self.tx.clone(),
@@ -189,7 +182,8 @@ impl Engine {
     ///
     /// Both events go through here in submission order, so this is the single
     /// chokepoint where the [`Recorder`] captures the exact stream that produced
-    /// the session — the property replay depends on (ARCHITECTURE §6.2).
+    /// the session — the property replay depends on. The `Tick` is recorded too:
+    /// replay must re-feed it, or the fold diverges.
     fn submit(&mut self, event: Event) {
         let now = Timestamp((self.clock)());
         let tick = Event::Tick { now };
@@ -212,11 +206,9 @@ impl Engine {
             self.brain.state().log().to_vec(),
             rec.created_at,
         )
-        // Carry the recorded command sequence so replay can verify it
-        // bit-for-bit (command ordering never reaches the log, §6.3).
         .with_commands(rec.commands.clone());
-        // Capture the policy so replay reproduces the brain's permission /
-        // background branching bit-for-bit (§6.3).
+        // Carry the policy so replay reproduces the brain's permission /
+        // background branching bit-for-bit.
         if let Some(policy) = self.policy_config.clone() {
             trace = trace.with_policy(policy);
         }
@@ -238,16 +230,15 @@ impl Engine {
     /// complete).
     async fn drive_to_idle(&mut self) {
         loop {
-            // Drain and perform every queued command. Performing one may queue
-            // more (e.g. a tool result resuming the model), so loop until empty.
+            // Performing a command may queue more (e.g. a tool result resuming
+            // the model), so drain until empty.
             loop {
                 let commands = self.brain.poll();
                 if commands.is_empty() {
                     break;
                 }
-                // Record the drained commands (in order) before performing them,
-                // so the trace's command sequence matches what a replay re-emits
-                // (command ordering never reaches the log, §6.3).
+                // Record before performing, so the trace's command sequence
+                // matches what a replay re-emits.
                 if let Some(rec) = self.recorder.as_mut() {
                     rec.record_commands(&commands);
                 }
@@ -256,12 +247,10 @@ impl Engine {
                 }
             }
 
-            // No ops in flight → the turn is done.
             if self.brain.state().inflight_len() == 0 {
                 break;
             }
 
-            // Otherwise block until any task produces the next event.
             match self.rx.recv().await {
                 Some(event) => {
                     self.observe(&event);
@@ -316,10 +305,9 @@ impl Engine {
                 }
             },
 
-            // Library tools are ungated — the sandbox is registration
-            // (ARCHITECTURE §20.1): only what the manifest grants exists at
-            // all, so permission requests are always allowed. The decision
-            // still flows through the brain as a recorded event.
+            // This host always answers Allow: only what the manifest grants is
+            // registered at all, so registration is the permission boundary.
+            // The decision still flows through the brain as a recorded event.
             Command::RequestPermission { op, request } => {
                 let decision = Decision::Allow;
                 self.frontend.on_permission(&request.capability, &decision);
@@ -337,14 +325,13 @@ impl Engine {
                 let _ = self.tx.send(Event::OpCancelled { op });
             }
 
-            // Cosmetic output (streamed text, tool chunks) goes straight to the
-            // front-end; the brain already folded every delta, so this affects
-            // only what is drawn, never the log.
+            // Cosmetic output goes straight to the front-end; the brain already
+            // folded every delta, so this affects what is drawn, never the log.
             Command::Emit(event) => self.frontend.on_output(&event),
 
-            // The recorder captures the event stream at `submit` (so the trace
-            // is always buildable on demand via `Engine::trace`); a checkpoint
-            // just drops finished task handles so they don't accumulate.
+            // The recorder already captures the event stream at `submit`; a
+            // checkpoint just drops finished task handles so they don't
+            // accumulate.
             Command::Checkpoint => {
                 self.tasks.retain(|_, h| !h.is_finished());
             }
@@ -354,7 +341,7 @@ impl Engine {
             }
 
             // Forward-compatible: a newer core may add commands this host
-            // doesn't know about yet (ARCHITECTURE §2.4).
+            // doesn't know about yet.
             other => self
                 .frontend
                 .on_notice(&format!("(unhandled command: {other:?})")),
@@ -572,7 +559,7 @@ impl EngineBuilder {
 
     /// Record the session: capture the ordered event stream so it can be saved
     /// as a [`Trace`] ([`Engine::trace`]/[`Engine::save_trace`]) and replayed
-    /// bit-for-bit (ARCHITECTURE §12). Off by default (zero overhead).
+    /// bit-for-bit. Off by default (zero overhead).
     pub fn record(mut self, record: bool) -> Self {
         self.record = record;
         self
@@ -599,38 +586,30 @@ impl EngineBuilder {
 
     pub fn build(self) -> Engine {
         let clock = self.clock.unwrap_or_else(|| Arc::new(system_clock));
-        // Resolve the default model: an explicit `default_model` wins, then the
-        // first registered model (the documented convenience), then the
-        // built-in `named("medium")`. Explicitness is tracked, never inferred
-        // by comparing values, so an explicit `named("medium")` is honored.
+        // Explicit `default_model` wins, then the first registered model, then
+        // the built-in `named("medium")`. Explicitness is tracked, never
+        // inferred by comparing values, so an explicit `named("medium")` is
+        // honored.
         let default_model = self
             .default_model
             .or(self.first_model)
             .unwrap_or_else(|| ModelSelector::named("medium"));
-        // The brain's policy and recorder depend on whether we are resuming a
-        // trace. Resume restores the *recorded* policy (so the continued session
+        // Resume restores the *recorded* policy (so the continued session
         // branches identically and re-verifies) and rebuilds the brain from the
         // trace; a fresh session assembles the policy from the registered
-        // capabilities (§2.4).
+        // capabilities.
         let (brain, recorder, policy_config) = match self.resume {
             Some(trace) => {
-                // The brain runs under the trace's policy; carry the captured
-                // value through verbatim so re-saving round-trips it bit-for-bit.
                 let mut brain = Brain::new(policy_from_trace(&trace));
                 let events = trace.events;
-                // Reconstruct the resumed session's state with ZERO IO: re-fold
-                // the recorded events into the fresh brain (this only rebuilds
-                // `BrainState`, exactly like `hugr_replay::replay`, via the
-                // shared `drive` fold). We *keep* the re-emitted commands
-                // (rather than discard them) to seed the recorder's command
-                // sequence: re-deriving them here makes the resumed trace's
-                // `commands` self-consistent with its events even when the
-                // original trace predates command recording (empty `commands`),
-                // so the re-saved trace still verifies bit-for-bit.
+                // Reconstruct the resumed session's state with ZERO IO by
+                // re-folding the recorded events. The re-emitted commands are
+                // *kept* to seed the recorder's command sequence: re-deriving
+                // them makes the resumed trace's `commands` self-consistent
+                // with its events even when the original trace predates command
+                // recording (empty `commands`), so the re-saved trace still
+                // verifies bit-for-bit.
                 let resume_commands = hugr_replay::drive(&mut brain, &events);
-                // Pre-seed the recorder with the same events (moved, not cloned)
-                // and the re-derived commands so a later `save_trace` carries
-                // old + new (ARCHITECTURE §6.3).
                 let mut recorder = Recorder::seed(events, resume_commands, trace.meta.created_at);
                 reconcile_crashed_ops(&mut brain, &mut recorder, &clock);
                 (brain, Some(recorder), trace.policy)
@@ -676,8 +655,7 @@ impl EngineBuilder {
 
 /// Append recorded [`Event::OpCancelled`] events for ops that were in flight
 /// when the previous process died, so the brain folds the cancellation exactly
-/// as if the old host had confirmed an abort before exiting. Replay-safe and
-/// conservative (ARCHITECTURE §15.1).
+/// as if the old host had confirmed an abort before exiting.
 fn reconcile_crashed_ops(brain: &mut Brain, recorder: &mut Recorder, clock: &Clock) {
     let stale: Vec<OpId> = brain.state().inflight().keys().copied().collect();
     for op in stale {
@@ -693,13 +671,12 @@ fn reconcile_crashed_ops(brain: &mut Brain, recorder: &mut Recorder, clock: &Clo
     }
     // Folding the stale cancellations queues commands — typically a
     // `Done { reason: Cancelled }` for the pre-crash turn, or even a
-    // `StartModelCall` if an interrupt was pending when the process died. The
-    // pre-crash turn is over: a resumed engine must start quiescent, so drain
-    // and discard those commands here. Otherwise they would fire at the start
-    // of the next live turn — a spurious stale pre-crash model call racing the
-    // new one. They ARE still recorded: replaying the trace re-emits them, so
-    // the recorded command sequence must include them for `verify` to match
-    // bit-for-bit — "drained, not performed" is a host choice invisible to the
-    // pure fold.
+    // `StartModelCall` if an interrupt was pending when the process died. A
+    // resumed engine must start quiescent, so drain and discard them here;
+    // otherwise they would fire at the start of the next live turn — a spurious
+    // stale pre-crash model call racing the new one. They ARE still recorded:
+    // replaying the trace re-emits them, so `verify` needs them in the recorded
+    // command sequence — "drained, not performed" is a host choice invisible to
+    // the pure fold.
     recorder.record_commands(&brain.poll());
 }

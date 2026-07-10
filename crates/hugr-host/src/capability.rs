@@ -1,7 +1,7 @@
 //! The uniform capability (tool) interface and its registry.
 //!
-//! There are **no privileged built-ins** (DESIGN §5.3): shell, fs and http are
-//! all ordinary [`Capability`]s, exactly like an external MCP tool would be. The brain only
+//! There are **no privileged built-ins**: fs and http are ordinary
+//! [`Capability`]s, exactly like an external MCP tool would be. The brain only
 //! ever emits `StartCapability { name, args }`; the host looks the name up here.
 
 use std::collections::HashMap;
@@ -28,9 +28,8 @@ pub trait Capability: Send + Sync {
         true
     }
 
-    /// Whether this capability runs in the **background** (ARCHITECTURE §6.3):
-    /// it does not block the model turn, so the model keeps streaming while the
-    /// op runs (e.g. a long `cargo build` alongside a model response). Defaults
+    /// Whether this capability runs in the **background**: it does not block
+    /// the model turn, so the model keeps streaming while the op runs. Defaults
     /// to `false` (foreground: the turn waits for the result).
     fn runs_in_background(&self) -> bool {
         false
@@ -38,8 +37,8 @@ pub trait Capability: Send + Sync {
 
     /// Run the tool. `Ok(result)` and `Err(error)` are both routed back to the
     /// model as a tool result (an error is a *semantic* result the model can
-    /// react to, ARCHITECTURE §5.4) — return `Err` only for tool-level failures,
-    /// not transport issues.
+    /// react to) — return `Err` only for tool-level failures, not transport
+    /// issues.
     async fn invoke(&self, args: Value, sink: &ChunkSink) -> Result<Value, Value>;
 }
 
@@ -68,8 +67,8 @@ impl ChunkSink {
 
 /// Maps capability names to their implementations.
 ///
-/// `Clone` is cheap (it clones `Arc`s) so a sub-agent runner (ARCHITECTURE §13)
-/// can reuse — or [`subset`](CapabilityRegistry::subset) — the parent's tools.
+/// `Clone` is cheap (it clones `Arc`s) so a sub-agent runner can reuse — or
+/// [`subset`](CapabilityRegistry::subset) — the parent's tools.
 #[derive(Clone, Default)]
 pub struct CapabilityRegistry {
     map: HashMap<String, Arc<dyn Capability>>,
@@ -91,8 +90,8 @@ impl CapabilityRegistry {
     }
 
     /// A registry restricted to an allowlist of capability names — the tools a
-    /// sub-agent may use (ARCHITECTURE §13.1, "tools subset"). `None` returns a
-    /// clone of the whole registry (the child inherits every tool).
+    /// sub-agent may use. `None` returns a clone of the whole registry (the
+    /// child inherits every tool).
     pub fn subset(&self, allow: Option<&std::collections::HashSet<String>>) -> CapabilityRegistry {
         match allow {
             None => self.clone(),

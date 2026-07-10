@@ -1,12 +1,9 @@
-//! Newline-delimited JSON framing shared by stdio transports (ARCHITECTURE §8.2).
+//! Newline-delimited JSON framing shared by stdio transports (e.g. the host's
+//! MCP client and `--mcp-serve`).
 //!
-//! One JSON value per line is the wire format stdio JSON-RPC-style clients
-//! (e.g. the host's MCP client and `--mcp-serve`) speak. The helpers here
-//! are the single implementation of that framing: serialize-then-`\n` on the
-//! way out, skip-blank-lines-then-parse on the way in. Callers keep their own
-//! protocol semantics (what a message *means*) and error taxonomy — a
-//! [`FramingError`] splits cleanly into an IO half and a JSON half so it maps
-//! onto whatever error enum the caller already has.
+//! Callers keep their own protocol semantics (what a message *means*) and error
+//! taxonomy — a [`FramingError`] splits cleanly into an IO half and a JSON half
+//! so it maps onto whatever error enum the caller already has.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
