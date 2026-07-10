@@ -11,6 +11,9 @@ members = [
     "examples/hugr-docs",
     "examples/hugr-weather",
 ]
+# The PyO3 embedding crate needs a Python toolchain; it builds via maturin
+# (bindings/python), never via `cargo test --workspace`.
+exclude = ["crates/hugr-python"]
 
 # Crate layout (see ARCHITECTURE.md §10): `hugr-core` is the pure, sans-IO
 # brain; every other crate is a host layer and may touch IO — never `hugr-core`.

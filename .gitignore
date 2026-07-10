@@ -1,5 +1,12 @@
 /target
+crates/hugr-python/target
 **/*.rs.bk
+
+# Python (bindings/python)
+.venv/
+__pycache__/
+*.egg-info/
+*.so
 Cargo.lock.orig
 **/dist/*
 

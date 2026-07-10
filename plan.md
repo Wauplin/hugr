@@ -231,7 +231,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 
 ## Phase 3 — Language surfaces
 
-### 3.1 `[ ]` Python runtime API (idea 13) — XL
+### 3.1 `[x]` Python runtime API (idea 13) — XL
 
 - Why: define agents *in Python* — tools as Python callables, config as Python data, events as an async iterator — running on the same Rust runtime. This is the runtime-embedding surface from `PYTHON_RUNTIME_API_PLAN.md` (still architecturally valid; supersede that file into this plan + ARCHITECTURE when done), distinct from the existing per-agent wheel (`hugr build --surface python`, which stays: it *ships* an agent; this *defines* one).
 - Design (updates the old plan where idea 13 goes further):

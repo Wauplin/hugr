@@ -92,7 +92,9 @@ crates/
   hugr-agent/         # the subagent runtime: Ask/Answer, trace store with trace_id/depends_on + fork, scratchpad, blobs, limits, cost accounting, agent-as-tool (subprocess).
   hugr-toolkit/       # agent manifests (hugr.toml + SYSTEM.md), the tool library, and the `hugr` CLI: new/run/build/traces/replay/verify.
   hugr-wasm/          # generic WASM bindings around hugr-core for browser/JS hosts.
+  hugr-python/        # PyO3 runtime embedding: define agents and tools in Python (built via bindings/python).
 bindings/
+  python/             # the `hugr-agents` Python package: typed layer + tests over hugr-python.
   typescript/         # generic JS host layer: agent driver, fetch model adapter, IndexedDB stores.
 examples/
   hugr-docs/          # the reference subagent crate (docs Q&A): manifest, prompt, and typed response contract.
@@ -124,6 +126,10 @@ cargo run -p hugr-toolkit --bin hugr -- run examples/hugr-docs ./docs "What is t
 The docs root is runtime config, not a compiled-in scope: `hugr run examples/hugr-docs ./docs "..."` and `hugr run examples/hugr-docs ./other-docs "..."` use the same agent crate with different read jails. Because `hugr-docs` exposes `RESPONSE_RUST_TYPE` and a typed Rust response contract, generic `hugr run` compiles and reuses a cached dev shim under the temp dir so `hugr-toolkit` still does not depend on `hugr-docs`. Build it with `hugr build examples/hugr-docs`; the generated standalone shim links the current agent crate inferred from `Cargo.toml`, then Python and other languages consume the built binary via subprocess or `--mcp-serve`.
 
 Runs for this reference agent land in `~/.hugr/hugr-docs/traces` unless `HUGR_AGENT_HOME`, `HUGR_HOME`, or an explicit `[traces].store` override is set.
+
+## Define an agent in Python
+
+The `hugr-agents` package (`bindings/python`) embeds the same runtime: config as Python data (keys mirror `hugr.toml` 1:1), tools as sync/async Python callables with explicit JSON schemas, `agent.ask(...)` returning the standard typed `Answer`, and `async for event in agent.run(...)` streaming the shared event vocabulary. Traces land in `~/.hugr/<name>/` and verify with the Rust CLI. See `bindings/python/README.md`.
 
 ## Building & testing
 

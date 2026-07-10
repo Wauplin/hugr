@@ -64,6 +64,10 @@ crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the too
                         #   CLI: new / run / build / traces / replay / verify
 crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS
                         #   hosts (submit/poll over JSON + browser tool schemas)
+crates/hugr-python/     # PyO3 runtime embedding (outside the cargo workspace;
+                        #   built by maturin from bindings/python)
+bindings/python/        # the `hugr-agents` Python package: typed pure-Python
+                        #   layer + pytest suite over crates/hugr-python
 bindings/typescript/    # generic JS host layer: agent driver, fetch model adapter,
                         #   IndexedDB stores (grows into the typed TS runtime API)
 examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml +
