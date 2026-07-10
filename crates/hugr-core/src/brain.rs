@@ -1,17 +1,14 @@
 //! The brain: `poll()` + `submit()` + the reducer.
 //!
-//! This is the entire integration surface a host needs:
+//! The entire integration surface a host needs:
 //!
 //! ```text
 //!     loop {
-//!         for cmd in brain.poll() { host.perform(cmd); }   // drain commands
-//!         let event = host.next_event().await;             // the only await (host-side)
-//!         brain.submit(event);                             // pure, instant, no IO
+//!         for cmd in brain.poll() { host.perform(cmd); }
+//!         let event = host.next_event().await;
+//!         brain.submit(event);
 //!     }
 //! ```
-//!
-//! `poll()` and `submit()` are synchronous and pure — a WASM/Python/JS binding
-//! calls them directly. All the agentic control flow lives in [`Brain::submit`].
 
 use serde_json::json;
 
@@ -23,8 +20,8 @@ use crate::primitives::{OpId, Value};
 use crate::record::{LogEntry, OpMeta, OpOutcome, Record};
 use crate::state::{BrainState, OpKind};
 
-/// The pure, sans-IO agent core. Construct one with a [`TurnPolicy`], feed it
-/// [`Event`]s with [`submit`](Brain::submit), and drain [`Command`]s with
+/// The agent core. Construct one with a [`TurnPolicy`], feed it [`Event`]s
+/// with [`submit`](Brain::submit), and drain [`Command`]s with
 /// [`poll`](Brain::poll).
 pub struct Brain {
     state: BrainState,
@@ -46,11 +43,9 @@ impl Brain {
         Self::new(Box::new(StaticPolicy::default()))
     }
 
-    /// Create a brain **seeded from an inherited log** — the fork primitive
-    /// (ARCHITECTURE §14). A fork or a resumed session starts from a copy of a
-    /// log prefix; the brain re-derives
-    /// its state by folding it (§3.1). No IO: the recorded ops are not re-run,
-    /// only re-folded to reconstruct `BrainState`.
+    /// Create a brain seeded from an inherited log — the fork primitive. A fork
+    /// or a resumed session starts from a copy of a log prefix; the recorded ops
+    /// are not re-run, only re-folded to reconstruct `BrainState`.
     pub fn from_log(policy: Box<dyn TurnPolicy>, log: Vec<LogEntry>) -> Self {
         Self {
             state: BrainState::from_log(log),
@@ -63,21 +58,19 @@ impl Brain {
         &self.state
     }
 
-    /// Inspect the context projection that the next normal model turn would
-    /// render. Pure and synchronous: the same [`TurnPolicy`] hooks used by the
-    /// reducer's turn-start path produce this plan.
+    /// Inspect the context projection the next model turn would render, built
+    /// with the same [`TurnPolicy`] hooks the reducer uses.
     pub fn context_plan(&self) -> ContextPlan {
         let budget = self.policy.context_budget(&self.state);
         self.policy.project_context(self.state.log(), budget)
     }
 
-    /// Drain the commands the brain wants the host to perform. Pure, instant.
+    /// Drain the commands the brain wants the host to perform.
     pub fn poll(&mut self) -> Vec<Command> {
         self.state.drain_commands()
     }
 
-    /// Feed one event in. Pure, instant, no IO. The single entry point for all
-    /// of the brain's logic.
+    /// Feed one event in. The single entry point for all of the brain's logic.
     pub fn submit(&mut self, event: Event) {
         match event {
             Event::UserInput {
@@ -95,8 +88,7 @@ impl Brain {
             } => self.on_model_done(op, output, usage, est_tokens),
             Event::ModelError { op, error } => self.on_model_error(op, error),
 
-            // Capability chunks are transport-only progress; nothing durable
-            // and no reduced output — the host may render them itself.
+            // Progress only; nothing durable — the host may render chunks itself.
             Event::CapabilityChunk { .. } => {}
             Event::CapabilityDone {
                 op,
@@ -121,27 +113,22 @@ impl Brain {
         }
     }
 
-    // ========================================================================
-    // Event handlers
-    // ========================================================================
-
     fn on_user_input(&mut self, content: Value, est_tokens: u32) {
         self.append(Record::UserMessage {
             text: stringify(&content),
             est_tokens,
         });
         // Idle: start a turn immediately. Mid-turn input just queues: the next
-        // turn boundary's projection sees the new message (ARCHITECTURE §4.6).
+        // turn boundary's projection sees the new message.
         if !self.state.is_busy() {
             self.start_model_turn();
         }
     }
 
-    /// A pure control-signal abort (ARCHITECTURE §4.6). While ops are in flight
-    /// this latches `abort_requested`: the `Cancel` commands race each op's own
-    /// terminal event, and whichever arrives first must still end the turn
-    /// `Cancelled` without starting new work (ARCHITECTURE §4.3). An idle abort
-    /// stays a no-op.
+    /// While ops are in flight this latches `abort_requested`: the `Cancel`
+    /// commands race each op's own terminal event, and whichever arrives first
+    /// must still end the turn `Cancelled` without starting new work. An idle
+    /// abort is a no-op.
     fn on_user_abort(&mut self) {
         if self.state.is_busy() {
             self.state.set_abort_requested(true);
@@ -150,15 +137,12 @@ impl Brain {
     }
 
     fn on_model_delta(&mut self, op: OpId, delta: ModelDelta) {
-        // Deltas are transport only: accumulate cheaply for live UI and forward
-        // a cosmetic event. Never written to the log (ARCHITECTURE §4.5).
         match delta {
             ModelDelta::Text(t) => {
                 self.state.buffer_model_text(op, &t);
                 self.emit(OutputEvent::ModelText { op, text: t });
             }
-            // Reasoning and tool-call-start deltas produce no reduced output;
-            // they only exist so adapters can stream uniformly.
+            // No reduced output; these exist so adapters can stream uniformly.
             ModelDelta::Reasoning(_) | ModelDelta::ToolCallStart { .. } => {}
         }
     }
@@ -172,12 +156,11 @@ impl Brain {
         self.end_op(op, OpOutcome::Ok, Some(usage));
 
         if self.state.abort_requested() {
-            // A `UserAbort` raced this terminal event (ARCHITECTURE §4.3): the
-            // op's `Cancel` is stale, but the abort must still win. Fold the
-            // durable record but start no new work. Any requested tool calls
-            // are never started; log a cancelled result for each so every
-            // `tool_use` in the next projection still has a paired
-            // `tool_result` (ARCHITECTURE §4.5).
+            // A `UserAbort` raced this terminal event: the op's `Cancel` is
+            // stale, but the abort must still win. Fold the durable record but
+            // start no new work. Any requested tool calls are never started;
+            // log a cancelled result for each so every `tool_use` in the next
+            // projection still has a paired `tool_result`.
             for call in output.tool_calls {
                 self.cancel_unstarted_tool_call(call);
             }
@@ -190,37 +173,34 @@ impl Brain {
             // A final answer with no tool calls ends the turn — unless a
             // background op is still running. In that case the turn isn't over:
             // when the background op finishes its result is folded in and a
-            // fresh turn picks it up (ARCHITECTURE §6.3). We checkpoint either
-            // way (the model output is durable) but defer `Done` until idle.
+            // fresh turn picks it up. We checkpoint either way (the model
+            // output is durable) but defer `Done` until idle.
             self.checkpoint();
             if !self.background_running() {
                 self.done(DoneReason::EndTurn);
             }
         } else {
-            // The model wants tools: turn each call into an op. The brain routes;
-            // it never interprets the args.
             for call in output.tool_calls {
                 self.begin_tool_call(call);
             }
             // If every tool call this turn was a background op, nothing blocks
-            // the turn — resume the model now so it streams *alongside* them
-            // (ARCHITECTURE §6.3). Done once, after the whole fan-out, so a mix
-            // of background + foreground calls still waits for the foreground.
+            // the turn — resume the model now so it streams alongside them.
+            // Done once, after the whole fan-out, so a mix of background +
+            // foreground calls still waits for the foreground.
             self.maybe_resume_model_turn();
         }
     }
 
     fn on_model_error(&mut self, op: OpId, error: Value) {
-        // A transport error the host already gave up on. Record it and end the
-        // turn; a richer policy could decide to retry/route differently.
+        // A transport error the host already gave up on (retries live in the
+        // adapter).
         self.end_op(op, OpOutcome::Error(error.clone()), None);
         if self.resolve_abort_if_drained() {
             return;
         }
         // Mirror `on_model_done`: while a background op is still running the
-        // turn is not over (ARCHITECTURE §4.2), so defer the terminal
-        // `Done(Error)` until the last op drains rather than emitting commands
-        // after a terminal `Done`.
+        // turn is not over, so defer the terminal `Done(Error)` until the last
+        // op drains rather than emitting commands after a terminal `Done`.
         if self.background_running() {
             self.state.set_deferred_error(Some(stringify(&error)));
             return;
@@ -229,9 +209,8 @@ impl Brain {
     }
 
     /// The shared tail of every tool-result-shaped resolution (capability,
-    /// sub-agent, user answer, permission denial): append the *one*
-    /// consolidated `ToolResult` record (ARCHITECTURE §4.5), end the op, and
-    /// resume the turn.
+    /// permission denial, cancellation): append the one consolidated
+    /// `ToolResult` record, end the op, and resume the turn.
     fn finish_tool_result(&mut self, op: OpId, result: Value, outcome: OpOutcome, est_tokens: u32) {
         let (name, call_id) = self.tool_ids(op);
         self.append(Record::ToolResult {
@@ -257,7 +236,7 @@ impl Brain {
 
     fn on_capability_error(&mut self, op: OpId, error: Value, est_tokens: u32) {
         // A semantic tool failure is an ordinary error result fed back to the
-        // model (ARCHITECTURE §5.4).
+        // model.
         self.finish_tool_result(op, error.clone(), OpOutcome::Error(error), est_tokens);
     }
 
@@ -266,7 +245,7 @@ impl Brain {
         // before removing: a stray/duplicate decision (e.g. a second `Allow`
         // after the capability already started, or a decision for an op that
         // already resolved) must be a no-op — never drop a live op from the
-        // in-flight table (ARCHITECTURE §4.1).
+        // in-flight table.
         if !matches!(
             self.state.get_op(op).map(|entry| &entry.kind),
             Some(OpKind::AwaitingPermission { .. })
@@ -276,8 +255,8 @@ impl Brain {
         match decision {
             Decision::Allow => {
                 // A latched abort already sent this op a `Cancel`; do not start
-                // the capability (no new work while aborting, ARCHITECTURE
-                // §4.3) — the pending `OpCancelled` resolves the op instead.
+                // the capability — the pending `OpCancelled` resolves the op
+                // instead.
                 if self.state.abort_requested() {
                     return;
                 }
@@ -313,20 +292,17 @@ impl Brain {
         // its real terminal event (e.g. `ModelDone`) a hair before the abort;
         // that event is folded first and removes the op. Without this guard the
         // stale `OpCancelled` would append a spurious `Cancelled` `OpEnded` and
-        // break replay. Cancellation is idempotent (ARCHITECTURE §6.4).
+        // break replay. Cancellation is idempotent.
         if self.state.get_op(op).is_none() {
             return;
         }
 
         // Log the partial work (e.g. "N tokens then cancelled") before removing
-        // the op, so the trace never has an implicit gap (ARCHITECTURE §6.4).
+        // the op, so the trace never has an implicit gap.
         let partial = self.partial_of(op);
-        // A cancelled *tool-shaped* op (capability / sub-agent / awaiting
-        // permission) still owes the log a consolidated `ToolResult`: its
-        // originating `tool_use` is projected from the `ModelOutput` record,
-        // and chat formats require every tool_use to carry a paired
-        // tool_result (ARCHITECTURE §4.5). Append the cancellation result
-        // BEFORE the `OpEnded` so projection and replay stay well-formed —
+        // A cancelled tool-shaped op still owes the log a consolidated
+        // `ToolResult`: chat formats require every tool_use to carry a paired
+        // tool_result. Append the cancellation result BEFORE the `OpEnded` —
         // without this, the next model request has a dangling tool_use and the
         // provider rejects it.
         if self
@@ -365,10 +341,6 @@ impl Brain {
         }
     }
 
-    // ========================================================================
-    // Turn-loop helpers
-    // ========================================================================
-
     /// Begin a model turn: ask the policy which model to call and how to project
     /// context, then emit the call.
     fn start_model_turn(&mut self) {
@@ -402,7 +374,7 @@ impl Brain {
     /// otherwise idle, folding the background result in at the next boundary.
     fn maybe_resume_model_turn(&mut self) {
         // A latched abort or a deferred model error means the turn is ending,
-        // not resuming (ARCHITECTURE §4.3): never start new work here.
+        // not resuming: never start new work here.
         if self.state.abort_requested() || self.state.deferred_error().is_some() {
             return;
         }
@@ -417,8 +389,7 @@ impl Brain {
         }
     }
 
-    /// Turn one model-requested tool call into an op: spawn a sub-agent (if the
-    /// policy designates this capability as an agent), gate it on permission, or
+    /// Turn one model-requested tool call into an op: gate it on permission or
     /// start it immediately.
     fn begin_tool_call(&mut self, call: ToolCall) {
         let op = self.state.alloc_op();
@@ -470,9 +441,8 @@ impl Brain {
         }
     }
 
-    /// Whether any background capability op is still running (ARCHITECTURE
-    /// §4.2): while one is, the turn is not over and terminal `Done` is
-    /// deferred until it resolves.
+    /// Whether any background capability op is still running: while one is, the
+    /// turn is not over and terminal `Done` is deferred until it resolves.
     fn background_running(&self) -> bool {
         self.state.inflight().values().any(|o| {
             matches!(
@@ -485,11 +455,10 @@ impl Brain {
         })
     }
 
-    /// Resolve a latched `UserAbort` (ARCHITECTURE §4.3/§4.6) after a terminal
-    /// event folded: once the last in-flight op drains, emit the single
-    /// terminal `Done(Cancelled)` and clear the latch. Returns `true` while
-    /// the abort is latched — the caller must not resume the turn or start any
-    /// new work.
+    /// Resolve a latched `UserAbort` after a terminal event folded: once the
+    /// last in-flight op drains, emit the single terminal `Done(Cancelled)` and
+    /// clear the latch. Returns `true` while the abort is latched — the caller
+    /// must not resume the turn or start any new work.
     fn resolve_abort_if_drained(&mut self) -> bool {
         if !self.state.abort_requested() {
             return false;
@@ -501,11 +470,10 @@ impl Brain {
         true
     }
 
-    /// Resolve a deferred model-error `Done` (ARCHITECTURE §4.2): a model
-    /// transport error with background ops still running defers its terminal
-    /// `Done(Error)`; once the last op drains, emit it with the original
-    /// reason. Returns `true` while a deferral is pending — the caller must
-    /// not resume the turn.
+    /// Resolve a deferred model-error `Done`: a model transport error with
+    /// background ops still running defers its terminal `Done(Error)`; once the
+    /// last op drains, emit it with the original reason. Returns `true` while a
+    /// deferral is pending — the caller must not resume the turn.
     fn resolve_deferred_error_if_drained(&mut self) -> bool {
         if self.state.deferred_error().is_none() {
             return false;
@@ -519,10 +487,9 @@ impl Brain {
     }
 
     /// A tool call the model requested but that will never start (its turn was
-    /// aborted before fan-out, ARCHITECTURE §4.3). Log the same paired records
-    /// a cancelled running tool gets — a cancelled `ToolResult` then the
-    /// `OpEnded` bookkeeping — so the originating `tool_use` never dangles in
-    /// the next projection (ARCHITECTURE §4.5).
+    /// aborted before fan-out). Log the same paired records a cancelled running
+    /// tool gets — a cancelled `ToolResult` then the `OpEnded` bookkeeping — so
+    /// the originating `tool_use` never dangles in the next projection.
     fn cancel_unstarted_tool_call(&mut self, call: ToolCall) {
         let op = self.state.alloc_op();
         self.append(Record::ToolResult {
@@ -540,10 +507,6 @@ impl Brain {
             None,
         );
     }
-
-    // ========================================================================
-    // Bookkeeping
-    // ========================================================================
 
     fn append(&mut self, record: Record) {
         let seq = crate::primitives::Seq(self.state.alloc_seq());

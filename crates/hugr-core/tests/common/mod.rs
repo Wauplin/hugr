@@ -53,9 +53,8 @@ pub fn user(text: &str) -> Event {
     }
 }
 
-/// Fold the same script into two fresh brains and assert identical commands
-/// AND an identical durable log (CLAUDE.md: determinism is testable; every new
-/// control-flow path gets replay coverage, ARCHITECTURE §6.2).
+/// Fold the same script into two fresh brains and assert identical commands and
+/// an identical durable log.
 pub fn assert_deterministic_replay(
     make_brain: impl Fn() -> Brain,
     script: impl Fn() -> Vec<Event>,

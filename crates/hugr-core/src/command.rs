@@ -2,8 +2,7 @@
 //!
 //! A [`Command`] is something the brain wants the host to do. Every *effectful*
 //! command carries an [`OpId`] so its results can be correlated by the matching
-//! [`Event`](crate::Event) and the work can be cancelled. `#[non_exhaustive]`
-//! so adding a variant is not a breaking change for hosts (ARCHITECTURE §2.4).
+//! [`Event`](crate::Event) and the work can be cancelled.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +13,7 @@ use crate::primitives::{OpId, Value};
 #[non_exhaustive]
 pub enum Command {
     /// Start a model completion. `model` is a logical selector the host
-    /// resolves (ARCHITECTURE §5.3); the host streams deltas back as events.
+    /// resolves; the host streams deltas back as events.
     StartModelCall {
         op: OpId,
         model: ModelSelector,
@@ -49,7 +48,7 @@ pub enum Command {
 }
 
 /// A request for the host's policy to decide. Carries a typed outcome channel
-/// (the `op`) but an opaque `detail` the policy interprets (ARCHITECTURE §2.4).
+/// (the `op`) but an opaque `detail` the policy interprets.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PermissionRequest {
@@ -72,7 +71,7 @@ pub enum DoneReason {
 }
 
 /// Cosmetic output for front-ends. Multiple front-ends can subscribe; rendering
-/// is never inside the core (ARCHITECTURE §9).
+/// is never inside the core.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum OutputEvent {

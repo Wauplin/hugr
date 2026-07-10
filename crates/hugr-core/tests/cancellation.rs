@@ -1,9 +1,7 @@
-//! Phase 2 (P2-2): first-class cancellation. A `Cancel` command (driven by a
-//! `UserAbort`) aborts an in-flight op; the host confirms
-//! with `OpCancelled`; the brain logs the *partial* work as a `Cancelled`
-//! outcome — "N tokens then cancelled" — never an implicit gap (ARCHITECTURE
-//! §6.4). These tests pin the command sequence and assert deterministic replay
-//! (CLAUDE.md: determinism is testable).
+//! First-class cancellation: a `Cancel` command aborts an in-flight op, the host
+//! confirms with `OpCancelled`, and the brain logs the *partial* work as a
+//! `Cancelled` outcome. These tests pin the command sequence and assert
+//! deterministic replay.
 
 mod common;
 
@@ -30,9 +28,8 @@ fn cancelled_partial(log: &[hugr_core::LogEntry], op: OpId) -> Option<Value> {
     })
 }
 
-/// The headline P2-2 scenario: a model stream produces a few tokens, then the
-/// user aborts (ESC). The host aborts the task and confirms with `OpCancelled`;
-/// the brain records the partial text ("Hello, wor") as a `Cancelled` outcome
+/// A model stream produces a few tokens, then the user aborts. The host aborts
+/// the task and confirms with `OpCancelled`; the brain records the partial text
 /// and ends the turn `Cancelled`.
 #[test]
 fn stream_some_tokens_then_cancel_records_the_partial() {
@@ -83,7 +80,7 @@ fn stream_some_tokens_then_cancel_records_the_partial() {
 
 /// Replay: re-feeding the identical event stream (stream N tokens, then cancel)
 /// to a fresh brain yields identical commands AND an identical durable log — the
-/// partial is reproduced before the cancel, deterministically (ARCHITECTURE §6.2).
+/// partial is reproduced before the cancel, deterministically.
 #[test]
 fn cancellation_replay_is_deterministic() {
     let script = || {
@@ -378,7 +375,7 @@ fn user_abort_racing_a_model_done_still_ends_cancelled() {
 /// The same race, but the raced `ModelDone` requests tool calls: the latched
 /// abort must suppress the fan-out (no `StartCapability`), while still pairing
 /// each never-started `tool_use` with a synthesized cancelled `ToolResult` so
-/// the next projection stays well-formed (ARCHITECTURE §4.5).
+/// the next projection stays well-formed.
 #[test]
 fn user_abort_racing_a_tool_fanout_starts_no_tools() {
     let mut brain = Brain::with_default_policy();
@@ -481,7 +478,7 @@ fn user_abort_racing_a_capability_done_does_not_resume() {
 }
 
 /// Replay: the abort-vs-terminal-event races re-fed to fresh brains yield
-/// identical commands and identical logs (ARCHITECTURE §6.2).
+/// identical commands and identical logs.
 #[test]
 fn abort_race_replay_is_deterministic() {
     let model_done_race = || {
@@ -538,7 +535,7 @@ fn abort_race_replay_is_deterministic() {
 /// Aborting with several ops in flight must fan out `Cancel` commands in a
 /// deterministic order (ascending op id): the in-flight table's iteration
 /// order leaks into the command stream, and replay/trace-verify compares
-/// command sequences bit-for-bit (ARCHITECTURE §6.2).
+/// command sequences bit-for-bit.
 #[test]
 fn abort_with_multiple_inflight_ops_cancels_in_op_id_order() {
     use hugr_core::{ModelOutput, ToolCall};

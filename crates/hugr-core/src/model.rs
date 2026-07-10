@@ -3,11 +3,8 @@
 //! These types are the parts of a model call the **brain branches on**: the
 //! request it assembles from the log, the streaming deltas it accumulates, and
 //! the consolidated output whose `tool_calls` and `stop` reason drive the turn
-//! loop. Provider-specific knobs ride in opaque `extra` fields (ARCHITECTURE
-//! §2.4) so adding a provider feature never changes a core type.
-//!
-//! In the full layout (ARCHITECTURE §10) these move to a `hugr-model` crate;
-//! they live here for Phase 0 so the core is self-contained and testable.
+//! loop. Provider-specific knobs ride in opaque `extra` fields so adding a
+//! provider feature never changes a core type.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +12,7 @@ use crate::primitives::{Seq, Value};
 
 /// A logical model **role**, not a concrete endpoint. The brain names a role;
 /// the host's model registry resolves it to a provider/model/key/adapter
-/// (ARCHITECTURE §5.3). An open string set, e.g. `"medium"`, `"summarizer"`.
+/// as an open string set, e.g. `"medium"`, `"summarizer"`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelSelector(pub String);
 
@@ -57,8 +54,8 @@ impl ModelRequest {
 
 /// The token budget a projection must plan against.
 ///
-/// Counts are estimates supplied by the host when records enter the log
-/// (ARCHITECTURE §3.5). The brain only sums them; it never tokenizes.
+/// Counts are estimates supplied by the host when records enter the log. The
+/// brain only sums them; it never tokenizes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TokenBudget {
@@ -82,8 +79,7 @@ impl Default for TokenBudget {
 /// A pure, inspectable context projection plan.
 ///
 /// The reducer derives a [`ModelRequest`] from this plan; hosts can inspect the
-/// same data to explain why each log block was included, referenced,
-/// summarized, or omitted (ROADMAP_2 A1).
+/// same data to explain why each log block was included or omitted.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ContextPlan {
@@ -312,8 +308,8 @@ impl ToolSchema {
 ///
 /// **Transport only** — deltas accumulate in the op's live buffer and drive
 /// cosmetic [`OutputEvent`](crate::OutputEvent)s, but are never written to the
-/// log (ARCHITECTURE §4.5). The brain's logic keys off the consolidated
-/// [`ModelOutput`] in [`Event::ModelDone`](crate::Event::ModelDone).
+/// log. The brain's logic keys off the consolidated [`ModelOutput`] in
+/// [`Event::ModelDone`](crate::Event::ModelDone).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ModelDelta {
@@ -396,10 +392,9 @@ impl ToolCall {
 /// `input_tokens`/`output_tokens` are the only fields the brain (and the host's
 /// budgeting) ever needs as numbers. Anything richer the provider reports —
 /// notably **cost**, which the brain never branches on — rides in the opaque
-/// `extra` field (narrow-waist passthrough, ARCHITECTURE §2.4). The brain stores
-/// and forwards `extra` verbatim; only the host (e.g. a metrics front-end) reads
-/// it. Adapters that learn real cost from the router response stash it there
-/// rather than baking a cost type into the core.
+/// `extra` field. The brain stores and forwards `extra` verbatim; only the host
+/// reads it. Adapters that learn real cost from the router response stash it
+/// there rather than baking a cost type into the core.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Usage {

@@ -1,6 +1,6 @@
 //! The pluggable turn strategy.
 //!
-//! `TurnPolicy` is the **only place agent strategy lives** (ARCHITECTURE §2.5).
+//! `TurnPolicy` is the only place agent strategy lives.
 //! The reducer asks it which model to call, how to project context from the
 //! log, and whether a capability needs permission — but never hardcodes those
 //! decisions. Swap the policy to change behaviour without touching the reducer.
@@ -21,7 +21,7 @@ use crate::state::BrainState;
 /// policy config. Returns `None` when the value does not decode as a
 /// [`StaticPolicy`] (e.g. a custom host policy); the caller picks its own
 /// fallback. Faithful replay needs the *same* policy a session was recorded
-/// under — the brain branches on its pure decisions (ARCHITECTURE §6.3).
+/// under, because the brain branches on its pure decisions.
 pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
     serde_json::from_value::<StaticPolicy>(value.clone())
         .ok()
@@ -32,13 +32,11 @@ pub fn decode_policy(value: &Value) -> Option<Box<dyn TurnPolicy>> {
 /// [`project_context`](TurnPolicy::project_context) only *reads* the log (no
 /// IO, no model calls).
 ///
-/// `Send + Sync` so the host may move the whole brain onto a worker task — the
-/// brain is still reduced single-threaded (CLAUDE.md); this only lets a host
-/// (e.g. a sub-agent runner, ARCHITECTURE §13.2) own a brain on another thread.
+/// `Send + Sync` so the host may move the whole brain onto a worker task; the
+/// brain itself is still reduced single-threaded.
 pub trait TurnPolicy: Send + Sync {
     /// Pick which logical model to call for the next step. Pure: derive the
-    /// choice only from `state` — this is the only place a selector is decided
-    /// for model turns (ARCHITECTURE §2.5).
+    /// choice only from `state`.
     fn choose_model(&self, state: &BrainState) -> ModelSelector;
 
     /// Pick the token budget the next context projection plans against.
@@ -54,10 +52,9 @@ pub trait TurnPolicy: Send + Sync {
     fn needs_permission(&self, capability: &str) -> bool;
 
     /// Whether `capability` runs in the **background**: it does not block the
-    /// model turn, so the model keeps streaming while the op runs (ARCHITECTURE
-    /// §6.3 — "a long `cargo build` and a model response concurrently"). Its
-    /// result is folded into the log when it finishes and picked up at the next
-    /// turn boundary. Defaults to `false` (foreground: the turn waits for it).
+    /// model turn, so the model keeps streaming while the op runs. Its result
+    /// is folded into the log when it finishes and picked up at the next turn
+    /// boundary. Defaults to `false` (foreground: the turn waits for it).
     fn is_background(&self, _capability: &str) -> bool {
         false
     }
@@ -65,7 +62,7 @@ pub trait TurnPolicy: Send + Sync {
 
 /// A simple, configurable [`TurnPolicy`] with a **trivial pass-through
 /// projection**: it renders the log into context blocks one-to-one, with no
-/// summarization or eviction. This is the Phase 0 policy (ROADMAP Phase 0).
+/// summarization or eviction.
 ///
 /// It is also genuinely useful as a default and as a test fixture: the model
 /// selector, the advertised tool schemas, and the set of permissioned
@@ -74,7 +71,7 @@ pub trait TurnPolicy: Send + Sync {
 /// It is `Serialize`/`Deserialize` so a host can persist a session's policy
 /// alongside its trace (the pure branching — `needs_permission`,
 /// `is_background`, advertised tools, model selector — must be reproduced for
-/// bit-for-bit replay, ARCHITECTURE §6.3).
+/// bit-for-bit replay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StaticPolicy {
     model: ModelSelector,
@@ -128,7 +125,7 @@ impl StaticPolicy {
     }
 
     /// Run these capabilities in the background: they do not block the model
-    /// turn, so the model keeps streaming while they run (ARCHITECTURE §6.3).
+    /// turn, so the model keeps streaming while they run.
     pub fn with_background(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.background = names.into_iter().collect();
         self
@@ -256,7 +253,7 @@ impl TurnPolicy for StaticPolicy {
                     // containing the corresponding `tool_calls`. Durable host
                     // hooks and op metadata can be logged between those facts,
                     // so projection groups matching results here without
-                    // changing the append-only log (ARCHITECTURE §2.4/§4.5).
+                    // changing the append-only log.
                     for call in &output.tool_calls {
                         if let Some(result_entry) =
                             find_tool_result_for_call(log, entry.seq, &call.id)

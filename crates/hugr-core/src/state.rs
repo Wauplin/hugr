@@ -1,8 +1,7 @@
 //! `BrainState`: the derived state the reducer folds the log into.
 //!
-//! Everything here is **rebuildable by replaying the log** — the log is the
-//! truth (ARCHITECTURE §3.1). The state exists so the hot path (handling a
-//! delta, deciding the next command) is cheap.
+//! Everything here is rebuildable by replaying the log; the state exists so the
+//! hot path (handling a delta, deciding the next command) is cheap.
 
 use std::collections::BTreeMap;
 
@@ -24,25 +23,24 @@ pub struct BrainState {
     /// Next op id to assign.
     next_op: u64,
     /// Every started, not-yet-finished op. A `BTreeMap` on purpose: iteration
-    /// order leaks into emitted commands (e.g. the `Cancel` fan-out on
-    /// abort/interrupt), and replay must be bit-for-bit deterministic
-    /// (ARCHITECTURE §6.2) — a hash map would emit them in random order.
+    /// order leaks into emitted commands (e.g. the `Cancel` fan-out on abort),
+    /// and replay must be deterministic — a hash map would emit them in random
+    /// order.
     inflight: BTreeMap<OpId, InflightOp>,
     /// Commands queued for the host to drain via [`Brain::poll`](crate::Brain::poll).
     #[serde(skip)]
     outbox: Vec<Command>,
-    /// Latest injected time (ARCHITECTURE §6.1).
+    /// Latest injected time.
     now: Timestamp,
-    /// Set when a `UserAbort` arrived while ops were in flight (ARCHITECTURE
-    /// §4.3/§4.6). The abort's `Cancel` commands race each op's own terminal
-    /// event; while latched, terminal events fold their records but start no
-    /// new work, and the single terminal `Done(Cancelled)` is emitted once the
-    /// last in-flight op drains.
+    /// Set when a `UserAbort` arrived while ops were in flight. The abort's
+    /// `Cancel` commands race each op's own terminal event; while latched,
+    /// terminal events fold their records but start no new work, and the single
+    /// terminal `Done(Cancelled)` is emitted once the last in-flight op drains.
     #[serde(default)]
     abort_requested: bool,
     /// A model transport error whose terminal `Done(Error)` is deferred while
-    /// background ops are still running (mirrors the `Done(EndTurn)` deferral,
-    /// ARCHITECTURE §4.2): emitted once the last op drains.
+    /// background ops are still running (mirrors the `Done(EndTurn)` deferral):
+    /// emitted once the last op drains.
     #[serde(default)]
     deferred_error: Option<String>,
 }
@@ -52,12 +50,9 @@ impl BrainState {
         Self::default()
     }
 
-    /// Rebuild state from an inherited log — the **fork/seed** primitive
-    /// (ARCHITECTURE §14): a child sub-agent (or a resumed session) starts from a
-    /// copy of a log prefix. `BrainState` is a fold over the log (§3.1), so we
-    /// take the log verbatim and derive the counters/clock/read-set from it.
-    /// Nothing is in flight (a consolidated prefix has no open ops).
-    ///
+    /// Rebuild state from an inherited log — the fork/seed primitive: the log
+    /// is taken verbatim and the counters/clock derived from it. Nothing is in
+    /// flight (a consolidated prefix has no open ops).
     pub(crate) fn from_log(log: Vec<LogEntry>) -> Self {
         let next_seq = log.last().map(|e| e.seq.0 + 1).unwrap_or(0);
         let now = log.last().map(|e| e.at).unwrap_or_default();
@@ -76,8 +71,6 @@ impl BrainState {
             ..Self::default()
         }
     }
-
-    // --- read-only accessors (for hosts, tooling and tests) ------------------
 
     /// The append-only log — the durable source of truth.
     pub fn log(&self) -> &[LogEntry] {
@@ -103,8 +96,6 @@ impl BrainState {
     pub fn inflight(&self) -> &BTreeMap<OpId, InflightOp> {
         &self.inflight
     }
-
-    // --- mutation helpers, used only by the reducer --------------------------
 
     pub(crate) fn now_mut(&mut self) -> &mut Timestamp {
         &mut self.now
@@ -155,7 +146,7 @@ impl BrainState {
     }
 
     /// The in-flight op ids, in ascending op-id order — deterministic, because
-    /// this order leaks into emitted `Cancel` commands (ARCHITECTURE §6.2).
+    /// this order leaks into emitted `Cancel` commands.
     pub(crate) fn inflight_op_ids(&self) -> Vec<OpId> {
         self.inflight.keys().copied().collect()
     }
@@ -182,8 +173,7 @@ impl BrainState {
 }
 
 /// An entry in the in-flight op table: live scratch space for an op that has
-/// started but not yet ended. `#[non_exhaustive]` so adding a field isn't
-/// breaking (ARCHITECTURE §2.4); construct via [`InflightOp::new`].
+/// started but not yet ended. Construct via [`InflightOp::new`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct InflightOp {
@@ -209,8 +199,8 @@ pub enum OpKind {
         text_so_far: String,
     },
     /// A capability (tool) invocation in progress. `background` ops do **not**
-    /// block the model turn (ARCHITECTURE §4.2/§6.3): the turn resumes while they
-    /// keep running, so a model stream and a long shell op run simultaneously.
+    /// block the model turn: the turn resumes while they keep running, so a
+    /// model stream and a long task can run simultaneously.
     Capability {
         name: String,
         call_id: String,

@@ -1,10 +1,10 @@
-//! Phase 2 (P2-1): multiple concurrent ops. A model stream and a **background**
-//! capability op run simultaneously; the brain reduces their interleaved events
-//! one at a time, atomically (ARCHITECTURE §4.2/§6.3). The host provides the
-//! concurrency (one task per op); the brain just keys everything by `OpId`.
+//! Multiple concurrent ops: a model stream and a **background** capability op
+//! run simultaneously; the brain reduces their interleaved events one at a
+//! time, atomically. The host provides the concurrency; the brain just keys
+//! everything by `OpId`.
 //!
 //! These tests pin the resulting command sequence and assert deterministic
-//! replay over the interleaved stream (CLAUDE.md: determinism is testable).
+//! replay over the interleaved stream.
 
 mod common;
 
@@ -20,13 +20,9 @@ fn background_shell_policy() -> StaticPolicy {
     StaticPolicy::default().with_background(["shell".to_string()])
 }
 
-/// The headline P2-1 scenario: the model kicks off a background `shell` op
-/// (op 1), the turn **resumes immediately** into a second model call (op 2)
-/// instead of waiting for the shell — so the model stream and the shell op are
-/// in flight at the same time. Their events interleave (model deltas, a shell
-/// chunk, then the shell finishing, then the model finishing); the brain folds
-/// each atomically. Once both have resolved, a final turn (op 3) sees the shell
-/// result and ends.
+/// The model kicks off a background `shell` op, then the turn resumes
+/// immediately into a second model call instead of waiting for the shell. Their
+/// events interleave, and a final turn sees the shell result and ends.
 #[test]
 fn model_stream_and_background_shell_run_concurrently() {
     let mut brain = Brain::new(Box::new(background_shell_policy()));
@@ -108,8 +104,8 @@ fn model_stream_and_background_shell_run_concurrently() {
 }
 
 /// Re-feeding the identical interleaved stream to a fresh brain yields identical
-/// commands and an identical durable log — the merge order is recorded, the fold
-/// is pure (ARCHITECTURE §6.2).
+/// commands and an identical durable log — the merge order is recorded, the
+/// fold is pure.
 #[test]
 fn concurrent_ops_replay_is_deterministic() {
     let script = || {

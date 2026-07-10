@@ -32,7 +32,7 @@ pub struct Seq(pub u64);
 )]
 pub struct Timestamp(pub u64);
 
-/// An opaque payload the brain stores and forwards but **never interprets**
-/// (the narrow-waist rule, ARCHITECTURE §2.4): capability args/results, tool
-/// payloads, provider-specific knobs, prompts, answers.
+/// An opaque payload the brain stores and forwards but never interprets:
+/// capability args/results, tool payloads, provider-specific knobs, prompts,
+/// answers.
 pub type Value = serde_json::Value;

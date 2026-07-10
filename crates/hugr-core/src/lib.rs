@@ -26,9 +26,6 @@
 //! into a Python/JS binding, or run on a server — only the host differs.
 
 #![forbid(unsafe_code)]
-// `hugr-core` aspires to be `#![no_std]`-friendly (ARCHITECTURE §10/§11). It is
-// not there yet (it uses `std::collections::HashMap` and `serde_json`); tracked
-// as a later-phase goal once the footprint targets are validated.
 
 mod brain;
 mod command;

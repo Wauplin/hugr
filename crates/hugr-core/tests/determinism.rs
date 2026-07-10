@@ -1,6 +1,5 @@
-//! Phase 0 exit criterion #2: deterministic replay. Feeding the same event
-//! stream to a fresh brain twice yields identical commands — the brain is a
-//! pure fold over the event stream (ARCHITECTURE §6).
+//! Deterministic replay: feeding the same event stream to a fresh brain twice
+//! yields identical commands.
 
 mod common;
 
@@ -94,8 +93,7 @@ fn replay_is_stable_across_instances() {
 }
 
 /// Deltas are transport-only: a stream *with* deltas produces the same durable
-/// log as the same stream *without* them (ARCHITECTURE §4.5). Only cosmetic
-/// `Emit` commands differ.
+/// log as the same stream *without* them. Only cosmetic `Emit` commands differ.
 #[test]
 fn deltas_do_not_affect_the_log() {
     use hugr_core::ModelDelta;

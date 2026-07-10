@@ -15,7 +15,7 @@ use crate::primitives::{OpId, Timestamp, Value};
 pub enum Event {
     /// New conversational input. May arrive **at any time**, including
     /// mid-turn: the message is appended to the log and picked up at the next
-    /// turn boundary (ARCHITECTURE §4.6). `content` is opaque/rich.
+    /// turn boundary. `content` is opaque/rich.
     UserInput {
         content: Value,
         /// Host-provided approximate token count for the durable user message.
@@ -25,7 +25,6 @@ pub enum Event {
     /// Pure control signal: cancel current activity, no new content (e.g. ESC).
     UserAbort,
 
-    // --- model streaming (transport only; never logged) ---------------------
     ModelDelta {
         op: OpId,
         delta: ModelDelta,
@@ -45,7 +44,6 @@ pub enum Event {
         error: Value,
     },
 
-    // --- capability results --------------------------------------------------
     /// A streamed chunk (transport only), e.g. a line of stdout.
     CapabilityChunk {
         op: OpId,
@@ -68,7 +66,6 @@ pub enum Event {
         est_tokens: u32,
     },
 
-    // --- brain asks ----------------------------------------------------------
     PermissionDecision {
         op: OpId,
         decision: Decision,
@@ -84,7 +81,6 @@ pub enum Event {
         op: OpId,
     },
 
-    // --- injected nondeterminism --------------------------------------------
     /// Injected time. The brain stamps log entries with the latest `now`.
     Tick {
         now: Timestamp,

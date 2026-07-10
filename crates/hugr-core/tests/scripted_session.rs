@@ -234,7 +234,7 @@ fn denied_permission_feeds_error_back() {
 }
 
 /// Two tool calls in one model turn run concurrently; the brain only resumes
-/// the model once *both* have resolved (ARCHITECTURE §6.3 fan-out).
+/// the model once *both* have resolved.
 #[test]
 fn parallel_tool_calls_resume_once() {
     use hugr_core::{ModelOutput, ToolCall};
@@ -450,7 +450,7 @@ fn duplicate_permission_allow_does_not_drop_the_live_op() {
 }
 
 /// Replay: the duplicate-Allow script re-fed to a fresh brain yields identical
-/// commands and an identical log (ARCHITECTURE §6.2).
+/// commands and an identical log.
 #[test]
 fn duplicate_permission_allow_replay_is_deterministic() {
     let make_brain = || {
@@ -494,8 +494,7 @@ fn duplicate_permission_allow_replay_is_deterministic() {
 }
 
 /// A plain model transport error ends the turn `Done(Error)` with the error
-/// stringified as the reason (ARCHITECTURE §5.4). `Event::ModelError` had zero
-/// coverage before; this pins its command sequence.
+/// stringified as the reason. This pins its command sequence.
 #[test]
 fn model_error_ends_the_turn_with_error() {
     let mut brain = Brain::with_default_policy();
@@ -593,7 +592,7 @@ fn model_error_with_a_background_op_defers_done() {
 }
 
 /// Replay: the ModelError scripts re-fed to fresh brains yield identical
-/// commands and identical logs (ARCHITECTURE §6.2).
+/// commands and identical logs.
 #[test]
 fn model_error_replay_is_deterministic() {
     let plain = || {

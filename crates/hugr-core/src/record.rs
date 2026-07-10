@@ -3,16 +3,15 @@
 //! The log is the **source of truth**; [`BrainState`](crate::BrainState) is a
 //! fold over it. One [`Record`] is appended per *logical* thing — a user
 //! message, a consolidated model output, a tool result, an op ending — never
-//! one per streaming delta (ARCHITECTURE §4.5). That keeps traces comparable in
-//! size to a normal message history.
+//! one per streaming delta. That keeps traces comparable in size to a normal
+//! message history.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelOutput, ModelSelector, Usage};
 use crate::primitives::{OpId, Seq, Timestamp, Value};
 
-/// One ordered, timestamped entry in the append-only log. Prefer constructing
-/// via [`LogEntry::new`] (ARCHITECTURE §2.4).
+/// One ordered, timestamped entry in the append-only log.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct LogEntry {
@@ -37,7 +36,7 @@ pub enum Record {
     UserMessage {
         text: String,
         /// Host-provided approximate token count. The brain stores/sums this
-        /// value but never tokenizes content itself (ARCHITECTURE §3.5).
+        /// value but never tokenizes content itself.
         #[serde(default)]
         est_tokens: u32,
     },
@@ -69,7 +68,7 @@ pub enum Record {
     },
 
     /// An operation ended; carries per-op metadata (timing, cost, selector) so
-    /// latency and spend are queryable from the trace itself (ARCHITECTURE §4.1).
+    /// latency and spend are queryable from the trace itself.
     OpEnded {
         op: OpId,
         outcome: OpOutcome,
@@ -79,8 +78,8 @@ pub enum Record {
 
 impl Record {
     /// The op this record refers to, if any. Used to reconstruct the next op id
-    /// when **seeding a forked child log** (ARCHITECTURE §14), so the child's new
-    /// ops don't collide with ids already present in the inherited prefix.
+    /// when seeding a forked child log, so the child's new ops don't collide
+    /// with ids already present in the inherited prefix.
     pub fn op_id(&self) -> Option<OpId> {
         match self {
             Record::ModelOutput { op, .. }
@@ -108,8 +107,7 @@ impl Record {
 pub enum OpOutcome {
     Ok,
     Error(Value),
-    /// Cancelled/interrupted; `partial` preserves whatever was produced so far
-    /// (ARCHITECTURE §6.4) — never an implicit gap.
+    /// Cancelled/interrupted; `partial` preserves whatever was produced so far.
     Cancelled {
         partial: Value,
     },
