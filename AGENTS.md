@@ -104,6 +104,7 @@ hugr cron <agent-dir>       # run configured [cron.<name>] recurring asks
 ## Conventions
 
 - **Keep the docs and agent skills in sync — it's part of "done".** After completing a task update `ARCHITECTURE.md` if behavior changed and any tutorial that demonstrates it. A manifest, tool, surface, packaging, or trace-workflow change is not finished until the relevant `.agents/skills/*/SKILL.md` cheat sheet matches reality.
+- **Keep Rust and Python API types in sync in both directions.** Any change to a Rust-serialized runtime input or output type (contracts, events, cards, trace listings, feedback, stats, or nested values) must update the corresponding `bindings/python/python/hugr_agents/_types.py` `TypedDict`/dataclass, caster, exports, and tests; any change to those public Python mirrors must update the corresponding Rust type and serde wire shape plus its tests.
 - **Prefer deletion over abstraction.** One way to do each thing; if two mechanisms do the same job, keep the one the live stack uses and delete the other.
 - **Markdown is single-line.** One physical line per paragraph or bullet — never hard-wrap prose; rely on soft-wrap. (Fenced code blocks and table rows are exempt.)
 - **Comments state what the code cannot.** No references to other docs (`ARCHITECTURE §X` etc.), no "how it works" narration, no comments restating the signature or the next line, no section banners. A comment is justified only for a non-obvious constraint, failure mode, or safety/jail invariant; public items keep one concise doc line stating the contract.

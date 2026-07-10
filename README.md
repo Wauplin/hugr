@@ -130,7 +130,7 @@ Runs for this reference agent land in `~/.hugr/hugr-docs/traces` unless `HUGR_AG
 
 ## Define an agent in Python or TypeScript
 
-The `hugr-agents` Python package (`bindings/python`) embeds the same runtime: config as Python data (keys mirror `hugr.toml` 1:1), tools as sync/async Python callables with explicit JSON schemas, `agent.ask(...)` returning the standard typed `Answer`, and `async for event in agent.run(...)` streaming the shared event vocabulary. Traces land in `~/.hugr/<name>/` and verify with the Rust CLI. See `bindings/python/README.md`.
+The `hugr-agents` Python package (`bindings/python`) embeds the same runtime: fixed-shape config inputs are `TypedDict`s, tools are sync/async Python callables with explicit JSON schemas, `agent.ask(...)` returns the standard `Answer` dataclass, and `async for event in agent.run(...)` streams a union of event dataclasses. Introspection, trace, feedback, and stats outputs are recursive dataclass graphs too; only domain-owned opaque JSON stays as JSON. Traces land in `~/.hugr/<name>/` and verify with the Rust CLI. See `bindings/python/README.md`.
 
 The `hugr-agents` TypeScript package (`bindings/typescript`) is the same shape for Node and the browser, driving the WASM brain: tools as `{name, description, schema, invoke}` objects, the same config keys and events, node-fs or IndexedDB trace stores, and cross-language `verify` in both directions. See `bindings/typescript/README.md`.
 

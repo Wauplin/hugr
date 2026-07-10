@@ -18,7 +18,7 @@ From a Hugr checkout:
 cd bindings/python
 python3 -m venv .venv
 . .venv/bin/activate
-pip install maturin pytest
+pip install maturin mypy pytest
 maturin develop --release
 ```
 
@@ -75,14 +75,15 @@ print(agent.stats())
 ```
 
 ```python
-async for event in agent.run("Can I expense a train ticket?"):
-    if event["type"] == "text_delta":
-        print(event["text"], end="")
-    elif event["type"] == "answer_ready":
-        answer = event["answer"]
+async def stream():
+    async for event in agent.run("Can I expense a train ticket?"):
+        if isinstance(event, hugr.TextDeltaEvent):
+            print(event.text, end="")
+        elif isinstance(event, hugr.AnswerReadyEvent):
+            answer = event.answer
 ```
 
-Branch on `answer.ok` or `answer.status`; errors are answers with mandatory metadata. Use `BlobHandle.from_path(...)` and the `blobs=` ask argument for files. State defaults to `~/.hugr/<name>/`, shared with Rust and TypeScript surfaces.
+Fixed-shape inputs use the exported `TypedDict`s (`TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and individual grant configs); tier selectors and external grant instance names stay typed mappings because they are open strings. Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`; errors are answers with mandatory metadata. Use `BlobHandle.from_path(...)` and the `blobs=` ask argument for files. Opaque domain payloads remain `JsonValue`/`JsonObject`; validation stays in Rust and Python only casts. State defaults to `~/.hugr/<name>/`, shared with Rust and TypeScript surfaces.
 
 ## Validate
 
@@ -90,6 +91,7 @@ Branch on `answer.ok` or `answer.status`; errors are answers with mandatory meta
 cd bindings/python
 . .venv/bin/activate
 pytest
+mypy python/hugr_agents
 ```
 
 Python-written traces use the standard format. When a manifest-defined agent directory with the same agent name resolves to that home, verify it with the Rust CLI:

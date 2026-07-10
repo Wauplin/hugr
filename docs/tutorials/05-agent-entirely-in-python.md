@@ -19,7 +19,7 @@ maturin develop --release
 import hugr_agents as hugr
 ```
 
-The native crate (`hugr_agents._native`) embeds a tokio runtime and drives the real `hugr-agent` assembly path — so a Python-defined agent behaves exactly like a manifest-defined one. The boundary between the two layers is JSON strings: the pure-Python layer owns the typed surface you'll use throughout this tutorial; the native module owns the runtime.
+The native crate (`hugr_agents._native`) embeds a tokio runtime and drives the real `hugr-agent` assembly path — so a Python-defined agent behaves exactly like a manifest-defined one. The boundary between the two layers is JSON strings: the native module owns the runtime and all validation, while the pure-Python layer declares inputs with `TypedDict`s and recursively casts structured outputs into dataclasses.
 
 ## Define a tool
 
@@ -84,7 +84,7 @@ agent = hugr.Agent(
 )
 ```
 
-The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`. Each config key mirrors the corresponding `hugr.toml` section — same names, same shapes — so anything you learned in [tutorial 01](01-first-agent-cli.md) about the manifest transfers directly.
+The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`. Each config key mirrors the corresponding `hugr.toml` section — same names, same shapes — so anything you learned in [tutorial 01](01-first-agent-cli.md) about the manifest transfers directly. The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes as `TypedDict`s for static checking. `ModelsConfig` and the nested `mcp`/`agent` instance tables are typed mappings because tier selectors and external grant instance names are deliberately open strings.
 
 ### `models`
 
@@ -141,48 +141,47 @@ The full signature is `ask(question, *, trace_id=None, blobs=(), extra=None)`. `
 
 ### Passing blobs
 
-`BlobHandle` is a dataclass with `ref` (a dict), `media_type` (a string), and optional `name`. Two constructors cover the common cases:
+`BlobHandle` is a dataclass with `ref` (a `BytesBlobRef`, `PathBlobRef`, or `Sha256BlobRef` dataclass), `media_type` (a string), and optional `name`. `from_bytes`, `from_path`, and `from_sha256` cover the three wire variants:
 
 ```python
 blob = hugr.BlobHandle.from_path("./report.pdf", media_type="application/pdf")
 answer = agent.ask("Summarize this report.", blobs=[blob])
 ```
 
-`from_path(path, media_type="application/octet-stream", name=None)` builds a `ref` of `{"kind": "path", "path": path}` — a local file the host reads. `from_sha256(sha256, media_type=..., name=None)` builds a `ref` of `{"kind": "sha256", "sha256": sha256}` — a content-addressed reference into the shared blob store. The file is materialized into the agent's scratchpad before the turn starts.
+`from_path(path, media_type="application/octet-stream", name=None)` builds a `PathBlobRef` for a local file the host reads. `from_sha256(sha256, media_type=..., name=None)` builds a content-addressed `Sha256BlobRef` into the shared blob store, while `from_bytes(base64, ...)` builds an inline `BytesBlobRef`. The file is materialized into the agent's scratchpad before the turn starts.
 
 ## Stream events
 
-For live UIs or progress reporting, use `agent.run(...)` as an async iterator. It takes the same arguments as `ask` and yields the typed event vocabulary as dicts:
+For live UIs or progress reporting, use `agent.run(...)` as an async iterator. It takes the same arguments as `ask` and yields the `AgentEvent` union; every variant and every structured nested value is a dataclass:
 
 ```python
 import asyncio
 
 async def stream():
     async for event in agent.run("Can I expense a train ticket?"):
-        if event["type"] == "text_delta":
-            print(event["text"], end="", flush=True)
-        elif event["type"] == "tool_started":
-            print(f"\n[tool: {event['name']}]")
-        elif event["type"] == "answer_ready":
-            answer = hugr.Answer.from_dict(event["answer"])
-            print(f"\n→ {answer.status}, trace {answer.trace_id}")
+        if isinstance(event, hugr.TextDeltaEvent):
+            print(event.text, end="", flush=True)
+        elif isinstance(event, hugr.ToolStartedEvent):
+            print(f"\n[tool: {event.name}]")
+        elif isinstance(event, hugr.AnswerReadyEvent):
+            print(f"\n→ {event.answer.status}, trace {event.answer.trace_id}")
 
 asyncio.run(stream())
 ```
 
-Every event is a dict tagged by `type` (serialized with `serde`'s `tag = "type"`, `rename_all = "snake_case"`). The vocabulary is:
+Every event dataclass retains its literal `type` attribute for discriminated-union narrowing, while `isinstance` gives the most direct Python branch. The vocabulary is:
 
 - `ask_started` — the turn began; carries `trace_parent` (the resumed parent's id, or `None`).
 - `model_started` — a model call started; carries `op` and `tier` (the selector string).
 - `text_delta` — a chunk of streamed assistant text; carries `op` and `text`.
-- `model_ended` — a model call finished; carries `op` and `usage` (token counts).
+- `model_ended` — a `ModelEndedEvent`; carries `op` and a `Usage` dataclass.
 - `tool_started` — a tool call fired; carries `op`, `name`, and `args` (the decoded JSON).
 - `tool_ended` — a tool call returned; carries `op`, `name`, `is_error` (bool), and `result`.
 - `notice` — a free-form status message; carries `message`.
-- `done` — the turn reached a terminal state; carries `reason` (`end_turn`, `cancelled`, or `error`).
-- `answer_ready` — the final event; carries `answer` (the full `Answer` object as a dict).
+- `done` — a `DoneEvent`; carries a normalized `DoneReason` dataclass (`kind` is `end_turn`, `cancelled`, or `error`, with an optional error `message`).
+- `answer_ready` — an `AnswerReadyEvent`; carries the full `Answer` dataclass.
 
-The stream is guaranteed to start with `ask_started` and end with `answer_ready`. Reconstruct the typed `Answer` from the final event with `hugr.Answer.from_dict(event["answer"])`.
+The stream is guaranteed to start with `AskStartedEvent` and end with `AnswerReadyEvent`; the final answer is already available as `event.answer`.
 
 ## File feedback
 
@@ -202,18 +201,18 @@ Two methods give you the same audit views as the CLI flags from [tutorial 01](01
 
 ```python
 card = agent.describe()
-print([t["name"] for t in card["tools"]])
-print(card["model_tiers"][0]["selector"], card["limits"])
+print([tool.name for tool in card.tools])
+print(card.model_tiers[0].selector, card.limits)
 
 heads = agent.traces()
 for h in heads:
-    print(h["trace_id"], h["status"], h["question"])
+    print(h.trace_id, h.status, h.question)
 
 stats = agent.stats()
-print(stats["totals"])
+print(stats.totals.cost_micro_usd)
 ```
 
-`describe()` returns the agent card as a dict — `name`, `version`, `description`, `tools` (each with `name`, `description`, `privilege`, `schema`, `scope`), `model_tiers` (each with `selector`, `default`, optional `pricing`), `context`, and `limits`. `traces()` returns a list of trace headers, each with `trace_id`, `depends_on`, `question`, `status`, and `feedback_count`. `stats(*, since=None, trace=None)` runs the same fold as `hugr stats` — pass `since` to aggregate from a trace onward, or `trace` for one trace only.
+`describe()` returns an `AgentCard` dataclass with nested `ToolCard`, `ToolSchema`, `ModelTierCard`, `TierPrice`, and `AgentLimits` values. `traces()` returns a list of `TraceHead` dataclasses. `stats(*, since=None, trace=None)` returns an `AgentStats` graph with typed totals, duration, per-trace, model, tool, and child-agent rows; pass `since` to aggregate from a trace onward, or `trace` for one trace only.
 
 If the assembly produced any warnings (e.g., a grant referencing an unknown library tool), they're available on the `agent.warnings` property as a list of strings.
 
@@ -279,7 +278,7 @@ print(answer.metadata.model_calls, answer.metadata.tool_calls, answer.metadata.c
 
 # Inspect what landed on disk.
 for head in agent.traces():
-    print(head["trace_id"], head["depends_on"], head["status"])
+    print(head.trace_id, head.depends_on, head.status)
 ```
 
 Save it as `run.py` and execute it. The first run writes a trace to `~/.hugr/policy-helper/traces/`. Verify it without Python:
@@ -296,8 +295,8 @@ Pass a prior answer's `trace_id` to continue the conversation — a new trace is
 follow_up = agent.ask("And what about flights?", trace_id=answer.trace_id)
 assert follow_up.trace_id != answer.trace_id
 heads = agent.traces()
-by_id = {h["trace_id"]: h for h in heads}
-assert by_id[follow_up.trace_id]["depends_on"] == answer.trace_id
+by_id = {head.trace_id: head for head in heads}
+assert by_id[follow_up.trace_id].depends_on == answer.trace_id
 ```
 
 ## A security note

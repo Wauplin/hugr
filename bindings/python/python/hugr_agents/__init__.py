@@ -11,24 +11,154 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Sequence, Union
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    List,
+    Optional,
+    Sequence,
+    Union,
+    cast,
+    overload,
+)
 
 from ._native import NativeAgent
-from ._types import STATUS_ERROR, STATUS_SUCCESS, Answer, AnswerMeta, BlobHandle, Feedback
+from ._types import (
+    STATUS_ERROR,
+    STATUS_SUCCESS,
+    AgentCard,
+    AgentCardDict,
+    AgentEvent,
+    AgentEventDict,
+    AgentGrant,
+    AgentGrants,
+    AgentLimits,
+    AgentStats,
+    AgentStatsDict,
+    AskStartedEvent,
+    Answer,
+    AnswerDict,
+    AnswerMeta,
+    AnswerReadyEvent,
+    BlobRef,
+    BlobRefInput,
+    BlobHandle,
+    BlobInput,
+    BytesBlobRefInput,
+    BytesBlobRef,
+    ChildAgentStats,
+    ContextConfig,
+    ContextForgetConfig,
+    DoneEvent,
+    DoneReason,
+    DurationStats,
+    EmptyGrant,
+    Feedback,
+    FeedbackDict,
+    GrantConfig,
+    GrantsConfig,
+    JsonObject,
+    JsonScalar,
+    JsonValue,
+    LimitsConfig,
+    McpGrant,
+    McpGrants,
+    MemoryGrant,
+    ModelEndedEvent,
+    ModelStartedEvent,
+    ModelStats,
+    ModelTierCard,
+    ModelsConfig,
+    NoticeEvent,
+    PathBlobRef,
+    PathBlobRefInput,
+    RootGrant,
+    Sha256BlobRef,
+    Sha256BlobRefInput,
+    StatsTotals,
+    TextDeltaEvent,
+    TierConfig,
+    TierPrice,
+    ToolCard,
+    ToolEndedEvent,
+    ToolSchema,
+    ToolStartedEvent,
+    ToolStats,
+    TraceHead,
+    TraceHeadDict,
+    TraceStats,
+    Usage,
+    WebFetchGrant,
+    agent_event_from_dict,
+)
 
 __all__ = [
     "Agent",
+    "AgentCard",
+    "AgentEvent",
+    "AgentGrant",
+    "AgentGrants",
+    "AgentLimits",
+    "AgentStats",
+    "AskStartedEvent",
     "Answer",
     "AnswerMeta",
+    "AnswerReadyEvent",
     "BlobHandle",
+    "BlobInput",
+    "BlobRef",
+    "BlobRefInput",
+    "BytesBlobRef",
+    "BytesBlobRefInput",
+    "ChildAgentStats",
+    "ContextConfig",
+    "ContextForgetConfig",
+    "DoneEvent",
+    "DoneReason",
+    "DurationStats",
+    "EmptyGrant",
     "Feedback",
+    "GrantConfig",
+    "GrantsConfig",
+    "JsonObject",
+    "JsonScalar",
+    "JsonValue",
+    "LimitsConfig",
+    "McpGrant",
+    "McpGrants",
+    "MemoryGrant",
+    "ModelEndedEvent",
+    "ModelStartedEvent",
+    "ModelStats",
+    "ModelTierCard",
+    "ModelsConfig",
+    "NoticeEvent",
+    "PathBlobRef",
+    "PathBlobRefInput",
+    "RootGrant",
+    "Sha256BlobRef",
+    "Sha256BlobRefInput",
+    "StatsTotals",
+    "TextDeltaEvent",
+    "TierConfig",
+    "TierPrice",
     "Tool",
+    "ToolCard",
+    "ToolEndedEvent",
+    "ToolSchema",
+    "ToolStartedEvent",
+    "ToolStats",
+    "TraceHead",
+    "TraceStats",
+    "Usage",
+    "WebFetchGrant",
     "tool",
     "STATUS_SUCCESS",
     "STATUS_ERROR",
 ]
 
-ToolFn = Callable[[Dict[str, Any]], Union[Any, Awaitable[Any]]]
+ToolFn = Callable[[JsonObject], Union[JsonValue, Awaitable[JsonValue]]]
 
 
 @dataclass
@@ -38,12 +168,38 @@ class Tool:
     fn: ToolFn
     name: str
     description: str
-    schema: Dict[str, Any]
+    schema: JsonObject
     requires_permission: bool = False
     background: bool = False
 
-    def __call__(self, args: Dict[str, Any]) -> Any:
+    def __call__(self, args: JsonObject) -> Union[JsonValue, Awaitable[JsonValue]]:
         return self.fn(args)
+
+
+@overload
+def tool(
+    fn: ToolFn,
+    *,
+    name: Optional[str] = None,
+    description: str = "",
+    schema: Optional[JsonObject] = None,
+    requires_permission: bool = False,
+    background: bool = False,
+) -> Tool:
+    ...
+
+
+@overload
+def tool(
+    fn: None = None,
+    *,
+    name: Optional[str] = None,
+    description: str = "",
+    schema: Optional[JsonObject] = None,
+    requires_permission: bool = False,
+    background: bool = False,
+) -> Callable[[ToolFn], Tool]:
+    ...
 
 
 def tool(
@@ -51,7 +207,7 @@ def tool(
     *,
     name: Optional[str] = None,
     description: str = "",
-    schema: Optional[Dict[str, Any]] = None,
+    schema: Optional[JsonObject] = None,
     requires_permission: bool = False,
     background: bool = False,
 ) -> Union[Tool, Callable[[ToolFn], Tool]]:
@@ -87,12 +243,12 @@ class Agent:
         *,
         name: str,
         system: Optional[str] = None,
-        models: Optional[Dict[str, Any]] = None,
+        models: Optional[ModelsConfig] = None,
         tools: Sequence[Tool] = (),
-        grants: Optional[Dict[str, Any]] = None,
-        limits: Optional[Dict[str, Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-        response_schema: Optional[Dict[str, Any]] = None,
+        grants: Optional[GrantsConfig] = None,
+        limits: Optional[LimitsConfig] = None,
+        context: Optional[ContextConfig] = None,
+        response_schema: Optional[JsonObject] = None,
         version: str = "0.0.0",
         description: str = "",
         traces: Optional[str] = None,
@@ -112,7 +268,14 @@ class Agent:
             "scratchpad": scratchpad,
         }
         specs = [
-            (t.name, t.description, json.dumps(t.schema), t.requires_permission, t.background, t.fn)
+            (
+                t.name,
+                t.description,
+                json.dumps(t.schema),
+                t.requires_permission,
+                t.background,
+                t.fn,
+            )
             for t in tools
         ]
         self._native = NativeAgent(json.dumps(config), specs)
@@ -121,62 +284,85 @@ class Agent:
     def warnings(self) -> List[str]:
         return self._native.warnings()
 
-    def describe(self) -> Dict[str, Any]:
-        return json.loads(self._native.describe())
+    def describe(self) -> AgentCard:
+        return AgentCard.from_dict(
+            cast(AgentCardDict, json.loads(self._native.describe()))
+        )
 
     def ask(
         self,
         question: str,
         *,
         trace_id: Optional[str] = None,
-        blobs: Sequence[BlobHandle] = (),
-        extra: Any = None,
+        blobs: Sequence[Union[BlobHandle, BlobInput]] = (),
+        extra: JsonValue = None,
     ) -> Answer:
         raw = self._native.ask(_ask_json(question, trace_id, blobs, extra))
-        return Answer.from_dict(json.loads(raw))
+        return Answer.from_dict(cast(AnswerDict, json.loads(raw)))
 
     async def run(
         self,
         question: str,
         *,
         trace_id: Optional[str] = None,
-        blobs: Sequence[BlobHandle] = (),
-        extra: Any = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream this ask's events (dicts tagged by ``type``); the final event is ``answer_ready``."""
+        blobs: Sequence[Union[BlobHandle, BlobInput]] = (),
+        extra: JsonValue = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Stream Rust-validated events cast into their public dataclasses."""
         stream = self._native.ask_events(_ask_json(question, trace_id, blobs, extra))
         while True:
             raw = await asyncio.to_thread(stream.next_event)
             if raw is None:
                 return
-            yield json.loads(raw)
+            yield agent_event_from_dict(cast(AgentEventDict, json.loads(raw)))
 
-    def feedback(self, trace_id: str, payload: Any) -> Feedback:
+    def feedback(self, trace_id: str, payload: JsonValue) -> Feedback:
         raw = self._native.feedback(trace_id, json.dumps(payload))
-        return Feedback.from_dict(json.loads(raw))
+        return Feedback.from_dict(cast(FeedbackDict, json.loads(raw)))
 
     def feedback_for(self, trace_id: str) -> List[Feedback]:
         raw = self._native.feedback_for(trace_id)
-        return [Feedback.from_dict(f) for f in json.loads(raw)]
+        return [
+            Feedback.from_dict(item)
+            for item in cast(List[FeedbackDict], json.loads(raw))
+        ]
 
-    def traces(self) -> List[Dict[str, Any]]:
-        return json.loads(self._native.traces())
+    def traces(self) -> List[TraceHead]:
+        return [
+            TraceHead.from_dict(item)
+            for item in cast(List[TraceHeadDict], json.loads(self._native.traces()))
+        ]
 
-    def stats(self, *, since: Optional[str] = None, trace: Optional[str] = None) -> Dict[str, Any]:
-        options: Dict[str, Any] = {}
+    def stats(
+        self, *, since: Optional[str] = None, trace: Optional[str] = None
+    ) -> AgentStats:
+        options: dict[str, str] = {}
         if since is not None:
             options["since"] = since
         if trace is not None:
             options["trace"] = trace
-        return json.loads(self._native.stats(json.dumps(options)))
+        return AgentStats.from_dict(
+            cast(AgentStatsDict, json.loads(self._native.stats(json.dumps(options))))
+        )
 
 
-def _ask_json(question: str, trace_id: Optional[str], blobs: Sequence[BlobHandle], extra: Any) -> str:
-    ask: Dict[str, Any] = {"question": question}
+def _ask_json(
+    question: str,
+    trace_id: Optional[str],
+    blobs: Sequence[Union[BlobHandle, BlobInput]],
+    extra: JsonValue,
+) -> str:
+    ask: JsonObject = {"question": question}
     if trace_id is not None:
         ask["trace_id"] = trace_id
     if blobs:
-        ask["blobs"] = [b.to_dict() for b in blobs]
+        ask["blobs"] = cast(
+            JsonValue,
+            [
+                blob.to_dict() if isinstance(blob, BlobHandle) else blob
+                for blob in blobs
+            ],
+        )
     if extra is not None:
         ask["extra"] = extra
     return json.dumps(ask)

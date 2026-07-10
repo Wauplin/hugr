@@ -26,9 +26,18 @@ agent = hugr.Agent(
 
 answer = agent.ask("Can I expense a train ticket?")
 print(answer.status, answer.response, answer.trace_id)
+
+async def stream():
+    async for event in agent.run("What receipt is needed?"):
+        if isinstance(event, hugr.TextDeltaEvent):
+            print(event.text, end="")
+        elif isinstance(event, hugr.AnswerReadyEvent):
+            print(event.answer.trace_id)
 ```
 
-Config keys mirror `hugr.toml` 1:1: `models`, `limits`, `context` are the same tables; `grants` maps to the manifest's `[tools]` (library tools, `mcp`, `agent` namespaces). Tools defined in Python are sync **or** async callables with explicit JSON schemas. `agent.ask()` blocks; `async for event in agent.run(...)` streams the shared `AgentEvent` vocabulary and ends with `answer_ready`. `agent.feedback(trace_id, payload)` files feedback; `agent.traces()` / `agent.stats()` read the store.
+Config keys mirror `hugr.toml` 1:1: `models`, `limits`, `context` are the same tables; `grants` maps to the manifest's `[tools]` (library tools, `mcp`, `agent` namespaces). Fixed-shape input sections are exported `TypedDict`s (`TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and individual grant shapes); arbitrary tier selectors and external grant instance names use typed mappings because their keys are intentionally open. Tools defined in Python are sync **or** async callables with explicit JSON schemas.
+
+All structured outputs are dataclasses, recursively: `ask()` returns `Answer`; `run()` yields the `AgentEvent` union (`TextDeltaEvent`, `ToolStartedEvent`, `AnswerReadyEvent`, and the other variants); `describe()`, `traces()`, `feedback()`, and `stats()` return `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Domain-owned opaque JSON remains `JsonValue`/`JsonObject`: answer payloads, tool arguments/results, schemas, feedback payloads, and `extra`. Rust performs validation; the Python layer only casts validated JSON into these dataclasses.
 
 Traces persist under `~/.hugr/<name>/` exactly like a manifest-defined agent, and verify with the Rust CLI (`hugr verify`) without importing Python — capability results are recorded events.
 
@@ -39,9 +48,10 @@ Security note: Python callables are **trusted host code**. Hugr jails what the m
 ```bash
 cd bindings/python
 python3 -m venv .venv && . .venv/bin/activate
-pip install maturin pytest
+pip install maturin mypy pytest
 maturin develop --release
 pytest
+mypy python/hugr_agents
 ```
 
 The native crate lives at `crates/hugr-python` (PyO3, abi3). It is excluded from the root cargo workspace so `cargo test --workspace` never needs a Python toolchain.
