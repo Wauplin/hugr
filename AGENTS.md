@@ -62,11 +62,17 @@ crates/hugr-agent/      # the subagent runtime: Ask/Answer, TraceStore
 crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library
                         #   (fs_read, http_fetch, sqlite_query), and the `hugr`
                         #   CLI: new / run / build / traces / replay / verify
+crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS
+                        #   hosts (submit/poll over JSON + browser tool schemas)
+bindings/typescript/    # generic JS host layer: agent driver, fetch model adapter,
+                        #   IndexedDB stores (grows into the typed TS runtime API)
 examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml +
                         #   SYSTEM.md plus typed response contract using hugr-toolkit
 examples/hugr-weather/  # the self-contained beginner example; also the source of
                         #   the `hugr new --template weather` scaffold (embedded
                         #   at compile time, name substituted)
+examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
+                        #   side-panel UI, MV3 manifest (vendors the generic JS)
 ```
 
 `hugr-replay` is a host-side **persistence** crate — it may use `std::fs`, but it depends on `hugr-core` as *pure data only*. The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals — they are hosts like any other. **Never add environmental dependencies to `hugr-core`** to make a host easier; put them in the host crate.

@@ -1,5 +1,6 @@
-import { runBrowserAgent } from "./agent_driver.js";
-import { deleteLocalFile, deleteSession, getLocalFile, getSession, listFiles, listSessions, loadSettings, saveSettings } from "./indexed_db.js";
+import { runAgent } from "./vendor/agent_driver.js";
+import { host } from "./host.js";
+import { deleteLocalFile, deleteSession, getLocalFile, getSession, listFiles, listSessions, loadSettings, saveSettings } from "./vendor/indexed_db.js";
 
 const views = new Map([...document.querySelectorAll(".view")].map((node) => [node.id.replace("view-", ""), node]));
 const buttons = [...document.querySelectorAll("nav button")];
@@ -35,7 +36,7 @@ composer.addEventListener("submit", async (event) => {
   const assistant = addMessage("assistant", "");
   activeAbortController = new AbortController();
   try {
-    const result = await runBrowserAgent(question, {
+    const result = await runAgent(question, host, {
       signal: activeAbortController.signal,
       onText: (text) => {
         assistant.textContent += text;

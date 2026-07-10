@@ -89,9 +89,13 @@ crates/
   hugr-replay/        # trace format + content-addressed blob store + replay/verify/inspect.
   hugr-agent/         # the subagent runtime: Ask/Answer, trace store with trace_id/depends_on + fork, scratchpad, blobs, limits, cost accounting, agent-as-tool (subprocess).
   hugr-toolkit/       # agent manifests (hugr.toml + SYSTEM.md), the tool library, and the `hugr` CLI: new/run/build/traces/replay/verify.
+  hugr-wasm/          # generic WASM bindings around hugr-core for browser/JS hosts.
+bindings/
+  typescript/         # generic JS host layer: agent driver, fetch model adapter, IndexedDB stores.
 examples/
   hugr-docs/          # the reference subagent crate (docs Q&A): manifest, prompt, and typed response contract.
   hugr-weather/       # the self-contained beginner agent; source of the `hugr new --template weather` scaffold.
+  chrome-extension/   # a browser host built on hugr-wasm + bindings/typescript: chrome.* capabilities, side-panel UI.
 ```
 
 ## The reference subagent: `hugr-docs`

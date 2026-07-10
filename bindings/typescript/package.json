@@ -1,0 +1,8 @@
+{
+  "name": "hugr-typescript",
+  "private": true,
+  "type": "module",
+  "version": "0.0.2",
+  "description": "Generic JS/TS host for the Hugr WASM brain: agent driver, OpenAI-compatible fetch adapter, IndexedDB storage.",
+  "main": "index.js"
+}

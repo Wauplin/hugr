@@ -63,7 +63,7 @@ Do these first: they move files around, and every later phase touches the moved 
 - Docs: README quickstart already says `--template weather`; add the example folder to layout sections.
 - Acceptance: `hugr new my-agent` output == example content modulo name; conformance suite still passes.
 
-### 0.3 `[ ]` Split `hugr-wasm` into a generic browser package + a Chrome-extension example (idea 12) — L
+### 0.3 `[x]` Split `hugr-wasm` into a generic browser package + a Chrome-extension example (idea 12) — L
 
 - Why: the Rust side of `crates/hugr-wasm` is already generic (drives `hugr-core` directly, zero `chrome.*`), and half the JS is generic too; the extension we shipped is one *example* of a browser host. Goal: anyone can build a different extension (other layout, tools, policies) from the reusable parts.
 - Today: generic — `src/{lib,exports,capabilities,config}.rs`, `extension/agent_driver.js` (command loop), `extension/openai_adapter.js` (fetch adapter + compaction POC), `extension/indexed_db.js`. Chrome-specific — `manifest.json`, `service_worker.js`, `content_script.js`, `chrome_api.js`, `sidepanel.{html,js,css}`, `build.sh`. Coupling seams: `agent_driver.js` imports `chrome_api.js` directly and hardcodes defaults in `toRustConfig` (`agent_driver.js:255`); `sidepanel.js:38` calls `runBrowserAgent` directly. Checked-in build artifacts: `extension/pkg/`, `hugr-wasm-extension.zip`.

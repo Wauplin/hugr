@@ -1,10 +1,11 @@
-//! Browser-specific Hugr host scaffolding.
+//! Generic WASM bindings around the Hugr brain for browser/JS hosts.
 //!
-//! `hugr-wasm` is intentionally an edge crate: Chrome APIs, IndexedDB, and the
-//! extension UI belong here, while `hugr-core` remains a pure reducer. The Rust
-//! side currently exposes the browser capability schemas and a small WASM
-//! surface for the extension shell; the actual Chrome API calls live in the
-//! extension bridge files under `extension/`.
+//! `hugr-wasm` contains no Chrome APIs and bakes in no prompt or manifest: it
+//! exposes the sans-IO `hugr-core` brain (submit/poll over JSON) plus the
+//! browser tool schemas that form the model⇄browser contract. Everything
+//! host-specific — capability implementations, storage, UI — lives in the JS
+//! host that drives it (`bindings/typescript/` is the generic driver;
+//! `examples/chrome-extension/` is one concrete host).
 
 #![forbid(unsafe_code)]
 

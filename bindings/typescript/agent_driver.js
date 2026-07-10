@@ -1,14 +1,16 @@
-import init, { HugrWasm } from "./pkg/hugr_wasm.js";
-import { invokeBrowserCapability } from "./chrome_api.js";
 import { callOpenAiCompatible } from "./openai_adapter.js";
-import { loadSettings, saveSession } from "./indexed_db.js";
 
-let wasmReady;
-
-export async function runBrowserAgent(question, hooks = {}) {
-  await loadWasm();
-  const settings = await loadSettings();
-  const session = new HugrWasm(JSON.stringify(toRustConfig(settings)));
+// The generic Hugr agent driver: it drives the WASM brain (submit/poll) and
+// performs IO through the injected `host`:
+//   host.loadWasm(): Promise<HugrWasm class>   — wasm-bindgen module, initialized
+//   host.invokeCapability(name, args): Promise — the capability dispatcher
+//   host.loadSettings(): Promise<settings>     — apiKey/baseUrl/model/limits
+//   host.saveSession(record): Promise          — session/trace persistence
+//   host.systemPrompt: string                  — the agent's system prompt
+export async function runAgent(question, host, hooks = {}) {
+  const HugrWasm = await host.loadWasm();
+  const settings = await host.loadSettings();
+  const session = new HugrWasm(JSON.stringify(toRustConfig(settings, host)));
   const traceId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const timeline = [];
@@ -29,7 +31,7 @@ export async function runBrowserAgent(question, hooks = {}) {
     };
     autosavePending = autosavePending
       .catch(() => {})
-      .then(() => saveSession(record))
+      .then(() => host.saveSession(record))
       .catch((error) => hooks.onAutosaveError?.(error));
     return autosavePending;
   };
@@ -44,7 +46,7 @@ export async function runBrowserAgent(question, hooks = {}) {
   const commands = JSON.parse(session.submit_user_input(question, Date.now()));
   await autosave();
   try {
-    const done = await driveCommands(session, commands, settings, hooks, push, {
+    const done = await driveCommands(session, commands, settings, host, hooks, push, {
       onText: (text) => {
         streamedText += text;
         if (streamedText.length % 500 < text.length) autosave();
@@ -93,14 +95,7 @@ export async function runBrowserAgent(question, hooks = {}) {
   }
 }
 
-async function loadWasm() {
-  if (!wasmReady) {
-    wasmReady = init();
-  }
-  await wasmReady;
-}
-
-async function driveCommands(session, initialCommands, settings, hooks, push, persistence) {
+async function driveCommands(session, initialCommands, settings, host, hooks, push, persistence) {
   const queue = [...initialCommands];
   let done = null;
   let steps = 0;
@@ -172,7 +167,7 @@ async function driveCommands(session, initialCommands, settings, hooks, push, pe
           detail: { op: payload.op, args: payload.args || {} }
         });
         try {
-          const result = await abortable(invokeBrowserCapability(payload.name, payload.args || {}), hooks.signal);
+          const result = await abortable(host.invokeCapability(payload.name, payload.args || {}), hooks.signal);
           push?.({
             type: "tool_done",
             label: `${payload.name} finished`,
@@ -252,13 +247,15 @@ function tagged(value) {
   return entries[0];
 }
 
-function toRustConfig(settings) {
+function toRustConfig(settings, host) {
+  const defaults = host.defaults || {};
   return {
-    base_url: settings.baseUrl || "https://router.huggingface.co/v1",
-    model: settings.model || "google/gemma-4-31B-it:cerebras",
+    base_url: settings.baseUrl || defaults.baseUrl || "https://router.huggingface.co/v1",
+    model: settings.model || defaults.model || "google/gemma-4-31B-it:cerebras",
     api_key: settings.apiKey || "",
-    max_model_calls: Number(settings.maxModelCalls || 20),
-    max_cost_micro_usd: Number(settings.maxCostMicroUsd || 50000)
+    max_model_calls: Number(settings.maxModelCalls || defaults.maxModelCalls || 20),
+    max_cost_micro_usd: Number(settings.maxCostMicroUsd || defaults.maxCostMicroUsd || 50000),
+    system_prompt: host.systemPrompt || ""
   };
 }
 

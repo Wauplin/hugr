@@ -149,7 +149,7 @@ async function waitForPageSettled(tabId, settleMs = 650, timeoutMs = 2500) {
 }
 
 async function downloadToLocalStore(url, filename) {
-  const { saveLocalFile } = await import("./indexed_db.js");
+  const { saveLocalFile } = await import("./vendor/indexed_db.js");
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`download failed with ${response.status}`);
@@ -170,25 +170,25 @@ async function downloadToLocalStore(url, filename) {
 }
 
 async function listLocalFiles() {
-  const { listFiles } = await import("./indexed_db.js");
+  const { listFiles } = await import("./vendor/indexed_db.js");
   return (await listFiles()).map(withoutBlob);
 }
 
 async function readLocalFileMetadata(fileId) {
-  const { getLocalFile } = await import("./indexed_db.js");
+  const { getLocalFile } = await import("./vendor/indexed_db.js");
   const file = await getLocalFile(fileId);
   if (!file) throw new Error(`unknown file_id: ${fileId}`);
   return withoutBlob(file);
 }
 
 async function deleteLocalFile(fileId) {
-  const { deleteLocalFile: remove } = await import("./indexed_db.js");
+  const { deleteLocalFile: remove } = await import("./vendor/indexed_db.js");
   await remove(fileId);
   return { deleted: true };
 }
 
 async function uploadLocalFile(args) {
-  const { getLocalFile } = await import("./indexed_db.js");
+  const { getLocalFile } = await import("./vendor/indexed_db.js");
   const file = await getLocalFile(args.file_id);
   if (!file) throw new Error(`unknown file_id: ${args.file_id}`);
   const dataUrl = await blobToDataUrl(file.blob);

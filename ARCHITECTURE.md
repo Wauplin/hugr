@@ -31,7 +31,7 @@ Goals:
 
 Non-goals:
 
-- **A general-purpose coding or browser agent as the core abstraction.** Hugr defines the *callee* side; generalists are usually orchestrators that call Hugr agents. Edge host crates may still package a concrete generalist experience when the runtime boundary stays clean — `hugr-wasm` is the browser-host example.
+- **A general-purpose coding or browser agent as the core abstraction.** Hugr defines the *callee* side; generalists are usually orchestrators that call Hugr agents. Edge hosts may still package a concrete generalist experience when the runtime boundary stays clean — the Chrome-extension example (`examples/chrome-extension`) is the browser-host example.
 - **A hosted runtime or marketplace.** Hugr ships artifacts; where they run is your business.
 - **A universal agent-to-agent wire protocol.** MCP is the adapter today; others (A2A) can be added at the edge if demanded, never as foundations.
 - **Multimodal-first.** Text-in/text-out with blob attachments is the contract; images/audio ride as blobs a specific agent's tools may interpret.
@@ -202,11 +202,16 @@ examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml + S
                         #   typed response contract, run/buildable by hugr-toolkit
 examples/hugr-weather/  # the self-contained beginner agent; single source of truth for the
                         #   `hugr new --template weather` scaffold (embedded at compile time).
-crates/hugr-wasm/       # Chrome-extension host scaffold: WASM-facing browser agent package,
-                        #   Chrome capabilities, side-panel UI, IndexedDB-backed trace/file stores.
+crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS hosts: submit/poll
+                        #   over JSON plus the browser tool schemas. No Chrome APIs, nothing baked in.
+bindings/typescript/    # generic JS host layer: agent driver (injected capability dispatcher),
+                        #   OpenAI-compatible fetch adapter, IndexedDB stores. Grows into the typed
+                        #   TypeScript runtime API.
+examples/chrome-extension/ # a concrete browser host: chrome.* capability dispatcher, content
+                        #   script, side-panel UI, MV3 manifest; vendors the generic JS at build time.
 ```
 
-Dependency rules: **`hugr-core` depends on nothing environmental** (verify with `cargo tree -p hugr-core`). `hugr-replay` may use `std::fs` but consumes `hugr-core` as pure data. The native layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Browser-specific behavior lives in `hugr-wasm`: Chrome APIs, IndexedDB, extension UI, and browser tool execution never enter the core or native host crates. Nothing reaches into `hugr-core` internals — they are all hosts.
+Dependency rules: **`hugr-core` depends on nothing environmental** (verify with `cargo tree -p hugr-core`). `hugr-replay` may use `std::fs` but consumes `hugr-core` as pure data. The native layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`; `hugr-toolkit` on `hugr-agent`. Browser-specific behavior lives in JS hosts (`bindings/typescript` + `examples/chrome-extension`): Chrome APIs, IndexedDB, extension UI, and browser tool execution never enter the core or native host crates — `crates/hugr-wasm` is only a JSON-in/JSON-out binding around the brain. Nothing reaches into `hugr-core` internals — they are all hosts.
 
 ### 10. Standards positioning
 
@@ -419,7 +424,7 @@ Assumptions and non-goals: the manifest is trusted (a grant's scope is authored 
 - **Trace garbage collection.** Fork trees accumulate; pruning policy is undecided (delete by hand for now).
 - **Concurrent asks on one agent.** Default: each ask is an independent session/process (traces make this safe); a serving mode with a session pool is future work.
 - **Storage backends.** Scratchpad, traces, and blobs assume a local filesystem today; the store boundaries are narrow enough to swap (a database, object storage) when a real need appears.
-- **Browser packaging.** `hugr-wasm` establishes the browser-host direction, but the exact build pipeline for bundling Rust WASM, extension JavaScript, and typed browser storage adapters is still open.
+- **Browser packaging.** The split is done (generic `hugr-wasm` bindings + `bindings/typescript` + the Chrome-extension example with a vendor/pkg build script); what remains open is typed TS packaging and store-signed distribution.
 
 ### 24. Glossary
 

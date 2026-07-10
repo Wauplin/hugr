@@ -26,10 +26,12 @@ impl HugrWasm {
                 .map_err(|err| JsValue::from_str(&format!("invalid config json: {err}")))?,
             _ => BrowserAgentConfig::default(),
         };
-        let policy = StaticPolicy::new()
+        let mut policy = StaticPolicy::new()
             .with_model(ModelSelector::named("default"))
-            .with_tools(browser_tool_schemas())
-            .with_system_prompt(include_str!("../SYSTEM.md"));
+            .with_tools(browser_tool_schemas());
+        if !config.system_prompt.is_empty() {
+            policy = policy.with_system_prompt(config.system_prompt.clone());
+        }
         Ok(HugrWasm {
             config,
             brain: Brain::new(Box::new(policy)),
@@ -51,7 +53,7 @@ impl HugrWasm {
     }
 
     pub fn system_prompt(&self) -> String {
-        include_str!("../SYSTEM.md").to_string()
+        self.config.system_prompt.clone()
     }
 
     pub fn submit_user_input(&mut self, text: String, now_ms: f64) -> Result<String, JsValue> {
