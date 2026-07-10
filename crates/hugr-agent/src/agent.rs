@@ -13,12 +13,17 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use hugr_core::{LogEntry, ModelSelector, Record, SamplingParams, ToolSchema};
+use hugr_core::{
+    DoneReason, LogEntry, ModelSelector, OpId, OutputEvent, Record, SamplingParams, ToolSchema,
+    Usage,
+};
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter};
 use hugr_replay::{BlobStore, Trace};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 use crate::agent_tool::{AgentTool, AgentToolSpec};
 use crate::blobs::{self, BlobBackend, BlobError, FsBlobStore};
@@ -39,6 +44,46 @@ pub struct StorageOverrides {
     pub blobs: Arc<dyn BlobBackend>,
     pub scratch: Arc<dyn ScratchBackend>,
     pub scratch_scope: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    AskStarted {
+        trace_parent: Option<TraceId>,
+    },
+    ModelStarted {
+        op: OpId,
+        tier: String,
+    },
+    TextDelta {
+        op: OpId,
+        text: String,
+    },
+    ModelEnded {
+        op: OpId,
+        usage: Usage,
+    },
+    ToolStarted {
+        op: OpId,
+        name: String,
+        args: Value,
+    },
+    ToolEnded {
+        op: OpId,
+        name: String,
+        is_error: bool,
+        result: Value,
+    },
+    Notice {
+        message: String,
+    },
+    Done {
+        reason: DoneReason,
+    },
+    AnswerReady {
+        answer: Box<Answer>,
+    },
 }
 
 impl std::fmt::Debug for StorageOverrides {
@@ -101,6 +146,34 @@ pub struct Agent {
     pub agent_tools: Vec<AgentToolSpec>,
     fs_trace_store: Option<TraceStore>,
     fs_blob_store: Option<FsBlobStore>,
+}
+
+impl Clone for Agent {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            description: self.description.clone(),
+            traces: self.traces.clone(),
+            system_prompt: self.system_prompt.clone(),
+            models: self.models.clone(),
+            default_model: self.default_model.clone(),
+            capabilities: self.capabilities.clone(),
+            sampling: self.sampling.clone(),
+            clock: self.clock.clone(),
+            scratch: self.scratch.clone(),
+            scratch_scope: self.scratch_scope.clone(),
+            blobs: self.blobs.clone(),
+            pricing: self.pricing.clone(),
+            limits: self.limits.clone(),
+            response_contract: self.response_contract.clone(),
+            ask_hooks: self.ask_hooks.clone(),
+            answer_hooks: self.answer_hooks.clone(),
+            agent_tools: self.agent_tools.clone(),
+            fs_trace_store: self.fs_trace_store.clone(),
+            fs_blob_store: self.fs_blob_store.clone(),
+        }
+    }
 }
 
 impl Agent {
@@ -230,7 +303,48 @@ impl Agent {
     }
 
     /// Run one ask to completion. See the module docs for the fresh-vs-resume split and the error discipline.
-    pub async fn ask(&self, mut ask: Ask) -> Result<Answer, AskError> {
+    pub async fn ask(&self, ask: Ask) -> Result<Answer, AskError> {
+        self.ask_with_frontend(ask, Box::new(SilentFrontend)).await
+    }
+
+    pub fn ask_events(
+        &self,
+        ask: Ask,
+    ) -> (
+        UnboundedReceiver<AgentEvent>,
+        JoinHandle<Result<Answer, AskError>>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let agent = self.clone();
+        let handle = tokio::spawn(async move {
+            let _ = tx.send(AgentEvent::AskStarted {
+                trace_parent: ask.trace_id.clone(),
+            });
+            let result = agent
+                .ask_with_frontend(ask, Box::new(EventFrontend { tx: tx.clone() }))
+                .await;
+            match &result {
+                Ok(answer) => {
+                    let _ = tx.send(AgentEvent::AnswerReady {
+                        answer: Box::new(answer.clone()),
+                    });
+                }
+                Err(err) => {
+                    let _ = tx.send(AgentEvent::Notice {
+                        message: err.to_string(),
+                    });
+                }
+            }
+            result
+        });
+        (rx, handle)
+    }
+
+    async fn ask_with_frontend(
+        &self,
+        mut ask: Ask,
+        frontend: Box<dyn Frontend>,
+    ) -> Result<Answer, AskError> {
         let started = Instant::now();
         for hook in &self.ask_hooks {
             hook.apply(&mut ask);
@@ -238,9 +352,7 @@ impl Agent {
         let parent = ask.trace_id.clone();
 
         // Recording is always on: the trace *is* the product here.
-        let mut builder = Engine::builder()
-            .record(true)
-            .frontend(Box::new(SilentFrontend));
+        let mut builder = Engine::builder().record(true).frontend(frontend);
         // Counting/cost limits wrap each model adapter so a call over budget is refused (and folded as an ordinary `ModelError`); the wall-clock timeout wraps the turn below. Both surface as an error *answer* with a persisted trace.
         let limit_state = LimitState::new(self.limits.clone(), self.pricing.clone());
         let wrap = limit_state.needs_adapter_wrap();
@@ -881,3 +993,71 @@ fn selector_name(selector: &ModelSelector) -> String {
 struct SilentFrontend;
 
 impl Frontend for SilentFrontend {}
+
+struct EventFrontend {
+    tx: UnboundedSender<AgentEvent>,
+}
+
+impl EventFrontend {
+    fn send(&self, event: AgentEvent) {
+        let _ = self.tx.send(event);
+    }
+}
+
+impl Frontend for EventFrontend {
+    fn on_output(&mut self, event: &OutputEvent) {
+        match event {
+            OutputEvent::ModelText { op, text } => self.send(AgentEvent::TextDelta {
+                op: *op,
+                text: text.clone(),
+            }),
+            OutputEvent::Notice(message) => self.send(AgentEvent::Notice {
+                message: message.clone(),
+            }),
+            _ => {}
+        }
+    }
+
+    fn on_notice(&mut self, message: &str) {
+        self.send(AgentEvent::Notice {
+            message: message.to_string(),
+        });
+    }
+
+    fn on_model_start(&mut self, op: OpId, selector: &ModelSelector) {
+        self.send(AgentEvent::ModelStarted {
+            op,
+            tier: selector.0.clone(),
+        });
+    }
+
+    fn on_model_end(&mut self, op: OpId, usage: &Usage) {
+        self.send(AgentEvent::ModelEnded {
+            op,
+            usage: usage.clone(),
+        });
+    }
+
+    fn on_tool_start(&mut self, op: OpId, name: &str, args: &Value) {
+        self.send(AgentEvent::ToolStarted {
+            op,
+            name: name.to_string(),
+            args: args.clone(),
+        });
+    }
+
+    fn on_tool_end(&mut self, op: OpId, name: &str, result: &Value, is_error: bool) {
+        self.send(AgentEvent::ToolEnded {
+            op,
+            name: name.to_string(),
+            is_error,
+            result: result.clone(),
+        });
+    }
+
+    fn on_done(&mut self, reason: &DoneReason) {
+        self.send(AgentEvent::Done {
+            reason: reason.clone(),
+        });
+    }
+}

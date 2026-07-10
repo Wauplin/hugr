@@ -27,8 +27,8 @@ mod scratch;
 mod store;
 
 pub use agent::{
-    Agent, AgentCard, AgentLimits, AnswerHook, AskError, AskHook, ModelTierCard, Pricing,
-    ResponseContract, StorageOverrides, TierPrice, ToolCard,
+    Agent, AgentCard, AgentEvent, AgentLimits, AnswerHook, AskError, AskHook, ModelTierCard,
+    Pricing, ResponseContract, StorageOverrides, TierPrice, ToolCard,
 };
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
 pub use blobs::{BlobBackend, BlobError, FsBlobStore, MemBlobStore};

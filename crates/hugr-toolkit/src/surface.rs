@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Arg, ArgAction, Command};
-use hugr_agent::{Agent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId};
+use hugr_agent::{
+    Agent, AgentEvent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId,
+};
 use serde_json::json;
 
 use crate::bundle;
@@ -41,6 +43,7 @@ pub struct SurfaceArgs {
     question: Option<String>,
     trace: Option<String>,
     json: bool,
+    stream: bool,
     blobs: Vec<PathBuf>,
     describe: bool,
     config: bool,
@@ -163,6 +166,7 @@ where
                 &args.blobs,
                 started,
                 pretty,
+                args.stream,
             )
             .await
         }
@@ -197,6 +201,7 @@ where
         question: matches.get_one::<String>("question").cloned(),
         trace: matches.get_one::<String>("trace").cloned(),
         json: matches.get_flag("json"),
+        stream: matches.get_flag("stream"),
         blobs: matches
             .get_many::<PathBuf>("blob")
             .map(|paths| paths.cloned().collect())
@@ -237,6 +242,12 @@ fn surface_command(def: &AgentDefinition) -> Command {
                 .value_name("PATH")
                 .value_parser(clap::value_parser!(PathBuf))
                 .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("stream")
+                .long("stream")
+                .help("Emit one JSON event per line, followed by the final Answer JSON line.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("describe")
@@ -322,6 +333,7 @@ pub async fn run_ask(
     blob_paths: &[PathBuf],
     started: Instant,
     pretty: bool,
+    stream: bool,
 ) -> i32 {
     let Some(question) = question else {
         return print_answer(
@@ -348,9 +360,24 @@ pub async fn run_ask(
         ..Ask::default()
     };
 
-    match agent.ask(ask).await {
-        Ok(answer) => print_answer(&answer, pretty),
-        Err(err) => print_answer(&error_answer(err.to_string(), started), pretty),
+    if stream {
+        let (mut events, handle) = agent.ask_events(ask);
+        while let Some(event) = events.recv().await {
+            if !matches!(event, AgentEvent::AnswerReady { .. }) {
+                print_json_line(&event);
+            }
+        }
+        match handle.await {
+            Ok(Ok(answer)) => print_json_line(&answer),
+            Ok(Err(err)) => print_json_line(&error_answer(err.to_string(), started)),
+            Err(err) => print_json_line(&error_answer(err.to_string(), started)),
+        }
+        0
+    } else {
+        match agent.ask(ask).await {
+            Ok(answer) => print_answer(&answer, pretty),
+            Err(err) => print_answer(&error_answer(err.to_string(), started), pretty),
+        }
     }
 }
 
@@ -618,6 +645,13 @@ fn print_json_or_die<T: serde::Serialize>(value: &T, pretty: bool) -> i32 {
             eprintln!("error: serializing output: {err}");
             1
         }
+    }
+}
+
+fn print_json_line<T: serde::Serialize>(value: &T) {
+    match serde_json::to_string(value) {
+        Ok(json) => println!("{json}"),
+        Err(err) => eprintln!("error: serializing stream event: {err}"),
     }
 }
 

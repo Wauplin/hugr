@@ -137,7 +137,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: engine round-trip with a custom test policy; replay/verify of a trace recorded under a non-static policy.
 - Invariant check: policies remain pure (`project_context` must not do IO — document loudly on the registry); the registry is data + fn pointers, no environment.
 
-### 1.4 `[ ]` Agent event-stream API (prerequisite for 3.1, 3.2; gives CLI streaming for free) — M
+### 1.4 `[x]` Agent event-stream API (prerequisite for 3.1, 3.2; gives CLI streaming for free) — M
 
 - Why: idea 13 wants `async for event in agent.run()`. Today the only observation seams are the `Frontend` trait (`hugr-host/src/frontend.rs:14-43`, callbacks, no stream) and `EventSender` (injection only). A first-class event stream in `hugr-agent` serves Python, TS, and a CLI `--stream` mode with one mechanism.
 - Design: `Agent::ask_events(ask) -> (impl Stream<Item = AgentEvent>, JoinHandle<Result<Answer, AskError>>)` implemented with a channel-backed `Frontend`; `AgentEvent` is a host-layer enum (serializable, `#[serde(tag = "type")]`): `AskStarted { trace_parent }`, `ModelStarted { op, tier }`, `TextDelta { op, text }`, `ModelEnded { op, usage }`, `ToolStarted { op, name, args }`, `ToolEnded { op, name, is_error }`, `Notice`, `LimitTripped`, `Done`, `AnswerReady { answer }`. Payload details ride opaque `Value` fields — the enum only types what surfaces branch on (render vs finish), mirroring the narrow-waist rule at the host level.
