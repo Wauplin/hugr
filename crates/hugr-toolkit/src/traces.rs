@@ -2,7 +2,7 @@
 //!
 //! The lineage renderer is pure over a `Vec<TraceHead>`, so it is unit-testable without touching disk.
 
-use hugr_agent::TraceHead;
+use hugr_agent::{TraceHead, TraceListing};
 
 /// Render the lineage forest of a set of trace heads as an indented tree.
 /// Roots are traces whose `depends_on` is absent (or points outside this set);
@@ -35,6 +35,32 @@ pub fn render_lineage(heads: &[TraceHead]) -> String {
     out.trim_end().to_string()
 }
 
+pub fn render_lineage_with_feedback(heads: &[TraceListing]) -> String {
+    if heads.is_empty() {
+        return "(no traces)".to_string();
+    }
+    let ids: std::collections::BTreeSet<&str> = heads.iter().map(|h| h.trace_id.as_str()).collect();
+
+    let mut children: std::collections::BTreeMap<&str, Vec<&TraceListing>> =
+        std::collections::BTreeMap::new();
+    let mut roots: Vec<&TraceListing> = Vec::new();
+    for head in heads {
+        match &head.depends_on {
+            Some(parent) if ids.contains(parent.as_str()) => {
+                children.entry(parent.as_str()).or_default().push(head);
+            }
+            _ => roots.push(head),
+        }
+    }
+    roots.sort_by(|a, b| a.trace_id.as_str().cmp(b.trace_id.as_str()));
+
+    let mut out = String::new();
+    for root in roots {
+        render_node_with_feedback(root, &children, 0, &mut out);
+    }
+    out.trim_end().to_string()
+}
+
 fn render_node(
     head: &TraceHead,
     children: &std::collections::BTreeMap<&str, Vec<&TraceHead>>,
@@ -54,6 +80,30 @@ fn render_node(
         kids.sort_by(|a, b| a.trace_id.as_str().cmp(b.trace_id.as_str()));
         for kid in kids {
             render_node(kid, children, depth + 1, out);
+        }
+    }
+}
+
+fn render_node_with_feedback(
+    head: &TraceListing,
+    children: &std::collections::BTreeMap<&str, Vec<&TraceListing>>,
+    depth: usize,
+    out: &mut String,
+) {
+    let indent = "  ".repeat(depth);
+    let bullet = if depth == 0 { "•" } else { "└─" };
+    out.push_str(&format!(
+        "{indent}{bullet} {id} [{status}] feedback={feedback} {question}\n",
+        id = head.trace_id.as_str(),
+        status = head.status,
+        feedback = head.feedback_count,
+        question = truncate(&head.question, 60),
+    ));
+    if let Some(kids) = children.get(head.trace_id.as_str()) {
+        let mut kids = kids.clone();
+        kids.sort_by(|a, b| a.trace_id.as_str().cmp(b.trace_id.as_str()));
+        for kid in kids {
+            render_node_with_feedback(kid, children, depth + 1, out);
         }
     }
 }
@@ -83,6 +133,15 @@ mod tests {
             question,
             "success",
         )
+    }
+
+    fn listing(
+        id: &str,
+        parent: Option<&str>,
+        question: &str,
+        feedback_count: u64,
+    ) -> TraceListing {
+        TraceListing::new(head(id, parent, question), feedback_count)
     }
 
     #[test]
@@ -124,5 +183,11 @@ mod tests {
         let heads = vec![head("child", Some("missing-parent"), "q")];
         let tree = render_lineage(&heads);
         assert!(tree.starts_with("• child"), "{tree}");
+    }
+
+    #[test]
+    fn feedback_counts_render_in_lineage() {
+        let tree = render_lineage_with_feedback(&[listing("root", None, "start", 2)]);
+        assert!(tree.contains("feedback=2"), "{tree}");
     }
 }

@@ -7,14 +7,15 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
-use hugr_agent::TraceId;
+use hugr_agent::{StatsOptions, TraceId};
 use hugr_toolkit::AgentDefinition;
 use hugr_toolkit::build::{BuildOptions, build as run_build};
 use hugr_toolkit::build_python::build_python;
-use hugr_toolkit::runtime::trace_store_for;
+use hugr_toolkit::runtime::{build_agent, trace_store_for};
 use hugr_toolkit::scaffold::{Template, write_scaffold};
+use hugr_toolkit::stats::render_stats;
 use hugr_toolkit::surface::{error_answer, print_answer, run_definition_args};
-use hugr_toolkit::traces::render_lineage;
+use hugr_toolkit::traces::render_lineage_with_feedback;
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +38,8 @@ enum Command {
     Build(BuildArgs),
     /// List an agent's stored traces as a lineage tree.
     Traces(TracesArgs),
+    /// Aggregate an agent's stored trace analytics.
+    Stats(StatsArgs),
     /// Verify a stored trace replays bit-for-bit.
     Verify(TraceArgs),
     /// Replay a stored trace (optionally step-by-step).
@@ -53,6 +56,21 @@ struct AgentArg {
 struct TracesArgs {
     /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
     agent_dir: PathBuf,
+}
+
+#[derive(Parser)]
+struct StatsArgs {
+    /// Path to the agent crate folder (containing Cargo.toml and hugr.toml).
+    agent_dir: PathBuf,
+    /// Include traces at or after this trace's creation point.
+    #[arg(long)]
+    since: Option<String>,
+    /// Report one trace only.
+    #[arg(long)]
+    trace: Option<String>,
+    /// Emit JSON instead of a compact table.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Parser)]
@@ -118,7 +136,8 @@ async fn main() {
         Command::Run(args) => run(args).await,
         Command::New(args) => new(args),
         Command::Build(args) => build(args),
-        Command::Traces(args) => traces(args),
+        Command::Traces(args) => traces(args).await,
+        Command::Stats(args) => stats(args).await,
         Command::Verify(args) => verify(args),
         Command::Replay(args) => replay(args),
     }
@@ -137,15 +156,77 @@ fn load_store(agent_dir: &std::path::Path) -> hugr_agent::TraceStore {
     }
 }
 
-fn traces(args: TracesArgs) {
-    let store = load_store(&args.agent_dir);
+async fn traces(args: TracesArgs) {
+    let def = match AgentDefinition::load(&args.agent_dir) {
+        Ok(def) => def,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    };
+    let (agent, warnings) = match build_agent(&def).await {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    };
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
 
-    match store.list() {
-        Ok(heads) => println!("{}", render_lineage(&heads)),
+    match agent.traces_with_feedback().await {
+        Ok(heads) => println!("{}", render_lineage_with_feedback(&heads)),
         Err(err) => {
             eprintln!("error: listing traces: {err}");
             std::process::exit(1);
         }
+    }
+}
+
+async fn stats(args: StatsArgs) {
+    let def = match AgentDefinition::load(&args.agent_dir) {
+        Ok(def) => def,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    };
+    let (agent, warnings) = match build_agent(&def).await {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    };
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+
+    let mut options = StatsOptions::new();
+    if let Some(trace_id) = args.since {
+        options = options.since(TraceId::new(trace_id));
+    }
+    if let Some(trace_id) = args.trace {
+        options = options.trace(TraceId::new(trace_id));
+    }
+    let stats = match agent.stats(options).await {
+        Ok(stats) => stats,
+        Err(err) => {
+            eprintln!("error: computing stats: {err}");
+            std::process::exit(1);
+        }
+    };
+    if args.json {
+        match serde_json::to_string_pretty(&stats) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("error: serializing stats: {err}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        println!("{}", render_stats(&stats));
     }
 }
 

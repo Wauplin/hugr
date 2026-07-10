@@ -202,7 +202,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: CLI + MCP + capability round-trips; append-only property; unknown trace_id → error answer.
 - Depends on: 1.1 (home layout). Real-time feedback consumption: Won't-do W1.
 
-### 2.4 `[ ]` Detailed analytics (idea 5) — M
+### 2.4 `[x]` Detailed analytics (idea 5) — M
 
 - Why: every number already exists in traces — `Record::OpEnded` carries `OpMeta { started_at, ended_at, model: Option<selector>, usage }` per op, and child-agent answers (with their own `AnswerMeta`) are recorded as `agent_<name>` tool results — but nothing aggregates them.
 - Design: a pure fold over a `TraceBackend`, in `hugr-agent` (`analytics.rs`), exposed two ways: `hugr stats <agent-dir> [--since <trace_id>] [--json]` and built-binary `<agent> --stats`. Computed per agent (and per trace with `--trace <id>`):

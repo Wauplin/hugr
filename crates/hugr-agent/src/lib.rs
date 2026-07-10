@@ -20,6 +20,7 @@
 
 mod agent;
 mod agent_tool;
+mod analytics;
 mod blobs;
 mod contract;
 mod feedback;
@@ -33,6 +34,10 @@ pub use agent::{
     Pricing, ResponseContract, StorageOverrides, TierPrice, ToolCard,
 };
 pub use agent_tool::{AgentToolResolver, AgentToolSpec, depth_exceeded_resolver};
+pub use analytics::{
+    AgentStats, AnalyticsError, ChildAgentStats, DurationStats, ModelStats, StatsOptions,
+    StatsTotals, ToolStats, TraceListing, TraceStats, collect_stats, list_traces_with_feedback,
+};
 pub use blobs::{BlobBackend, BlobError, FsBlobStore, MemBlobStore};
 pub use contract::{
     Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, STATUS_SUCCESS, TraceId,

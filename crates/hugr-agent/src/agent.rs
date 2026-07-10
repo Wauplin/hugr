@@ -26,6 +26,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use crate::agent_tool::{AgentTool, AgentToolSpec};
+use crate::analytics::{
+    AgentStats, AnalyticsError, StatsOptions, TraceListing, collect_stats,
+    list_traces_with_feedback,
+};
 use crate::blobs::{self, BlobBackend, BlobError, FsBlobStore};
 use crate::contract::{Answer, AnswerMeta, Ask, STATUS_ERROR, STATUS_SUCCESS, TraceId};
 use crate::feedback::{
@@ -296,6 +300,16 @@ impl Agent {
         self.feedback.list(trace_id).await
     }
 
+    pub async fn stats(&self, options: StatsOptions) -> Result<AgentStats, AnalyticsError> {
+        collect_stats(
+            self.traces.clone(),
+            self.feedback.clone(),
+            &self.pricing,
+            options,
+        )
+        .await
+    }
+
     /// Describe this agent's public card: identity, tools + privileges, model tiers, pricing, and declared limits.
     pub fn describe(&self) -> AgentCard {
         let mut tools: Vec<ToolCard> = scratch_tool_schemas()
@@ -356,6 +370,10 @@ impl Agent {
     /// List stored trace headers for this agent — the same cheap header-only read as [`TraceStore::list`].
     pub async fn traces(&self) -> Result<Vec<TraceHead>, StoreError> {
         self.traces.list().await
+    }
+
+    pub async fn traces_with_feedback(&self) -> Result<Vec<TraceListing>, AnalyticsError> {
+        list_traces_with_feedback(self.traces.clone(), self.feedback.clone()).await
     }
 
     /// Run one ask to completion. See the module docs for the fresh-vs-resume split and the error discipline.

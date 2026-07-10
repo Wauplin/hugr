@@ -13,6 +13,7 @@ pub mod runtime;
 pub mod runtime_args;
 pub mod scaffold;
 pub mod schema_py;
+pub mod stats;
 pub mod surface;
 pub mod tools;
 pub mod traces;

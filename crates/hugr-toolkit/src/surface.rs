@@ -22,7 +22,8 @@ use std::time::Instant;
 
 use clap::{Arg, ArgAction, Command};
 use hugr_agent::{
-    Agent, AgentEvent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, TraceId,
+    Agent, AgentEvent, Answer, AnswerMeta, Ask, BlobHandle, BlobRef, STATUS_ERROR, StatsOptions,
+    TraceId,
 };
 use serde_json::json;
 
@@ -49,6 +50,7 @@ pub struct SurfaceArgs {
     describe: bool,
     config: bool,
     traces: bool,
+    stats: bool,
     feedback: Option<String>,
     feedback_payload: Option<String>,
     mcp_serve: bool,
@@ -61,6 +63,7 @@ enum Mode {
     Ask,
     Describe,
     Traces,
+    Stats,
     Feedback,
 }
 
@@ -119,6 +122,8 @@ where
         Mode::Describe
     } else if args.traces {
         Mode::Traces
+    } else if args.stats {
+        Mode::Stats
     } else if args.feedback.is_some() {
         Mode::Feedback
     } else {
@@ -157,13 +162,26 @@ where
 
     match mode {
         Mode::Describe => print_json_or_die(&agent.describe(), pretty),
-        Mode::Traces => match agent.traces().await {
+        Mode::Traces => match agent.traces_with_feedback().await {
             Ok(heads) => print_json_or_die(&heads, pretty),
             Err(err) => {
                 eprintln!("error: listing traces: {err}");
                 1
             }
         },
+        Mode::Stats => {
+            let mut options = StatsOptions::new();
+            if let Some(trace_id) = args.trace {
+                options = options.trace(TraceId::new(trace_id));
+            }
+            match agent.stats(options).await {
+                Ok(stats) => print_json_or_die(&stats, pretty),
+                Err(err) => {
+                    eprintln!("error: computing stats: {err}");
+                    1
+                }
+            }
+        }
         Mode::Feedback => {
             run_feedback(
                 &agent,
@@ -225,6 +243,7 @@ where
         describe: matches.get_flag("describe"),
         config: matches.get_flag("config"),
         traces: matches.get_flag("traces"),
+        stats: matches.get_flag("stats"),
         feedback: matches.get_one::<String>("feedback").cloned(),
         feedback_payload: matches.get_one::<String>("feedback-payload").cloned(),
         mcp_serve: matches.get_flag("mcp-serve"),
@@ -283,6 +302,12 @@ fn surface_command(def: &AgentDefinition) -> Command {
             Arg::new("traces")
                 .long("traces")
                 .help("Print the stored traces (header-only, with lineage).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("stats")
+                .long("stats")
+                .help("Print aggregate analytics for stored traces; combine with --trace for one trace.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -408,7 +433,7 @@ pub async fn run_ask(
     let Some(question) = question else {
         return print_answer(
             &error_answer(
-                "no question provided (use --describe/--config/--traces for the audit views)",
+                "no question provided (use --describe/--config/--traces/--stats for the audit views)",
                 started,
             ),
             pretty,
@@ -847,33 +872,37 @@ required = true
 
     #[tokio::test]
     async fn feedback_mode_appends_for_existing_trace() {
-        use hugr_agent::TraceHeader;
+        use std::sync::Arc;
 
-        let name = format!(
-            "feedback-cli-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let home = crate::runtime::agent_home_dir(&name);
-        let _ = std::fs::remove_dir_all(&home);
+        use hugr_agent::{
+            FeedbackBackend, MemBlobStore, MemFeedbackStore, MemScratch, MemTraceStore,
+            StorageOverrides, TraceBackend, TraceHeader,
+        };
 
         let def = AgentDefinition::parse(
-            &format!("[agent]\nname = {name:?}\n[models.medium]\nmodel = \"m\"\n"),
+            "[agent]\nname = \"feedback-cli\"\n[models.medium]\nmodel = \"m\"\n",
             "hugr.toml",
         )
         .unwrap();
-        let store = crate::runtime::trace_store_for(&def);
-        let trace_id = store
+        let traces = Arc::new(MemTraceStore::new());
+        let feedback = Arc::new(MemFeedbackStore::new());
+        let trace_id = traces
             .put(
                 hugr_replay::Trace::new(Vec::new(), Vec::new(), Some(1)),
-                TraceHeader::new(&name, "0.0.0", "seed", "success"),
+                TraceHeader::new("feedback-cli", "0.0.0", "seed", "success"),
             )
+            .await
             .unwrap();
+        let options = RuntimeOptions::new().with_storage(
+            StorageOverrides::new(
+                traces.clone(),
+                Arc::new(MemBlobStore::new()),
+                Arc::new(MemScratch::new()),
+            )
+            .with_feedback(feedback.clone()),
+        );
 
-        let code = run_definition_args(
+        let code = run_definition_args_with_options(
             def.clone(),
             [
                 "--feedback".to_string(),
@@ -883,15 +912,13 @@ required = true
                 "--json".to_string(),
             ],
             Instant::now(),
+            options,
         )
         .await;
         assert_eq!(code, 0);
 
-        let (agent, _) = crate::runtime::build_agent(&def).await.unwrap();
-        let entries = agent.feedback_for(&trace_id).await.unwrap();
+        let entries = feedback.list(&trace_id).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].payload["score"], 1);
-
-        let _ = std::fs::remove_dir_all(&home);
     }
 }
