@@ -277,7 +277,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: `traces_read` jail + pagination tests over fixtures; example smoke test with fake adapter.
 - Depends on: 2.3, 2.4 (fixtures/shape), 1.1.
 
-### 4.2 `[ ]` Tutorials (idea 15) — L
+### 4.2 `[~]` Tutorials (idea 15) — L
 
 - Why: didactic, narrative on-ramps per surface — the README/ARCHITECTURE are reference, not teaching.
 - Location: `docs/tutorials/` (the empty `docs/` dir finally earns its keep); each tutorial is standalone, tested-where-possible, single-line-markdown convention.

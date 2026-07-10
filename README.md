@@ -12,7 +12,7 @@ A **subagent** is, at its essence, a small Rust crate plus a system prompt and a
 
 The reference agent, [`hugr-docs`](examples/hugr-docs/), is a checked-in docs-Q&A agent crate: `hugr.toml` + `SYSTEM.md` live beside the Rust response contract. `hugr-toolkit` does not depend on it. The generic `hugr run` path still works for typed agents by compiling a cached dev shim that links the current agent crate.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) (design, architecture, threat model — the spec) for more details.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) (design, architecture, threat model — the spec) for more details, or start with the [tutorials](docs/tutorials/README.md) for a guided tour of every surface.
 
 ## Quickstart
 

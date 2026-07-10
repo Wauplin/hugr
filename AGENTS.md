@@ -6,7 +6,7 @@ Guidance for working in the Hugr repository.
 
 Hugr is a **toolkit for building tiny, self-contained, domain-specific subagents** — "build your subagent, ship it anywhere" — on a runtime-free, sans-IO Rust core. A subagent is a small Rust crate plus a system prompt and a set of tools with declared privileges; Hugr turns that agent crate folder into one standalone binary exposing the ask/answer contract (and an MCP server via `--mcp-serve`), with traces, forking, a scratchpad, blob exchange, and cost accounting built in.
 
-There is exactly one doc, keep it in sync with reality: `ARCHITECTURE.md` (design + architecture + threat model — **the spec**; read it before non-trivial changes).
+There is exactly one spec, keep it in sync with reality: `ARCHITECTURE.md` (design + architecture + threat model — **the spec**; read it before non-trivial changes). `docs/tutorials/` is teaching material: narrative on-ramps that must not restate the spec — they link to it instead. A behavior change is not done until the spec matches reality and any tutorial that demonstrates the changed behavior still works.
 
 ## The one rule that matters most
 
