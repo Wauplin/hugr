@@ -1,34 +1,19 @@
-//! # Replay & inspection (ARCHITECTURE §6.3)
+//! # Replay & inspection
 //!
-//! Replay is the whole point of the sans-IO design: because the brain is a pure
-//! fold over an ordered event stream, re-feeding a trace's recorded [`Event`]s
-//! into a *fresh* [`Brain`](hugr_core::Brain) reproduces every [`Command`] it
-//! ever emitted — **bit-for-bit**, with no IO. The recorded `log` is the *truth*
-//! a replay is checked against; `BrainState` is never stored, only rederived
-//! (ARCHITECTURE §12.1).
-//!
-//! This module is host-side and pure-of-environment: it drives `hugr-core` as
-//! pure data (`submit`/`poll`), touching no clock, socket, or model. That is why
-//! a trace recorded on a server replays identically in a browser or a test.
-//!
-//! Two entry points:
+//! Re-feeding a trace's recorded [`Event`]s into a *fresh*
+//! [`Brain`](hugr_core::Brain) reproduces every [`Command`] it ever emitted,
+//! with no IO.
 //!
 //! - [`replay`] re-feeds the events and returns the reconstructed commands + log.
-//! - [`verify`] does that and asserts the reconstructed log equals the recorded
-//!   one — the Phase 3 exit criterion (record a session, replay it bit-for-bit).
-//!
-//! [`Inspector`] wraps the same reconstruction so a debugger can **step through**
-//! the session one event at a time, watching the commands each event produced
-//! and the log entries it appended.
+//! - [`verify`] does that and asserts the reconstruction equals the recording.
+//! - [`Inspector`] wraps the same reconstruction so a debugger can step through
+//!   the session one event at a time.
 
 use hugr_core::{Brain, Command, Event, LogEntry, StaticPolicy, TurnPolicy, decode_policy};
 
 use crate::{Trace, TraceError};
 
 /// The result of replaying a trace's event stream through a fresh brain.
-///
-/// `commands` is the exact ordered sequence the brain emitted (the bit-for-bit
-/// reconstruction); `log` is the durable log rebuilt by folding the same events.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Replay {
@@ -40,12 +25,12 @@ pub struct Replay {
 
 /// Replay a trace through a fresh [`Brain`], reproducing the session.
 ///
-/// The brain's *strategy* lives in its [`TurnPolicy`], and the brain **branches**
-/// on some of the policy's pure decisions (`needs_permission`, `is_background`)
-/// — so reconstructing the exact command/log sequence requires the *same*
-/// policy, not just the recorded events. If the trace captured its policy
-/// ([`Trace::with_policy`]), this decodes it via [`decode_policy`]; otherwise it
-/// falls back to the default. Use [`replay_with_policy`] to supply a custom one.
+/// The brain branches on some of its [`TurnPolicy`]'s pure decisions
+/// (`needs_permission`, `is_background`), so reconstructing the exact
+/// command/log sequence requires the *same* policy, not just the recorded
+/// events. If the trace captured its policy ([`Trace::with_policy`]), this
+/// decodes it via [`decode_policy`]; otherwise it falls back to the default.
+/// Use [`replay_with_policy`] to supply a custom one.
 pub fn replay(trace: &Trace) -> Replay {
     replay_with_policy(trace, policy_from_trace(trace))
 }
@@ -54,10 +39,9 @@ pub fn replay(trace: &Trace) -> Replay {
 /// captured [`StaticPolicy`] config if present (via [`decode_policy`]), else
 /// the default.
 ///
-/// This is the policy a faithful replay (or **resume**, P3-4) must run under —
-/// the brain branches on the policy's pure decisions, so continuing a session
-/// requires the same policy the trace was recorded with. A trace with no
-/// captured policy (or one we can't decode) falls back to the default.
+/// This is the policy a faithful replay or resume must run under — the brain
+/// branches on the policy's pure decisions, so continuing a session requires
+/// the same policy the trace was recorded with.
 pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
     trace
         .policy
@@ -70,10 +54,9 @@ pub fn policy_from_trace(trace: &Trace) -> Box<dyn TurnPolicy> {
 }
 
 /// Fold an ordered event stream into `brain`, draining and returning every
-/// [`Command`] it emits — the pure, zero-IO equivalent of the host driver loop
-/// (ARCHITECTURE §2.3/§6.3). Both replay (which keeps the commands) and the
-/// host's resume path (which rebuilds state and discards them) drive a brain
-/// this way, so the loop lives here once.
+/// [`Command`] it emits. Both replay (which keeps the commands) and the host's
+/// resume path (which rebuilds state and discards them) drive a brain this
+/// way, so the loop lives here once.
 pub fn drive(brain: &mut Brain, events: &[Event]) -> Vec<Command> {
     let mut commands = Vec::new();
     for event in events {
@@ -97,28 +80,20 @@ pub fn replay_with_policy(trace: &Trace, policy: Box<dyn TurnPolicy>) -> Replay 
 }
 
 /// Replay a trace and assert the reconstruction is **byte-identical** to the
-/// recording — the Phase 3 exit criterion (record a real session, replay it
-/// bit-for-bit). Returns the [`Replay`] on success.
+/// recording. Returns the [`Replay`] on success.
 ///
 /// Two things are checked:
 ///
 /// - the reconstructed **command sequence** equals the trace's recorded
-///   [`commands`](Trace::commands), in order — this is what catches command-order
-///   nondeterminism (e.g. a `HashMap`-ordered cancel-all) that never reaches the
-///   log at all (§6.3);
-/// - the reconstructed **consolidated log** equals the recorded log (the durable
-///   truth), not the raw deltas (transport, never logged, §4.5).
+///   [`commands`](Trace::commands), in order — this catches command-order
+///   nondeterminism (e.g. a `HashMap`-ordered cancel-all) that never reaches
+///   the log at all;
+/// - the reconstructed **consolidated log** equals the recorded log.
 ///
 /// **Back-compat:** a trace whose `commands` is empty (an older recording made
-/// before the command sequence was captured — serde default) is checked
-/// log-only, exactly as before. Any non-empty `commands` is compared bit-for-bit.
-/// Either mismatch means the fold is no longer deterministic for this trace —
-/// exactly the regression replay exists to catch.
-///
-/// After the parent checks pass, every recorded **child session**
-/// ([`ChildTrace`], §13.3) is verified recursively the same way (re-seeded from
-/// its recorded fork prefix, under its own recorded policy); a failing child
-/// fails the whole verify with [`TraceError::ChildMismatch`] naming its op.
+/// before the command sequence was captured) is checked log-only. Either
+/// mismatch means the fold is no longer deterministic for this trace — exactly
+/// the regression replay exists to catch.
 pub fn verify(trace: &Trace) -> Result<Replay, TraceError> {
     verify_with_policy(trace, policy_from_trace(trace))
 }
@@ -135,11 +110,9 @@ pub fn verify_with_policy(
 
 /// Assert a reconstruction matches a trace's recorded commands and log.
 ///
-/// Compares the recorded command sequence bit-for-bit, in order — but only
-/// when the trace actually captured one. An empty `commands` means the trace
-/// predates command recording (serde default), so we fall back to the
-/// log-only check to keep verifying old traces (§6.3). Every `Command` is
-/// serde-serializable, so there is no non-recordable command to special-case.
+/// The command comparison only runs when the trace actually captured a
+/// sequence: an empty `commands` means the trace predates command recording,
+/// so we fall back to the log-only check to keep verifying old traces.
 fn check_replay(trace: &Trace, replay: &Replay) -> Result<(), TraceError> {
     if !trace.commands.is_empty() && replay.commands != trace.commands {
         let index = first_divergence(&trace.commands, &replay.commands);
@@ -183,14 +156,10 @@ pub struct Step {
     pub appended: Vec<LogEntry>,
 }
 
-/// A step-through debugger over a trace (ARCHITECTURE §6.3, "step through a real
-/// session deterministically"). Construct it from a [`Trace`], then call
-/// [`step`](Inspector::step) repeatedly: each call feeds the next recorded event
-/// into the same fresh brain and reports exactly what that event produced.
-///
-/// Host-side and pure: it drives `hugr-core` as data, so a front-end (the CLI's
-/// `--step` mode, a TUI, a notebook) can render the reconstruction live without
-/// any IO of its own.
+/// A step-through debugger over a trace. Construct it from a [`Trace`], then
+/// call [`step`](Inspector::step) repeatedly: each call feeds the next recorded
+/// event into the same fresh brain and reports exactly what that event
+/// produced.
 pub struct Inspector {
     brain: Brain,
     events: Vec<Event>,

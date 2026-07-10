@@ -1,26 +1,14 @@
-//! # Content-addressed blob store (ARCHITECTURE §3.3)
+//! # Content-addressed blob store
 //!
 //! Large tool outputs / inputs do not belong inline in the durable log — they
 //! would bloat every trace and every context projection. Instead the host
 //! stores them by **content hash** and the log/trace carries only a small
-//! [`BlobRef`] (`{ hash, len, media }`). This keeps the log small and context
-//! assembly cheap, and a [`Trace`](crate::Trace) ships with or without its blob
-//! bytes (skeleton vs full bundle, §12.1).
+//! [`BlobRef`] (`{ hash, len, media }`), so a [`Trace`](crate::Trace) can ship
+//! with or without its blob bytes.
 //!
-//! [`BlobStore`] is the **disk-backed** store for native hosts. It is plain
-//! `std::fs` IO living in this host-side persistence crate — `hugr-core` stays
-//! sans-IO and never sees it. The host wires it into an ordinary `Capability`
-//! (no privileged built-in, in `hugr-host`); the store itself is just
-//! `put`/`get`.
-//!
-//! ## Content addressing & dedup
-//!
-//! The key of a blob is the SHA-256 of its bytes, rendered as `"sha256:<hex>"`
-//! (the same shape the trace's [`BlobManifest`](crate::BlobManifest) already
-//! uses). Storing identical content twice therefore lands on the same path and
-//! is a no-op the second time — natural deduplication. A [`BlobRef`] produced by
-//! [`put`](BlobStore::put) round-trips through [`get`](BlobStore::get) to the
-//! exact original bytes, and a manifest of those refs rehydrates on load.
+//! The key of a blob is the SHA-256 of its bytes, rendered as `"sha256:<hex>"`.
+//! Storing identical content twice lands on the same path and is a no-op the
+//! second time — natural deduplication.
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +18,7 @@ use crate::{BlobRef, TraceError};
 
 /// A disk-backed, content-addressed blob store rooted at a configurable
 /// directory. The file name of a blob is its content hash, so the same bytes
-/// stored twice dedupe to one file (ARCHITECTURE §3.3).
+/// stored twice dedupe to one file.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct BlobStore {
@@ -50,8 +38,6 @@ impl BlobStore {
     }
 
     /// Compute the content address (`"sha256:<hex>"`) of `bytes`. Pure; no IO.
-    /// Storing the same content always yields this same hash — that is the
-    /// content-addressing / dedup property.
     pub fn hash(bytes: &[u8]) -> String {
         let digest = Sha256::digest(bytes);
         format!("sha256:{digest:x}")
@@ -66,10 +52,9 @@ impl BlobStore {
 
     /// Store `bytes` by content hash and return a [`BlobRef`] describing it.
     ///
-    /// Content-addressed: the same bytes always produce the same hash and path,
-    /// so a repeat `put` of identical content is deduped (it does not rewrite an
-    /// existing file). `media` is the caller-chosen media type (e.g.
-    /// `"text/plain"`, `"application/json"`) carried verbatim into the ref.
+    /// A repeat `put` of identical content is deduped (it does not rewrite an
+    /// existing file). `media` is the caller-chosen media type carried verbatim
+    /// into the ref.
     pub fn put(&self, bytes: &[u8], media: impl Into<String>) -> Result<BlobRef, TraceError> {
         let hash = Self::hash(bytes);
         let path = self.path_for(&hash);
@@ -85,7 +70,7 @@ impl BlobStore {
     }
 
     /// Fetch the bytes for a content hash, or [`TraceError::BlobNotFound`] if the
-    /// store has no such blob. Round-trips exactly the bytes that were `put`.
+    /// store has no such blob.
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, TraceError> {
         let path = self.path_for(hash);
         match std::fs::read(&path) {
@@ -113,7 +98,6 @@ mod tests {
         let root = TempDir::new("blobstore-roundtrip");
         let store = BlobStore::new(root.path());
 
-        // A "large" tool result (1 MiB).
         let payload = vec![0xABu8; 1024 * 1024];
         let blob = store.put(&payload, "application/octet-stream").unwrap();
 
@@ -134,11 +118,9 @@ mod tests {
         let b = store.put(b"identical bytes", "text/plain").unwrap();
         assert_eq!(a.hash, b.hash, "same content -> same hash");
 
-        // Exactly one file on disk for the deduped content.
         let count = std::fs::read_dir(root.path()).unwrap().count();
         assert_eq!(count, 1, "identical content must dedup to one file");
 
-        // Different content -> different hash.
         let c = store.put(b"other bytes", "text/plain").unwrap();
         assert_ne!(a.hash, c.hash);
     }
@@ -151,7 +133,6 @@ mod tests {
             h,
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        // Stable across calls.
         assert_eq!(BlobStore::hash(b"abc"), h);
     }
 
