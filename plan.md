@@ -216,7 +216,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Tests: golden stats over a fixture set of traces (crafted with fake adapter: multi-tier, tools, one child call, one error); `--stats` surfaced through conformance.
 - Depends on: 1.1; benefits from 2.3.
 
-### 2.5 `[ ]` Cron jobs for an agent (idea 7) — M
+### 2.5 `[x]` Cron jobs for an agent (idea 7) — M
 
 - Why: "a prompt + a cron formula" — recurring asks (poll a feed, re-index docs, daily summary) without an external orchestrator.
 - Design (host-layer only; the brain never sees a clock):

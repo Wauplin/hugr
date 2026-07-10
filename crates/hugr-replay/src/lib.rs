@@ -131,6 +131,9 @@ pub struct TraceMeta {
     /// `"success"` / `"off_topic"` / `"error"`) — opaque to this crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Opaque caller metadata attached to the ask. Never interpreted by replay.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub extra: serde_json::Value,
 }
 
 impl TraceMeta {
@@ -146,6 +149,7 @@ impl TraceMeta {
             agent_version: None,
             question: None,
             status: None,
+            extra: serde_json::Value::Null,
         }
     }
 }

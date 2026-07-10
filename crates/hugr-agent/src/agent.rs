@@ -570,7 +570,8 @@ impl Agent {
         for child_meta in child_spend.lock().unwrap().iter() {
             metadata.merge_child(child_meta);
         }
-        let mut header = TraceHeader::new(&self.name, &self.version, &ask.question, &status);
+        let mut header = TraceHeader::new(&self.name, &self.version, &ask.question, &status)
+            .with_extra(ask.extra.clone());
         if let Some(parent_id) = parent {
             header = header.with_depends_on(parent_id);
         }

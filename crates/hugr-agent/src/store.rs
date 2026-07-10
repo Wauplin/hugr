@@ -42,6 +42,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use hugr_replay::{Trace, TraceError, TraceMeta};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::contract::TraceId;
@@ -113,6 +114,8 @@ pub struct TraceHeader {
     pub question: String,
     /// The outcome status wire string; opaque to the store.
     pub status: String,
+    /// Opaque caller metadata attached to the ask.
+    pub extra: Value,
 }
 
 impl TraceHeader {
@@ -129,12 +132,19 @@ impl TraceHeader {
             agent_version: agent_version.into(),
             question: question.into(),
             status: status.into(),
+            extra: Value::Null,
         }
     }
 
     /// Mark this trace as a follow-up of `parent` (resume/fork).
     pub fn with_depends_on(mut self, parent: TraceId) -> Self {
         self.depends_on = Some(parent);
+        self
+    }
+
+    /// Attach opaque ask metadata to the trace header.
+    pub fn with_extra(mut self, extra: Value) -> Self {
+        self.extra = extra;
         self
     }
 }
@@ -188,6 +198,7 @@ impl TraceStore {
         trace.meta.agent_version = Some(header.agent_version);
         trace.meta.question = Some(header.question);
         trace.meta.status = Some(header.status);
+        trace.meta.extra = header.extra;
 
         // Content-derived id: hash the headed trace *before* the id is stamped
         // in (the id cannot depend on itself), then collision-check against
@@ -358,6 +369,7 @@ impl TraceBackend for MemTraceStore {
         trace.meta.agent_version = Some(header.agent_version);
         trace.meta.question = Some(header.question);
         trace.meta.status = Some(header.status);
+        trace.meta.extra = header.extra;
         let mut traces = self.traces.lock().unwrap();
         let id = Self::allocate_id(&traces, &trace)?;
         trace.meta.trace_id = Some(id.as_str().to_string());

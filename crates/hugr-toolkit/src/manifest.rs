@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use croner::Cron;
 use serde::{Deserialize, Serialize};
 
 /// The manifest file name expected inside an agent crate folder.
@@ -43,6 +44,8 @@ pub struct AgentDefinition {
     pub tools: Vec<ToolGrant>,
     /// Declared runtime limits (`[limits]`).
     pub limits: LimitsConfig,
+    /// Recurring asks (`[cron.<name>]`), deterministically ordered.
+    pub cron: Vec<CronJobConfig>,
     /// Context projection and deterministic compaction (`[context]`).
     pub context: ContextConfig,
     /// Scratchpad configuration (`[scratchpad]`).
@@ -143,6 +146,29 @@ pub struct LimitsConfig {
     pub max_cost_micro_usd: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
+}
+
+/// One `[cron.<name>]` recurring ask.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CronJobConfig {
+    /// Stable job id, taken from `[cron.<name>]`.
+    #[serde(skip)]
+    pub name: String,
+    /// Five-field cron expression: minute hour day-of-month month day-of-week.
+    pub schedule: String,
+    /// Question to ask when the job fires.
+    pub question: String,
+    /// `fresh` starts every run without a parent; `chain` resumes from the previous successful run.
+    #[serde(default = "default_cron_lineage")]
+    pub lineage: String,
+    /// Optional limits that override `[limits]` for this unattended ask.
+    #[serde(default)]
+    pub limits: LimitsConfig,
+}
+
+fn default_cron_lineage() -> String {
+    "fresh".to_string()
 }
 
 /// The `[context]` block.
@@ -342,6 +368,7 @@ impl AgentDefinition {
         let models = parse_models(&table, path)?;
         let tools = parse_tools(&table, path)?;
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
+        let cron = parse_cron(&table, path)?;
         let context: ContextConfig = parse_section(&table, "context", path)?;
         validate_context(&context, path)?;
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
@@ -354,6 +381,7 @@ impl AgentDefinition {
             models,
             tools,
             limits,
+            cron,
             context,
             scratchpad,
             traces,
@@ -376,6 +404,82 @@ impl AgentDefinition {
         }
         self.models.tiers.keys().next().map(String::as_str)
     }
+}
+
+fn parse_cron(table: &toml::Table, path: &Path) -> Result<Vec<CronJobConfig>, ManifestError> {
+    let Some(value) = table.get("cron") else {
+        return Ok(Vec::new());
+    };
+    let cron_table = value.as_table().ok_or_else(|| ManifestError::Validate {
+        path: path.to_path_buf(),
+        message: "[cron] must be a table of named jobs".to_string(),
+    })?;
+    let mut jobs = Vec::new();
+    for (name, value) in cron_table {
+        validate_cron_name(name, path)?;
+        let mut job: CronJobConfig =
+            value
+                .clone()
+                .try_into()
+                .map_err(|err: toml::de::Error| ManifestError::Validate {
+                    path: path.to_path_buf(),
+                    message: format!("[cron.{name}]: {}", err.message()),
+                })?;
+        job.name = name.clone();
+        validate_cron_job(&job, path)?;
+        jobs.push(job);
+    }
+    jobs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(jobs)
+}
+
+fn validate_cron_name(name: &str, path: &Path) -> Result<(), ManifestError> {
+    let ok = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!(
+                "[cron.{name}] names must contain only ASCII letters, digits, `_`, or `-`"
+            ),
+        })
+    }
+}
+
+fn validate_cron_job(job: &CronJobConfig, path: &Path) -> Result<(), ManifestError> {
+    if job.schedule.split_whitespace().count() != 5 {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!(
+                "[cron.{}].schedule must be a five-field cron expression",
+                job.name
+            ),
+        });
+    }
+    Cron::new(&job.schedule)
+        .with_seconds_optional()
+        .parse()
+        .map_err(|err| ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!("[cron.{}].schedule is invalid: {err}", job.name),
+        })?;
+    if job.question.trim().is_empty() {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!("[cron.{}].question is required", job.name),
+        });
+    }
+    if !matches!(job.lineage.as_str(), "fresh" | "chain") {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: format!("[cron.{}].lineage must be \"fresh\" or \"chain\"", job.name),
+        });
+    }
+    Ok(())
 }
 
 fn parse_agent(table: &toml::Table, path: &Path) -> Result<AgentMeta, ManifestError> {
@@ -586,7 +690,12 @@ fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestErr
             | "describe"
             | "config"
             | "traces"
+            | "stats"
+            | "feedback"
+            | "feedback-payload"
             | "mcp-serve"
+            | "cron-serve"
+            | "allow-uncapped"
     ) {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
@@ -681,6 +790,7 @@ fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), Mani
         "models",
         "tools",
         "limits",
+        "cron",
         "context",
         "scratchpad",
         "traces",
@@ -774,6 +884,61 @@ browser_observation = 1
             (
                 format!("{base}[context.forget.keep_last_per_tool]\npage_snapshot = 0\n"),
                 "keep_last_per_tool".to_string(),
+            ),
+        ] {
+            let err = AgentDefinition::parse(&src, "hugr.toml").unwrap_err();
+            assert!(matches!(err, ManifestError::Validate { .. }), "{src}");
+            assert!(err.to_string().contains(&needle), "{err}");
+        }
+    }
+
+    #[test]
+    fn cron_jobs_parse_and_validate() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models.medium]
+model = "m"
+
+[cron.daily]
+schedule = "0 8 * * *"
+question = "Write the daily summary."
+lineage = "chain"
+
+[cron.daily.limits]
+max_cost_micro_usd = 100
+"#;
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        assert_eq!(def.cron.len(), 1);
+        let job = &def.cron[0];
+        assert_eq!(job.name, "daily");
+        assert_eq!(job.schedule, "0 8 * * *");
+        assert_eq!(job.lineage, "chain");
+        assert_eq!(job.limits.max_cost_micro_usd, Some(100));
+    }
+
+    #[test]
+    fn invalid_cron_is_a_validation_error() {
+        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        for (src, needle) in [
+            (
+                format!("{base}[cron.bad]\nschedule = \"* * * * * *\"\nquestion = \"q\"\n"),
+                "five-field".to_string(),
+            ),
+            (
+                format!("{base}[cron.bad]\nschedule = \"99 * * * *\"\nquestion = \"q\"\n"),
+                "schedule".to_string(),
+            ),
+            (
+                format!("{base}[cron.bad]\nschedule = \"* * * * *\"\nquestion = \"\"\n"),
+                "question".to_string(),
+            ),
+            (
+                format!(
+                    "{base}[cron.bad]\nschedule = \"* * * * *\"\nquestion = \"q\"\nlineage = \"forkish\"\n"
+                ),
+                "lineage".to_string(),
             ),
         ] {
             let err = AgentDefinition::parse(&src, "hugr.toml").unwrap_err();
