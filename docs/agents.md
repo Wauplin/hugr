@@ -216,7 +216,7 @@ page_snapshot = 1                    # open tool-name map; keep only the latest 
 
 ### Prompt and privileges
 
-`SYSTEM.md` beside the manifest is the agent-owned system prompt. It supports `{{agent_name}}`, `{{tools}}`, and `{{date}}`. Hugr appends concise runtime guidance for the capabilities actually present, including scratch inheritance, inbound and outbound blobs, durable memory, trace feedback analysis, and delegation. This keeps the reusable infrastructure discoverable without requiring each agent author to repeat it.
+`SYSTEM.md` beside the manifest is the agent-owned system prompt. It supports `{{agent_name}}`, `{{tools}}`, and `{{date}}`. Hugr appends concise runtime guidance for the capabilities actually present, including scratch inheritance, inbound and outbound blobs, filesystem discovery and writes, process execution, web search and fetch, durable memory, trace feedback analysis, and delegation. This keeps the reusable infrastructure discoverable without requiring each agent author to repeat it; guidance for an ungranted capability is omitted.
 
 ### Skills
 
