@@ -31,6 +31,7 @@ pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
         },
         models: models_from(obj.get("models"))?,
         tools: grants_from(obj.get("grants"))?,
+        skills: Vec::new(),
         limits: section(obj.get("limits"), "limits")?,
         cron: Vec::new(),
         context: section(obj.get("context"), "context")?,
