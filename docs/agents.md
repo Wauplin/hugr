@@ -18,7 +18,7 @@ my-agent/
 Every built agent binary has the same shape:
 
 ```
-<agent> [runtime args...] "question" [--trace <id>] [--json|--pretty|--stream] [--blob <path>...]
+<agent> [runtime args...] "question" [--trace <id>] [--json|--pretty|--stream] [--blob <path>...] [--skill <path>...]
 <agent> --feedback <trace-id> [--feedback-payload '<json>' | stdin] [--json|--pretty]
 <agent> --describe | --config | --traces | --stats [--trace <id>]
 <agent> --cron-serve [--allow-uncapped]
@@ -107,6 +107,7 @@ pub struct Ask {
     pub question: String,            // the one required field
     pub trace_id: Option<TraceId>,   // resume/fork anchor
     pub blobs: Vec<BlobHandle>,      // inbound files
+    pub skills: Vec<String>,         // runtime SKILL.md folder paths
     pub extra: Value,                // opaque caller metadata, echoed into the trace
 }
 
@@ -215,7 +216,23 @@ page_snapshot = 1                    # open tool-name map; keep only the latest 
 
 ### Prompt and privileges
 
-`SYSTEM.md` beside the manifest is the system prompt. It supports a small set of template variables: `{{agent_name}}`, `{{tools}}`, and `{{date}}`.
+`SYSTEM.md` beside the manifest is the agent-owned system prompt. It supports `{{agent_name}}`, `{{tools}}`, and `{{date}}`. Hugr appends concise runtime guidance for the capabilities actually present, including scratch inheritance, inbound and outbound blobs, durable memory, trace feedback analysis, and delegation. This keeps the reusable infrastructure discoverable without requiring each agent author to repeat it.
+
+### Skills
+
+Hugr supports the standard Agent Skills folder format: a folder named for the skill with a `SKILL.md` containing YAML frontmatter (`name` and `description`) followed by Markdown instructions. Optional scripts, references, and assets stay beside it.
+
+Definition-owned skills are declared as manifest-relative paths:
+
+```toml
+skills = ["skills/source-citation", "../shared-skills"]
+```
+
+Each path may name one skill, a `SKILL.md` file, or a directory whose immediate child directories are skills. Names must be unique. Hugr validates the standard naming and frontmatter rules when an ask starts.
+
+Skills use progressive disclosure. The model receives only each skill's name and description in its system context. When the task matches, it calls the automatically registered `skill_read` capability to load `SKILL.md`; referenced UTF-8 files can be read with the same capability and are jailed to that skill folder. Files are capped at 1 MB. Skill instructions are trusted prompt context and do not grant tools or widen existing privileges.
+
+Callers can add skills to one invocation through `Ask.skills`, the repeatable CLI flag `--skill <PATH>`, the MCP `ask.skills` array, or the Rust-generated and pure-Python `skills=` argument. Runtime paths resolve from the caller's working directory. Definition and runtime skills share the same validation and disclosure path.
 
 The `hugr.toml` manifest defines the subagent's blast radius. A tool that is not granted is not registered, and an unregistered capability **cannot** be invoked. This is sandbox-by-registration, as described in [Security](security.md).
 

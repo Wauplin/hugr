@@ -208,12 +208,13 @@ static BUNDLE: &[u8] = include_bytes!("../bundle.bin");
 /// answers (status:error), so this only raises on a genuine bridge failure
 /// (bad JSON in, serialization out, or a runtime that will not start).
 #[pyfunction]
-#[pyo3(signature = (question, trace_id=None, blob_paths=None, extra_json=None, runtime_json=None))]
+#[pyo3(signature = (question, trace_id=None, blob_paths=None, skill_paths=None, extra_json=None, runtime_json=None))]
 fn ask_json(
     py: Python<'_>,
     question: String,
     trace_id: Option<String>,
     blob_paths: Option<Vec<String>>,
+    skill_paths: Option<Vec<String>>,
     extra_json: Option<String>,
     runtime_json: Option<String>,
 ) -> PyResult<String> {{
@@ -233,13 +234,20 @@ fn ask_json(
             .into_iter()
             .map(PathBuf::from)
             .collect();
+        let skills: Vec<PathBuf> = skill_paths
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
         let options = {options};
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("starting async runtime: {{e}}")))?;
         let answer = rt.block_on(hugr_toolkit::surface::ask_bundle_with_options(
-            BUNDLE, &options, question, trace_id, &blobs, extra, &runtime,
+            BUNDLE, &options, question, trace_id,
+            hugr_toolkit::surface::AskPaths {{ blobs: &blobs, skills: &skills }},
+            extra, &runtime,
         ));
         serde_json::to_string(&answer)
             .map_err(|e| PyRuntimeError::new_err(format!("serializing answer: {{e}}")))
@@ -415,6 +423,7 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
     }
     params.push_str("    trace_id: Optional[str] = None,\n");
     params.push_str("    blobs: Optional[List[str]] = None,\n");
+    params.push_str("    skills: Optional[List[str]] = None,\n");
     params.push_str("    extra: Optional[dict] = None,\n");
 
     // Docstring.
@@ -436,6 +445,7 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
         "        trace_id: Resume/fork from an existing trace id (writes a new child trace).\n",
     );
     doc.push_str("        blobs: Local file paths to hand in as inbound blobs.\n");
+    doc.push_str("        skills: Local SKILL.md folder paths to add for this ask.\n");
     doc.push_str("        extra: Opaque caller metadata, echoed into the trace.\n");
 
     // Runtime-values dict.
@@ -490,6 +500,7 @@ def ask(
         question,
         trace_id,
         list(blobs) if blobs else None,
+        list(skills) if skills else None,
         json.dumps(extra) if extra is not None else None,
         json.dumps(runtime),
     )

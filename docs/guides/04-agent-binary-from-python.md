@@ -57,7 +57,7 @@ print(answer.trace_id, answer.metadata.cost_micro_usd)
 
 Three things to notice:
 
-- **Declared runtime args become typed parameters.** `hugr-docs` declares a positional, required `docs_path` runtime arg in its manifest, so the generated `ask()` signature is `ask(docs_path, question, *, trace_id=None, blobs=None, extra=None)`; positional args lead, before the question, mirroring the CLI surface exactly.
+- **Declared runtime args become typed parameters.** `hugr-docs` declares a positional, required `docs_path` runtime arg in its manifest, so the generated `ask()` signature is `ask(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None)`; positional args lead, before the question, mirroring the CLI surface exactly. `skills` accepts caller-local standard `SKILL.md` folder paths for that invocation.
 - **The typing is strict but there is no second validator.** Rust already casts the model's final JSON into the agent's response type before it reaches `Answer.response`; `_models.py` only deserializes that already-valid JSON into dataclasses.
 - **It runs in-process.** The PyO3 bridge embeds the bundle and drives the real runtime inside your Python process; no subprocess, no serialization boundary beyond one JSON string. Traces still land under `~/.hugr/hugr-docs/` like every other surface.
 

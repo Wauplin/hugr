@@ -1,6 +1,6 @@
 # hugr-docs
 
-`hugr-docs` is the checked-in reference documentation-retrieval agent crate. `hugr.toml` and `SYSTEM.md` live at the crate root beside the tiny Rust module that owns the typed `DocsResponse` contract. `hugr-toolkit` does not depend on `hugr-docs`; generic `hugr run` works by compiling a cached dev shim that links this crate, matching the built-binary path.
+`hugr-docs` is the checked-in reference documentation-retrieval agent crate. `hugr.toml` and `SYSTEM.md` live at the crate root beside the tiny Rust module that owns the typed `DocsResponse` contract. Its manifest also declares the standard `skills/source-citation/SKILL.md`; Hugr puts that skill's metadata in the system context and loads its instructions through `skill_read` when the task matches. `hugr-toolkit` does not depend on `hugr-docs`; generic `hugr run` works by compiling a cached dev shim that links this crate, matching the built-binary path.
 
 ## Usage
 

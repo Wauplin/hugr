@@ -123,6 +123,14 @@ class BlobInput(_BlobInputOptional):
     media_type: str
 
 
+class AskDict(TypedDict, total=False):
+    question: str
+    trace_id: str
+    blobs: List[BlobInput]
+    skills: List[str]
+    extra: JsonValue
+
+
 class AnswerMetaDict(TypedDict):
     duration_ms: int
     cost_micro_usd: int

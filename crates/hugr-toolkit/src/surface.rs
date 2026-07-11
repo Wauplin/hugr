@@ -47,6 +47,7 @@ pub struct SurfaceArgs {
     json: bool,
     stream: bool,
     blobs: Vec<PathBuf>,
+    skills: Vec<PathBuf>,
     describe: bool,
     config: bool,
     traces: bool,
@@ -57,6 +58,12 @@ pub struct SurfaceArgs {
     cron_serve: bool,
     allow_uncapped: bool,
     runtime: RuntimeValues,
+}
+
+/// Caller-local paths handed into one ask.
+pub struct AskPaths<'a> {
+    pub blobs: &'a [PathBuf],
+    pub skills: &'a [PathBuf],
 }
 
 /// Which audit view, if any, was requested.
@@ -206,7 +213,10 @@ where
                 &agent,
                 args.question,
                 args.trace,
-                &args.blobs,
+                AskPaths {
+                    blobs: &args.blobs,
+                    skills: &args.skills,
+                },
                 started,
                 pretty,
                 args.stream,
@@ -249,6 +259,10 @@ where
             .get_many::<PathBuf>("blob")
             .map(|paths| paths.cloned().collect())
             .unwrap_or_default(),
+        skills: matches
+            .get_many::<PathBuf>("skill")
+            .map(|paths| paths.cloned().collect())
+            .unwrap_or_default(),
         describe: matches.get_flag("describe"),
         config: matches.get_flag("config"),
         traces: matches.get_flag("traces"),
@@ -287,6 +301,14 @@ fn surface_command(def: &AgentDefinition) -> Command {
             Arg::new("blob")
                 .long("blob")
                 .help("Hand a local file in as an inbound blob (repeatable).")
+                .value_name("PATH")
+                .value_parser(clap::value_parser!(PathBuf))
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("skill")
+                .long("skill")
+                .help("Add a SKILL.md folder or a folder of skills for this ask (repeatable).")
                 .value_name("PATH")
                 .value_parser(clap::value_parser!(PathBuf))
                 .action(ArgAction::Append),
@@ -448,7 +470,7 @@ pub async fn run_ask(
     agent: &Agent,
     question: Option<String>,
     trace: Option<String>,
-    blob_paths: &[PathBuf],
+    paths: AskPaths<'_>,
     started: Instant,
     pretty: bool,
     stream: bool,
@@ -463,8 +485,8 @@ pub async fn run_ask(
         );
     };
 
-    let mut blobs = Vec::with_capacity(blob_paths.len());
-    for path in blob_paths {
+    let mut blobs = Vec::with_capacity(paths.blobs.len());
+    for path in paths.blobs {
         match blob_handle_from_path(path) {
             Ok(handle) => blobs.push(handle),
             Err(err) => return print_answer(&error_answer(err, started), pretty),
@@ -475,6 +497,11 @@ pub async fn run_ask(
         question,
         trace_id: trace.map(TraceId::new),
         blobs,
+        skills: paths
+            .skills
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
         ..Ask::default()
     };
 
@@ -511,7 +538,7 @@ pub async fn ask_bundle_with_options(
     options: &RuntimeOptions,
     question: String,
     trace_id: Option<String>,
-    blob_paths: &[PathBuf],
+    paths: AskPaths<'_>,
     extra: serde_json::Value,
     runtime: &RuntimeValues,
 ) -> Answer {
@@ -533,8 +560,8 @@ pub async fn ask_bundle_with_options(
         Err(err) => return error_answer(err.to_string(), started),
     };
 
-    let mut blobs = Vec::with_capacity(blob_paths.len());
-    for path in blob_paths {
+    let mut blobs = Vec::with_capacity(paths.blobs.len());
+    for path in paths.blobs {
         match blob_handle_from_path(path) {
             Ok(handle) => blobs.push(handle),
             Err(err) => return error_answer(err, started),
@@ -545,6 +572,11 @@ pub async fn ask_bundle_with_options(
         question,
         trace_id: trace_id.map(TraceId::new),
         blobs,
+        skills: paths
+            .skills
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
         extra,
     };
     match agent.ask(ask).await {
@@ -579,6 +611,7 @@ pub fn config_json_with_options(
             "kind": grant.kind,
             "scope": grant.config,
         })).collect::<Vec<_>>(),
+        "skills": def.skills,
         "runtime": def.runtime,
         "limits": def.limits,
         "cron": def.cron,

@@ -80,6 +80,11 @@ pub struct Ask {
     /// Inbound files, materialized into the scratchpad before the turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blobs: Vec<BlobHandle>,
+    /// Skill folders supplied for this invocation. Each folder contains a
+    /// standard `SKILL.md`; the host discovers them and exposes their content
+    /// to the model through progressive disclosure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
     /// Opaque caller metadata, echoed into the trace. Never interpreted.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub extra: Value,

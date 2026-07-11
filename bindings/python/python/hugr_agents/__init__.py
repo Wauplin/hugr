@@ -378,9 +378,10 @@ class Agent:
         *,
         trace_id: Optional[str] = None,
         blobs: Sequence[Union[BlobHandle, BlobInput]] = (),
+        skills: Sequence[str] = (),
         extra: JsonValue = None,
     ) -> Answer:
-        raw = self._native.ask(_ask_json(question, trace_id, blobs, extra))
+        raw = self._native.ask(_ask_json(question, trace_id, blobs, skills, extra))
         return Answer.from_dict(cast(AnswerDict, json.loads(raw)))
 
     async def run(
@@ -389,10 +390,11 @@ class Agent:
         *,
         trace_id: Optional[str] = None,
         blobs: Sequence[Union[BlobHandle, BlobInput]] = (),
+        skills: Sequence[str] = (),
         extra: JsonValue = None,
     ) -> AsyncIterator[AgentEvent]:
         """Stream Rust-validated events cast into their public dataclasses."""
-        stream = self._native.ask_events(_ask_json(question, trace_id, blobs, extra))
+        stream = self._native.ask_events(_ask_json(question, trace_id, blobs, skills, extra))
         while True:
             raw = await asyncio.to_thread(stream.next_event)
             if raw is None:
@@ -433,6 +435,7 @@ def _ask_json(
     question: str,
     trace_id: Optional[str],
     blobs: Sequence[Union[BlobHandle, BlobInput]],
+    skills: Sequence[str],
     extra: JsonValue,
 ) -> str:
     ask: JsonObject = {"question": question}
@@ -446,6 +449,8 @@ def _ask_json(
                 for blob in blobs
             ],
         )
+    if skills:
+        ask["skills"] = cast(JsonValue, list(skills))
     if extra is not None:
         ask["extra"] = extra
     return json.dumps(ask)

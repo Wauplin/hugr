@@ -20,6 +20,12 @@
       "items": { "$ref": "#/$defs/blob_handle" },
       "default": []
     },
+    "skills": {
+      "type": "array",
+      "description": "Local standard SKILL.md folders supplied for this invocation.",
+      "items": { "type": "string" },
+      "default": []
+    },
     "extra": {
       "description": "Opaque caller metadata, echoed into the trace. Never interpreted by the agent."
     }

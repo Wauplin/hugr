@@ -27,6 +27,7 @@ mod feedback;
 mod limits;
 mod memory;
 mod scratch;
+mod skills;
 mod store;
 
 pub use agent::{
@@ -45,6 +46,7 @@ pub use contract::{
 pub use feedback::{Feedback, FeedbackBackend, FeedbackError, FsFeedbackStore, MemFeedbackStore};
 pub use memory::{FsMemory, memory_tool_schemas};
 pub use scratch::{FsScratch, MemScratch, ScratchBackend, ScratchEntry, ScratchEntryKind};
+pub use skills::{SkillError, discover_skills};
 pub use store::{
     FsTraceStore, MemTraceStore, StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore,
 };

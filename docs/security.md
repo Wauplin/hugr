@@ -77,6 +77,8 @@ Granting an MCP server is equivalent to trusting its command. `--config` exposes
 
 **Feedback sidecars.** Feedback payloads are untrusted text/JSON from a caller, often from another model. They are stored append-only outside the trace and are never consumed during an answer, but any later analytics or self-improvement agent that reads `<agent-home>/feedback` must treat the payload as attacker-controlled input.
 
+**Agent Skills.** Definition and runtime skill folders are trusted prompt inputs supplied by the agent author or caller. Their instructions can influence model behavior but cannot register capabilities or widen privileges. The model sees only validated names and descriptions until it calls `skill_read`; that reader rejects traversal and symlink escape after canonicalization, reads only UTF-8 files inside the selected skill folder, and caps each file at 1 MB. Do not accept runtime skill paths from an untrusted party unless granting that party control over the ask's instructions is intended.
+
 **Cron jobs.** Recurring asks are host-side automation, not core behavior: the clock lives in the scheduler, each fire is an ordinary `Ask`, and overlap for the same job is skipped. Unattended model calls can spend money without a human watching, so cron serving refuses jobs with no effective `max_cost_micro_usd` unless `--allow-uncapped` is explicit.
 
 **Custom storage backends.** A backend is trusted host code, the same class as a custom capability or model adapter. It sees trace contents, blob bytes, and scratch data for the agent that registers it; Hugr enforces the model-facing jail before calls reach the backend, but it does not sandbox a backend implementation.

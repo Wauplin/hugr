@@ -3,6 +3,8 @@ name = "hugr-docs"
 version = "0.0.2"
 description = "Answers questions from a read-only documentation folder."
 
+skills = ["skills/source-citation"]
+
 [models]
 base_url = "https://router.huggingface.co/v1"
 api_key_env = "HUGR_API_KEY"

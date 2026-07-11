@@ -32,6 +32,7 @@ fn full_ask() -> Ask {
                 name: None,
             },
         ],
+        skills: vec!["./skills/policy-review".into()],
         extra: json!({"caller": "orchestrator-1"}),
     }
 }
@@ -111,6 +112,7 @@ fn full_wire_snapshots_are_pinned() {
                     "media_type": "application/pdf"
                 }
             ],
+            "skills": ["./skills/policy-review"],
             "extra": {"caller": "orchestrator-1"}
         })
     );

@@ -38,6 +38,8 @@ name = "policy-docs"
 version = "0.1.0"
 description = "Answers questions about travel policy."
 
+skills = ["skills/policy-review"]
+
 [models]
 base_url = "https://router.huggingface.co/v1"
 api_key_env = "HUGR_API_KEY"
@@ -174,7 +176,7 @@ hugr stats ./my-agent
 hugr build ./my-agent --release
 ```
 
-Use `--stream` on a built binary for newline-delimited lifecycle events. Use `--blob <path>` for inbound files. Treat `status: "error"` as contract data: ask paths exit 0 even on missing keys, limits, or model failures.
+Use `--stream` on a built binary for newline-delimited lifecycle events. Use `--blob <path>` for inbound files and repeatable `--skill <folder>` for invocation-specific standard Agent Skills. Definition-owned `skills = [...]` paths are manifest-relative; runtime skill paths are caller-relative. Treat `status: "error"` as contract data: ask paths exit 0 even on missing keys, limits, or model failures.
 
 For composition and accounting, read [guide 07](../../../docs/guides/07-composition-and-cost.md). For replay diagnosis, use `$hugr-debug-traces` or [guide 08](../../../docs/guides/08-traces-replay-debugging.md).
 

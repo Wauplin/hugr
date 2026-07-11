@@ -169,6 +169,8 @@ struct AskArgs {
     trace_id: Option<String>,
     #[serde(default)]
     blobs: Vec<BlobHandle>,
+    #[serde(default)]
+    skills: Vec<String>,
     #[serde(flatten)]
     runtime: BTreeMap<String, Value>,
 }
@@ -211,6 +213,7 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
         question: args.question,
         trace_id: args.trace_id.map(TraceId::new),
         blobs: args.blobs,
+        skills: args.skills,
         ..Ask::default()
     };
 
@@ -272,6 +275,7 @@ async fn tools_call_definition(
         question: args.question,
         trace_id: args.trace_id.map(TraceId::new),
         blobs: args.blobs,
+        skills: args.skills,
         ..Ask::default()
     };
     let answer = agent.ask(ask).await.map_err(|e| e.to_string())?;
@@ -350,6 +354,14 @@ fn ask_tool_schema(def: Option<&AgentDefinition>) -> Value {
                 "type": "array",
                 "description": "Inbound file handles (contract BlobHandle JSON).",
                 "items": { "type": "object" }
+            }),
+        ),
+        (
+            "skills".to_string(),
+            json!({
+                "type": "array",
+                "description": "Local SKILL.md folder paths to add for this ask.",
+                "items": { "type": "string" }
             }),
         ),
     ]);

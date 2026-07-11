@@ -10,6 +10,7 @@
 //! Error discipline: *run* failures — the model erroring, no final answer — are **answers** (`status: Error`) with a persisted trace, so the caller still gets a `trace_id` to inspect. Only *infrastructure* failures (an unknown parent id, a store write error) return [`AskError`]; surfaces convert those to error answers at their own boundary.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -37,6 +38,7 @@ use crate::feedback::{
 };
 use crate::limits::{LimitState, LimitedAdapter};
 use crate::scratch::{FsScratch, ScratchBackend, ScratchSession, scratch_tool_schemas};
+use crate::skills::{discover_skills, skills_prompt};
 use crate::store::{StoreError, TraceBackend, TraceHead, TraceHeader, TraceStore};
 
 /// Default blob store directory inside the store root. Hidden and non-`.json`, so `TraceStore::list` skips it.
@@ -141,6 +143,9 @@ pub struct Agent {
     pub description: String,
     pub traces: Arc<dyn TraceBackend>,
     pub system_prompt: Option<String>,
+    /// Definition-owned skill folders. Runtime asks may add more through
+    /// `Ask.skills` without mutating the reusable agent.
+    pub skill_paths: Vec<PathBuf>,
     pub models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
     pub default_model: Option<ModelSelector>,
     pub capabilities: Vec<Arc<dyn Capability>>,
@@ -174,6 +179,7 @@ impl Clone for Agent {
             description: self.description.clone(),
             traces: self.traces.clone(),
             system_prompt: self.system_prompt.clone(),
+            skill_paths: self.skill_paths.clone(),
             models: self.models.clone(),
             default_model: self.default_model.clone(),
             capabilities: self.capabilities.clone(),
@@ -228,6 +234,7 @@ impl Agent {
             description: String::new(),
             traces: storage.traces,
             system_prompt: None,
+            skill_paths: Vec::new(),
             models: Vec::new(),
             default_model: None,
             capabilities: Vec::new(),
@@ -448,8 +455,15 @@ impl Agent {
         for capability in &self.capabilities {
             builder = builder.capability(capability.clone());
         }
-        if let Some(system) = &self.system_prompt {
-            builder = builder.system_prompt(system.clone());
+        let mut skill_paths = self.skill_paths.clone();
+        skill_paths.extend(ask.skills.iter().map(PathBuf::from));
+        let skills = discover_skills(&skill_paths)?;
+        let system = skills_prompt(self.system_prompt.as_deref().unwrap_or(""), &skills);
+        if !system.is_empty() {
+            builder = builder.system_prompt(system);
+        }
+        for capability in skills.capabilities() {
+            builder = builder.capability(capability);
         }
         if let Some(sampling) = &self.sampling {
             builder = builder.sampling(sampling.clone());
@@ -922,6 +936,10 @@ pub enum AskError {
     /// An inbound blob could not be materialized, or an outbound blob could not be swept into the content-addressed store.
     #[error("blob exchange error: {0}")]
     Blob(#[from] BlobError),
+
+    /// A definition-owned or runtime skill folder could not be discovered or validated.
+    #[error(transparent)]
+    Skill(#[from] crate::skills::SkillError),
 }
 
 /// The parent id an [`AskError::Store`] not-found refers to, if any — a small convenience for surfaces mapping infra errors to error answers.

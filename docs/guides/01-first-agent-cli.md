@@ -144,7 +144,7 @@ The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/re
 The built binary speaks the same universal surface as `hugr run`:
 
 ```
-my_agent "question" [--trace <ID>] [--json|--pretty] [--blob <PATH>...] [--stream]
+my_agent "question" [--trace <ID>] [--json|--pretty] [--blob <PATH>...] [--skill <PATH>...] [--stream]
 my_agent --describe | --config | --traces | --stats [--trace <ID>]
 my_agent --feedback <TRACE_ID> [--feedback-payload <JSON>]
 my_agent --mcp-serve
@@ -153,6 +153,7 @@ my_agent --cron-serve [--allow-uncapped]
 
 - `--trace <ID>` resumes/forks exactly as with `hugr run`; `--json` switches from the default pretty printing to compact.
 - `--blob <PATH>` (repeatable) hands local files in as inbound blobs.
+- `--skill <PATH>` (repeatable) adds a standard `SKILL.md` folder, or a folder containing skills, for this ask. The model receives a compact catalog and loads matching instructions on demand.
 - `--stream` emits one JSON event per line as the run progresses, then the final `Answer` line.
 - `--describe`, `--config`, `--traces`, and `--stats` are the audit views. They return JSON and exit non-zero on failure, unlike the ask path.
 - `--feedback <TRACE_ID>` appends a JSON feedback payload to a stored trace (from `--feedback-payload` or stdin).

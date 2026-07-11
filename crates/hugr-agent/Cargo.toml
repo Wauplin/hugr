@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 # The trace store persists immutable traces via hugr-replay. hugr-agent is a
 # host-layer crate, so std::fs is fine here; hugr-core stays sans-IO.
 hugr-replay = { workspace = true }

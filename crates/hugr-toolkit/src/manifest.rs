@@ -42,6 +42,9 @@ pub struct AgentDefinition {
     pub models: ModelsConfig,
     /// Granted tools (`[tools.*]`), deterministically ordered.
     pub tools: Vec<ToolGrant>,
+    /// Standard Agent Skills folders bundled with this definition. Paths are
+    /// resolved relative to the agent crate.
+    pub skills: Vec<String>,
     /// Declared runtime limits (`[limits]`).
     pub limits: LimitsConfig,
     /// Recurring asks (`[cron.<name>]`), deterministically ordered.
@@ -367,6 +370,18 @@ impl AgentDefinition {
         let agent = parse_agent(&table, path)?;
         let models = parse_models(&table, path)?;
         let tools = parse_tools(&table, path)?;
+        let skills = table
+            .get("skills")
+            .map(|value| value.clone().try_into())
+            .transpose()
+            .map_err(|err: toml::de::Error| ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!(
+                    "`skills` must be an array of folder paths: {}",
+                    err.message()
+                ),
+            })?
+            .unwrap_or_default();
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
         let cron = parse_cron(&table, path)?;
         let context: ContextConfig = parse_section(&table, "context", path)?;
@@ -380,6 +395,7 @@ impl AgentDefinition {
             agent,
             models,
             tools,
+            skills,
             limits,
             cron,
             context,
@@ -789,6 +805,7 @@ fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), Mani
         "agent",
         "models",
         "tools",
+        "skills",
         "limits",
         "cron",
         "context",

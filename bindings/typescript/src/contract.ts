@@ -22,6 +22,14 @@ export interface BlobHandle {
   name?: string;
 }
 
+export interface Ask {
+  question: string;
+  trace_id?: string;
+  blobs?: BlobHandle[];
+  skills?: string[];
+  extra?: Json;
+}
+
 export interface Answer {
   status: string;
   response: Record<string, Json>;
