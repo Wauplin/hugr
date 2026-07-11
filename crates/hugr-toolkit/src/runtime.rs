@@ -365,6 +365,11 @@ pub async fn build_agent_with_options(
     for grant in &def.tools {
         match grant.kind {
             ToolKind::Library => {
+                if grant.name == "delegate" {
+                    agent
+                        .agent_tools
+                        .push(build_delegate_tool(grant, &base_dir)?);
+                }
                 for capability in tools::build_library_grant(grant, &base_dir)? {
                     agent.capabilities.push(capability);
                 }
@@ -436,6 +441,40 @@ pub async fn build_agent_with_options(
     }
 
     Ok((agent, warnings))
+}
+
+fn build_delegate_tool(grant: &ToolGrant, base_dir: &Path) -> Result<AgentToolSpec, RuntimeError> {
+    let depth = remaining_agent_depth();
+    if depth == 0 {
+        return Ok(AgentToolSpec::new(
+            "delegate",
+            "delegation refused: max agent depth reached",
+            depth_exceeded_resolver("self".into()),
+        ));
+    }
+    let bin = match grant.config.get("artifact").and_then(Value::as_str) {
+        Some(path) => resolve(base_dir, path),
+        None => std::env::current_exe().map_err(|e| RuntimeError::Agent {
+            name: "delegate".into(),
+            message: format!("resolving current agent executable: {e}"),
+        })?,
+    };
+    if !bin.is_file() {
+        return Err(RuntimeError::Agent {
+            name: "delegate".into(),
+            message: format!("self artifact is not a file: {}", bin.display()),
+        });
+    }
+    let child = bin.clone();
+    let resolver: AgentToolResolver = Arc::new(move |ask: Ask| {
+        let child = child.clone();
+        Box::pin(async move { run_subprocess_agent(&child, ask, depth - 1).await })
+    });
+    Ok(AgentToolSpec::new(
+        "delegate",
+        format!("isolated context running this agent at {}", bin.display()),
+        resolver,
+    ))
 }
 
 fn response_contract(
@@ -904,10 +943,12 @@ root = "."
         let (agent, warnings) = build_agent(&def).await.unwrap();
         let card = agent.describe();
         assert_eq!(card.name, "policy-docs");
-        // The six fs_read tools plus the three scratch tools are on the card.
+        // The fs_read family plus the three scratch tools are on the card.
         let tool_names: Vec<_> = card.tools.iter().map(|t| t.name.as_str()).collect();
         assert!(tool_names.contains(&"fs_read"));
         assert!(tool_names.contains(&"fs_search"));
+        assert!(tool_names.contains(&"fs_grep"));
+        assert!(tool_names.contains(&"fs_glob"));
         assert!(tool_names.contains(&"scratch_write"));
         assert!(warnings.is_empty(), "{warnings:?}");
     }
@@ -1013,6 +1054,21 @@ readonly = true
             "{names:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn delegate_grant_registers_self_agent_tool() {
+        let src = "[agent]\nname = \"self\"\n[models.medium]\nmodel = \"m\"\n[tools.delegate]\n";
+        let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
+        let (agent, warnings) = build_agent(&def).await.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let tools: Vec<_> = agent
+            .describe()
+            .tools
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert!(tools.contains(&"delegate".to_string()), "{tools:?}");
     }
 
     #[cfg(unix)]

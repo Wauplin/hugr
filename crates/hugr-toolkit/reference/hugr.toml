@@ -37,10 +37,24 @@ max_tokens = 2048
 # tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard
 # errors. A tool is jailed to the scope declared here.
 [tools.fs_read]
-root = "./policies"              # read/list/search jailed to this folder
+root = "./policies"              # read/list/search/grep/glob jailed to this folder
+
+# [tools.fs_write]
+# root = "./generated"             # use "/" only for an explicit full-disk grant
+
+# [tools.shell]
+# allow_commands = ["git", "cargo"] # direct execution; no shell operators
+# full_access = true                 # mutually exclusive; runs /bin/sh -lc
 
 # [tools.web_fetch]
 # allow_hosts = ["api.example.com"]   # GET-only, host-allowlisted
+# markdown = true
+
+# [tools.web_search]
+# api_key_env = "EXA_API_KEY"
+# max_results = 10
+
+# [tools.delegate]                    # call this CLI agent in an isolated context
 
 # External tools, in order of weight.
 

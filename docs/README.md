@@ -9,6 +9,7 @@ Hugr is a toolkit for building small, self-contained, domain-specific subagents 
 - [Project structure](project-structure.md): crate boundaries, dependency rules, and standards positioning.
 - [Runtime](runtime.md): the sans-IO design, core and host contract, state, concurrency, providers, replay, and risks.
 - [Security](security.md): the security model and threat notes for each capability and host extension point.
+- [Built-in capabilities](capabilities.md): toolkit grants, options, limits, and trust boundaries.
 - [Reference](reference.md): open questions, glossary, and naming.
 
 ## Guides

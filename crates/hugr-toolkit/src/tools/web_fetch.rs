@@ -39,6 +39,7 @@ pub struct WebFetch {
     allow_hosts: Vec<String>,
     allow_methods: Vec<String>,
     max_bytes: usize,
+    markdown: bool,
 }
 
 impl WebFetch {
@@ -84,6 +85,10 @@ impl WebFetch {
             allow_hosts,
             allow_methods,
             max_bytes,
+            markdown: config
+                .get("markdown")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         })
     }
 
@@ -110,7 +115,8 @@ impl Capability for WebFetch {
                 "type": "object",
                 "properties": {
                     "url": { "type": "string", "description": "The absolute http(s) URL to request." },
-                    "method": { "type": "string", "description": "HTTP method (default GET). Must be on the manifest allowlist." }
+                    "method": { "type": "string", "description": "HTTP method (default GET). Must be on the manifest allowlist." },
+                    "markdown": { "type": "boolean", "description": "Convert the returned HTML body to Markdown. Defaults to the manifest setting." }
                 },
                 "required": ["url"],
                 "additionalProperties": false
@@ -182,11 +188,21 @@ impl WebFetch {
             &bytes[..]
         };
         let body = String::from_utf8_lossy(slice).into_owned();
+        let markdown = args
+            .get("markdown")
+            .and_then(Value::as_bool)
+            .unwrap_or(self.markdown);
+        let body = if markdown {
+            html2md::parse_html(&body)
+        } else {
+            body
+        };
         Ok(json!({
             "status": status,
             "bytes_returned": body.len(),
             "truncated": truncated,
             "body": body,
+            "format": if markdown { "markdown" } else { "raw" },
         }))
     }
 }
@@ -226,6 +242,15 @@ mod tests {
         let tool = WebFetch::from_config(&json!({})).unwrap();
         assert!(!tool.host_allowed("example.com"));
         assert_eq!(tool.allow_methods, vec!["GET".to_string()]);
+    }
+
+    #[test]
+    fn markdown_default_is_configurable() {
+        let tool = WebFetch::from_config(&json!({ "markdown": true })).unwrap();
+        assert!(tool.markdown);
+        let converted = html2md::parse_html("<h1>Title</h1>");
+        assert!(converted.contains("Title"));
+        assert!(!converted.contains("<h1>"));
     }
 
     #[tokio::test]

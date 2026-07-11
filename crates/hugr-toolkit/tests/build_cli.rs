@@ -156,7 +156,9 @@ fn real_build_produces_a_runnable_binary() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, file.contents).unwrap();
     }
-    let mut manifest = std::fs::read_to_string(docs_src.join("hugr.toml")).unwrap();
+    let mut manifest = std::fs::read_to_string(docs_src.join("hugr.toml"))
+        .unwrap()
+        .replace("HUGR_API_KEY", "HUGR_BCLI_TEST_UNSET_KEY");
     manifest.push_str(
         r#"
 [tools.fs_read]

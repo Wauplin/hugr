@@ -22,6 +22,17 @@ The operator is responsible for the process and OS boundary when running an untr
 - **Symlink escape.** A symlink inside the root that points outside passes the component check. The defense is the **post-canonicalize `starts_with(root)` re-check** on every resolved target; recursive walks apply the same filter per entry. The root itself is canonicalized at construction. Test: `jail_rejects_symlink_that_escapes_the_root` (unix).
 - **TOCTOU on canonicalize.** The window between canonicalization and read is accepted because the tool is read-only. The worst case is reading a swapped file, not writing outside the jail. This is documented but not prevented.
 
+**`fs_write`** (write access, one canonicalized root):
+
+- **Traversal and symlink escape.** Paths reject absolute and parent components. New targets canonicalize and re-check the existing parent; existing removal targets are canonicalized and re-checked before mutation.
+- **Destructive scope.** Replacement and removal are intentional powers of the grant. Removal is limited to one file or empty directory, but `root = "/"` still grants writes across the process-visible disk.
+- **TOCTOU on canonicalize.** A privileged concurrent process can swap a checked path before mutation. Use an outer OS sandbox when the agent or other local processes are untrusted.
+
+**`shell`** (process execution):
+
+- **Restricted mode.** The capability invokes an exact allowlisted executable with an argument vector. No shell parses `&&`, pipes, redirection, substitutions, expansions, or glob syntax. Arguments can still activate dangerous behavior in an allowed program, so the operator must choose both programs and their OS environment carefully.
+- **Full mode.** The capability invokes `<shell> -lc` and provides no Hugr-level sandbox. The model can access every process, file, credential, and network destination allowed to the agent's OS identity.
+
 **`scratchpad`** (per-lineage scratch subtree, ungated, the jail is the boundary):
 
 - **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/hugr-agent/tests/scratchpad.rs`.
@@ -43,6 +54,12 @@ The operator is responsible for the process and OS boundary when running an untr
 - **Redirect bypass (SSRF).** Automatic redirects are disabled (`redirect::Policy::none()`); a `3xx` is returned to the model as-is, and following it is a *new* call whose target is re-checked.
 - **Scheme confusion.** Only `http`/`https`; `file://` etc. cannot exfiltrate local files.
 - **DNS-rebinding / internal-IP SSRF.** Not defended at v1: allowlisting a host that resolves internally reaches it. Mitigation is operator-side; resolve-and-pin is future work.
+- **Markdown conversion.** Conversion parses only the returned HTML bytes and executes no scripts. It is a representation change, not a content-safety boundary.
+
+**`web_search`** (network; Exa API):
+
+- **Egress and secrets.** Queries leave the host for Exa. The API key is read from the configured environment variable and sent only to Exa's fixed HTTPS endpoint.
+- **Untrusted results.** Titles, snippets, URLs, and requested extracted contents are attacker-controlled web data and must not be treated as instructions.
 
 **`traces_read`** (read-only over an agent home's `traces/` + `feedback/`):
 
@@ -55,6 +72,8 @@ The operator is responsible for the process and OS boundary when running an untr
 Granting an MCP server is equivalent to trusting its command. `--config` exposes the command and args for audit.
 
 `[tools.agent.*]` starts a built Hugr agent whose own manifest is its jail. Privileges compose downward only.
+
+`[tools.delegate]` starts the same agent in a fresh subprocess context. It does not attenuate privileges because the child has the same manifest. A cross-process depth budget terminates recursive self-delegation.
 
 **Feedback sidecars.** Feedback payloads are untrusted text/JSON from a caller, often from another model. They are stored append-only outside the trace and are never consumed during an answer, but any later analytics or self-improvement agent that reads `<agent-home>/feedback` must treat the payload as attacker-controlled input.
 

@@ -64,7 +64,7 @@ crates/hugr-agent/      # the subagent runtime: Ask/Answer, trace/blob/scratch b
                         #   (trace_id/depends_on, fork), scratchpad, blobs,
                         #   limits, cost accounting, agent-as-tool (subprocess)
 crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library
-                        #   (fs_read, http_fetch, sqlite_query), and the `hugr`
+                        #   (filesystem, shell, web, state, delegation), and the `hugr`
                         #   CLI: new / run / build / traces / replay / verify
 crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS
                         #   hosts (submit/poll over JSON + browser tool schemas)
@@ -105,7 +105,7 @@ Tools are granted in the manifest and jailed to their declared scope through san
 
 A built Hugr agent can be granted as a tool with `[tools.agent.<name>]` and a subprocess over the CLI JSON contract. Delegation never widens privileges, and the child's cost folds into the caller's `AnswerMeta`.
 
-The tool library is exec-free except for the planned sandboxed `code_exec`; never add a `shell` to the library. MCP (`[tools.mcp.<name>]`) is the **only** external-process tool escape hatch.
+Process access is an explicit operator grant. Restricted `[tools.shell]` executes allowlisted programs directly without shell syntax; `full_access = true`, `[tools.mcp.<name>]`, and agent delegation are external-process escape hatches whose operating-system sandbox belongs to the host. Never register them without the matching manifest grant.
 
 When extending the host, keep capabilities uniform with no privileged built-ins. A model call is an effect provided by the host and registered like a capability. The adapter handles transport errors such as retries and 429s, while semantic errors return to the model as tool results.
 

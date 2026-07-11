@@ -67,6 +67,6 @@ The toolkit uses that block to generate the CLI argument and the MCP `ask` schem
 
 ## Tooling Model
 
-The manifest grants the toolkit's read-only `fs_read` library. At runtime, `docs_path` scopes that grant to one canonicalized folder and registers `fs_list`, `fs_search`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`.
+The manifest grants the toolkit's read-only `fs_read` library. At runtime, `docs_path` scopes that grant to one canonicalized folder and registers `fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`.
 
 Each filesystem tool rejects absolute paths, parent-directory traversal, and symlink escapes outside the runtime docs root. There is no shell access, no write/edit tool, and no HTTP tool.

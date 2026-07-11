@@ -41,7 +41,7 @@ artifact = "../examples/hugr-weather/dist"
 ### What the grant does *not* widen
 
 - **Privileges compose downward only.** The child runs under its **own** manifest, tool jail, tiers, and limits. Granting it never exposes the parent's capabilities; an agent with `[tools.fs_read]` cannot reach into the child's scratch.
-- **There is no second escape hatch.** The library is exec-free; MCP (`[tools.mcp.<name>]`) is the *only* external-process tool escape hatch. `agent` is built artifacts only, spawned as a subprocess over the CLI JSON contract.
+- **Process access is explicit.** Child agents are built artifacts spawned over the CLI JSON contract. MCP and full shell grants are separate trusted subprocess boundaries; restricted shell mode invokes only exact allowlisted programs without shell parsing.
 
 ## Hand the child a blob, zero bytes crossing
 

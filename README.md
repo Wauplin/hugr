@@ -50,7 +50,7 @@ root = "./policies"        # read-only, jailed to this folder
 
 The manifest defines the agent's blast radius and is the document to audit. A tool that is not granted is not registered, so there is no code path to it. Unknown keys are hard errors, so a typo cannot silently widen or narrow the grant.
 
-The tool library is exec-free by design: `fs_read` (six read-only `fs_*` tools), `web_fetch`, `memory`, `traces_read`, and the scratchpad. `[tools.mcp.<name>]` is the one external-process escape hatch, and `[tools.agent.<name>]` grants another built Hugr agent as a tool. There is no shell.
+The built-in library includes jailed filesystem reads and writes, restricted or full shell execution, allowlisted web fetch, Exa web search, memory, trace inspection, scratch state, and isolated self-delegation. High-privilege tools remain opt-in grants: restricted shell commands execute without shell syntax, while full shell and full-disk roots explicitly hand sandboxing to the operator. See the [built-in capability reference](docs/capabilities.md).
 
 ## What every agent gets
 
@@ -59,6 +59,7 @@ The tool library is exec-free by design: `fs_read` (six read-only `fs_*` tools),
 - **Sandboxing by construction.** An agent registers only the tools granted by its manifest, each jailed to its declared scope. Every agent also gets a private, jailed scratchpad and explicit blob exchange with the caller.
 - **Cost accounting.** Every response carries cost (from per-tier pricing config), duration, and token counts, folded from the trace. `hugr stats` aggregates them across runs.
 - **Composition.** A built Hugr agent is a tool: grant it with `[tools.agent.<name>] artifact = "..."` and call it like any capability. Delegation never widens privileges, and the child's cost folds into the caller's metadata.
+- **Isolated self-delegation.** Grant `[tools.delegate]` when an agent should call itself in a fresh context window. Recursion is depth-capped and child cost folds into the parent.
 
 ## Example: the reference docs agent
 
@@ -149,6 +150,7 @@ hugr/
 - [Agents](docs/agents.md): defining, running, building, composing, and embedding agents; the manifest; tools vs capabilities.
 - [Runtime](docs/runtime.md): the sans-IO design, core and host contract, determinism, and replay.
 - [Security](docs/security.md): the security model and threat notes for each capability.
+- [Built-in capabilities](docs/capabilities.md): every toolkit grant, option, limit, and trust boundary.
 - [Project structure](docs/project-structure.md): crate boundaries, dependency rules, and standards positioning.
 - [Reference](docs/reference.md): open questions, glossary, and naming.
 

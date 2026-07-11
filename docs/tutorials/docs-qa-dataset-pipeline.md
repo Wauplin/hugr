@@ -14,7 +14,7 @@ The tutorial is self-contained: the next section covers the Hugr concepts it use
 
 **Every ask leaves an immutable trace.** The full session — every model call, tool call, and result — persists as a trace file under `~/.hugr/<agent>/traces/`. Passing `trace_id=` to a later ask resumes that conversation (the trace is re-folded, nothing re-runs); asking the same parent twice forks it. Traces replay deterministically: `hugr replay --step` reconstructs a run event by event. See [guide 8](../guides/08-traces-replay-debugging.md).
 
-**Tools are granted, not discovered.** An agent can only invoke what its definition registers — a manifest grant like `[tools.fs_read]` jailed to a declared root, or a Python callable you pass in. There is no shell in the tool library, by design. See [the security model](../security.md).
+**Tools are granted, not discovered.** An agent can only invoke what its definition registers, such as `[tools.fs_read]` jailed to a declared root or a Python callable supplied by the host. This agent does not grant the optional shell. See [the capability reference](../capabilities.md) and [security model](../security.md).
 
 **Typed response contracts.** A Rust struct exported as `RESPONSE_RUST_TYPE` becomes the provider's structured-output schema, and the final model JSON is cast into it before it reaches you. Downstream code gets dataclasses, not string parsing. See [guide 2](../guides/02-typed-responses-and-hooks.md).
 

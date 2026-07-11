@@ -30,6 +30,9 @@ async-trait = { workspace = true }
 anyhow = { workspace = true }
 # web_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
 reqwest = { workspace = true }
+regex = "1"
+globset = "0.4"
+html2md = "0.2"
 # `hugr run` assembles a hugr-agent runtime from an agent manifest and executes
 # one ask over the native engine with the OpenAI-compatible adapter.
 hugr-agent = { workspace = true }

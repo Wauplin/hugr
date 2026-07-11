@@ -5,8 +5,11 @@
 //! [`build_library_grant`] turns one `ToolKind::Library` [`ToolGrant`] into the concrete capabilities it registers, resolving relative scope paths against the agent crate folder (`base_dir`). External-tool grants (MCP / agent) are handled elsewhere.
 
 mod fs_read;
+mod fs_write;
+mod shell;
 mod traces_read;
 mod web_fetch;
+mod web_search;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -14,8 +17,11 @@ use std::sync::Arc;
 use hugr_host::Capability;
 
 pub use fs_read::FsRoot;
+pub use fs_write::FsWriteRoot;
+pub use shell::Shell;
 pub use traces_read::TracesRoot;
 pub use web_fetch::WebFetch;
+pub use web_search::WebSearch;
 
 use crate::manifest::{ToolGrant, ToolKind};
 
@@ -42,12 +48,26 @@ pub const CATALOG: &[LibraryToolSpec] = &[
         tools: &[
             "fs_list",
             "fs_search",
+            "fs_grep",
+            "fs_glob",
             "fs_read",
             "fs_read_range",
             "fs_read_many",
             "fs_outline",
         ],
-        summary: "Root-jailed read-only filesystem access (list/search/read/outline).",
+        summary: "Root-jailed read-only filesystem access (list/search/grep/glob/read/outline).",
+    },
+    LibraryToolSpec {
+        id: "fs_write",
+        privilege: "write",
+        tools: &["fs_write", "fs_create_dir", "fs_remove"],
+        summary: "Root-jailed filesystem writes, directory creation, and removal.",
+    },
+    LibraryToolSpec {
+        id: "shell",
+        privilege: "process",
+        tools: &["shell"],
+        summary: "Operator-granted full shell or direct execution of allowlisted commands.",
     },
     LibraryToolSpec {
         id: "scratchpad",
@@ -79,6 +99,18 @@ pub const CATALOG: &[LibraryToolSpec] = &[
         privilege: "network",
         tools: &["web_fetch"],
         summary: "Host/method-allowlisted HTTP fetch (GET-only by default).",
+    },
+    LibraryToolSpec {
+        id: "web_search",
+        privilege: "network",
+        tools: &["web_search"],
+        summary: "Exa-backed web search using an API key from the environment.",
+    },
+    LibraryToolSpec {
+        id: "delegate",
+        privilege: "delegation",
+        tools: &["delegate"],
+        summary: "Spawn this built agent as an isolated child context.",
     },
 ];
 
@@ -138,6 +170,30 @@ pub fn build_library_grant(
             let fs_root = FsRoot::new(&resolved).map_err(cfg)?;
             Ok(fs_root.capabilities())
         }
+        "fs_write" => {
+            let root = grant
+                .config
+                .get("root")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let p = Path::new(root);
+            let resolved = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                base_dir.join(p)
+            };
+            Ok(FsWriteRoot::new(&resolved).map_err(cfg)?.capabilities())
+        }
+        "shell" => {
+            let mut config = grant.config.clone();
+            if let Some(cwd) = config.get("cwd").and_then(|v| v.as_str()) {
+                let path = Path::new(cwd);
+                if !path.is_absolute() {
+                    config["cwd"] = base_dir.join(path).to_string_lossy().into_owned().into();
+                }
+            }
+            Ok(vec![Arc::new(Shell::from_config(&config).map_err(cfg)?)])
+        }
         "traces_read" => {
             let root = grant
                 .config
@@ -159,6 +215,11 @@ pub fn build_library_grant(
             let tool = WebFetch::from_config(&grant.config).map_err(cfg)?;
             Ok(vec![Arc::new(tool)])
         }
+        "web_search" => Ok(vec![Arc::new(
+            WebSearch::from_config(&grant.config).map_err(cfg)?,
+        )]),
+        // Runtime wiring supplies the current agent executable and accounting.
+        "delegate" => Ok(Vec::new()),
         // Provided by the agent runtime. Recognized for audit; registers nothing here.
         "scratchpad" | "memory" => Ok(Vec::new()),
         other => Err(ToolError::Unknown(other.to_string())),
@@ -185,10 +246,14 @@ mod tests {
             ids,
             vec![
                 "fs_read",
+                "fs_write",
+                "shell",
                 "scratchpad",
                 "memory",
                 "traces_read",
-                "web_fetch"
+                "web_fetch",
+                "web_search",
+                "delegate"
             ]
         );
     }

@@ -2,13 +2,15 @@
 //! from the `hugr-docs` retrieval tools: the docs-specific `AI_INDEX`/`is_index`
 //! bits are dropped and the root is a manifest-configured scope.
 //!
-//! One grant registers a family of six read capabilities, all sharing the same
+//! One grant registers a family of eight read capabilities, all sharing the same
 //! [`FsRoot`] jail:
 //!
 //! | tool             | purpose                                             |
 //! | ---------------- | --------------------------------------------------- |
 //! | `fs_list`        | list files/dirs (optionally recursive)              |
 //! | `fs_search`      | case-insensitive substring search over text files   |
+//! | `fs_grep`        | regular-expression search over text files            |
+//! | `fs_glob`        | match paths with a glob pattern                      |
 //! | `fs_read`        | read one text file (byte-capped)                    |
 //! | `fs_read_range`  | read a 1-based inclusive line range                 |
 //! | `fs_read_many`   | read several files in one call                      |
@@ -26,8 +28,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use globset::{Glob, GlobSetBuilder};
 use hugr_core::{ToolSchema, Value};
 use hugr_host::{Capability, ChunkSink};
+use regex::RegexBuilder;
 use serde_json::json;
 
 const DEFAULT_READ_LIMIT_BYTES: usize = 200_000;
@@ -65,11 +69,13 @@ impl FsRoot {
         })
     }
 
-    /// The six read capabilities backed by this root.
+    /// The eight read capabilities backed by this root.
     pub fn capabilities(&self) -> Vec<Arc<dyn Capability>> {
         vec![
             Arc::new(FsList(self.clone())),
             Arc::new(FsSearch(self.clone())),
+            Arc::new(FsGrep(self.clone())),
+            Arc::new(FsGlob(self.clone())),
             Arc::new(FsRead(self.clone())),
             Arc::new(FsReadRange(self.clone())),
             Arc::new(FsReadMany(self.clone())),
@@ -222,6 +228,8 @@ macro_rules! read_tool {
 
 read_tool!(FsList, "fs_list");
 read_tool!(FsSearch, "fs_search");
+read_tool!(FsGrep, "fs_grep");
+read_tool!(FsGlob, "fs_glob");
 read_tool!(FsRead, "fs_read");
 read_tool!(FsReadRange, "fs_read_range");
 read_tool!(FsReadMany, "fs_read_many");
@@ -543,6 +551,127 @@ impl Capability for FsSearch {
     }
 }
 
+#[async_trait]
+impl Capability for FsGrep {
+    fn name(&self) -> &str {
+        "fs_grep"
+    }
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "fs_grep",
+            "Search text files under the tool root with a Rust regular expression.",
+            json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"case_sensitive":{"type":"boolean"},"max_matches":{"type":"integer","minimum":1,"maximum":500}},"required":["pattern"],"additionalProperties":false}),
+        )
+    }
+    fn requires_permission(&self) -> bool {
+        false
+    }
+    async fn invoke(&self, args: Value, _: &ChunkSink) -> std::result::Result<Value, Value> {
+        wrap(grep_impl(&self.0, args))
+    }
+}
+
+fn grep_impl(root: &FsRoot, args: Value) -> Result<Value> {
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .context("fs_grep requires string `pattern`")?;
+    let regex = RegexBuilder::new(pattern)
+        .case_insensitive(
+            !args
+                .get("case_sensitive")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        )
+        .build()
+        .context("invalid fs_grep pattern")?;
+    let limit = args
+        .get("max_matches")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_MAX_MATCHES as u64)
+        .clamp(1, 500) as usize;
+    let start = root.resolve_existing(args.get("path").and_then(Value::as_str))?;
+    let files = if start.is_file() {
+        vec![start]
+    } else {
+        walk_files(root, &start, WALK_CEILING)?
+    };
+    let mut matches = Vec::new();
+    let mut searched_files = 0;
+    for file in files {
+        let Ok(meta) = fs::metadata(&file) else {
+            continue;
+        };
+        if !meta.is_file() || !looks_textual(&file) || meta.len() > DEFAULT_SEARCH_LIMIT_BYTES {
+            continue;
+        }
+        searched_files += 1;
+        let (content, _) = read_utf8_prefix(&file, DEFAULT_SEARCH_LIMIT_BYTES as usize)?;
+        let rel = root.rel_path(&file)?;
+        for (i, line) in content.lines().enumerate() {
+            if regex.is_match(line) {
+                matches.push(json!({"path":rel,"line":i+1,"snippet":line.trim()}));
+                if matches.len() >= limit {
+                    return Ok(
+                        json!({"pattern":pattern,"matches":matches,"searched_files":searched_files,"truncated":true}),
+                    );
+                }
+            }
+        }
+    }
+    Ok(
+        json!({"pattern":pattern,"matches":matches,"searched_files":searched_files,"truncated":false}),
+    )
+}
+
+#[async_trait]
+impl Capability for FsGlob {
+    fn name(&self) -> &str {
+        "fs_glob"
+    }
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "fs_glob",
+            "Match file paths under the tool root with a glob pattern. `**` crosses directories.",
+            json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"max_matches":{"type":"integer","minimum":1,"maximum":2000}},"required":["pattern"],"additionalProperties":false}),
+        )
+    }
+    fn requires_permission(&self) -> bool {
+        false
+    }
+    async fn invoke(&self, args: Value, _: &ChunkSink) -> std::result::Result<Value, Value> {
+        wrap(glob_impl(&self.0, args))
+    }
+}
+
+fn glob_impl(root: &FsRoot, args: Value) -> Result<Value> {
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .context("fs_glob requires string `pattern`")?;
+    let mut builder = GlobSetBuilder::new();
+    builder.add(Glob::new(pattern).context("invalid fs_glob pattern")?);
+    let matcher = builder.build()?;
+    let start = root.resolve_existing(args.get("path").and_then(Value::as_str))?;
+    anyhow::ensure!(start.is_dir(), "fs_glob path must be a directory");
+    let limit = args
+        .get("max_matches")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_LIST_LIMIT as u64)
+        .clamp(1, 2000) as usize;
+    let mut matches = Vec::new();
+    for file in walk_files(root, &start, WALK_CEILING)? {
+        let rel = root.rel_path(&file)?;
+        if matcher.is_match(&rel) {
+            matches.push(rel);
+            if matches.len() >= limit {
+                return Ok(json!({"matches":matches,"truncated":true}));
+            }
+        }
+    }
+    Ok(json!({"matches":matches,"truncated":false}))
+}
+
 fn search_impl(root: &FsRoot, args: Value) -> Result<Value> {
     let query = args
         .get("query")
@@ -733,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_reads_searches_and_outlines() {
+    fn lists_reads_searches_greps_globs_and_outlines() {
         let (_dir, root) = root("basic");
         let listed = list_impl(&root, json!({ "recursive": true })).unwrap();
         let paths: Vec<_> = listed["entries"]
@@ -751,6 +880,16 @@ mod tests {
         let searched = search_impl(&root, json!({ "query": "needle" })).unwrap();
         assert_eq!(searched["matches"].as_array().unwrap().len(), 1);
         assert_eq!(searched["matches"][0]["path"], "sub/b.txt");
+
+        let grepped = grep_impl(
+            &root,
+            json!({ "pattern": "NEE.*", "case_sensitive": false }),
+        )
+        .unwrap();
+        assert_eq!(grepped["matches"][0]["path"], "sub/b.txt");
+
+        let globbed = glob_impl(&root, json!({ "pattern": "**/*.md" })).unwrap();
+        assert_eq!(globbed["matches"][0], "a.md");
 
         let outline = outline_impl(&root, json!({ "path": "a.md" })).unwrap();
         assert_eq!(outline["documents"][0]["headings"][0]["text"], "Title");

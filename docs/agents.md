@@ -257,7 +257,7 @@ A **tool** is the model-facing view: a manifest grant (`[tools.fs_read]`, `[tool
 
 A **capability** is the host-side implementation behind that view: a Rust `Capability` (a name, the JSON schema advertised to the model, permission and background flags, and an `invoke` method) registered in the host's `CapabilityRegistry`. The brain never executes anything itself; it emits `StartCapability { name, args }` and the host looks the name up in the registry. There are no privileged built-ins: `fs_read`, an MCP bridge, a granted child agent, and even the model adapter at the host level all register through the same interface.
 
-The mapping is not always one-to-one. One `fs_read` grant registers six `fs_*` capabilities; one `[tools.agent.<name>]` grant registers `agent_<name>` and `agent_<name>_feedback`. Sandbox-by-registration ties the two sides together: a tool that is not granted in the manifest has no capability registered, so there is no code path to it.
+The mapping is not always one-to-one. One `fs_read` grant registers eight `fs_*` capabilities; one `[tools.agent.<name>]` grant registers `agent_<name>` and `agent_<name>_feedback`. Sandbox-by-registration ties the two sides together: a tool that is not granted in the manifest has no capability registered, so there is no code path to it.
 
 In short: you grant tools in the manifest and the model calls tools; the host registers and invokes capabilities. When a sentence works with either word, the model-facing side is a tool and the host-facing side is a capability.
 
@@ -265,19 +265,25 @@ In short: you grant tools in the manifest and the model calls tools; the host re
 
 The tool library provides vetted, parameterized capabilities selected by manifest grant. Each is jailed to its declared scope and covered by a [threat-model note](security.md#capability-threat-notes):
 
-- **`fs_read`:** root-jailed read-only family: `fs_list` / `fs_search` / `fs_read` / `fs_read_range` / `fs_read_many` / `fs_outline`.
+- **`fs_read`:** root-jailed read-only family including list, literal search, regular-expression grep, glob, reads, and outlines.
+- **`fs_write`:** root-jailed file creation/replacement/append, single-directory creation, and non-recursive removal.
+- **`shell`:** either direct execution of an operator allowlist without shell syntax or explicit full access through `<shell> -lc`.
 - **`scratchpad`:** ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime and always enabled).
 - **`memory`:** optional `memory_read` / `memory_write` / `memory_list`, jailed to durable agent-wide memory at `<agent-home>/memory` by default. `readonly = true` makes writes semantic errors.
 - **`traces_read`:** root-jailed read-only family over one agent home's stored traces and feedback sidecars: `trace_list` / `trace_ops` / `trace_transcript` / `feedback_list`. Results are summaries and paged, size-capped excerpts rather than raw trace JSON, so offline analysis such as the `hugr-insights` example fits a context budget.
-- **`web_fetch`:** host-allowlisted GET-only fetch that fails closed on an empty allowlist and does not follow redirects automatically.
+- **`web_fetch`:** host-allowlisted GET-only fetch that fails closed on an empty allowlist, does not follow redirects automatically, and can convert HTML to Markdown.
+- **`web_search`:** Exa-backed search using a key read from an operator-named environment variable.
+- **`delegate`:** self-delegation into a fresh subprocess context, with depth-capped recursion and folded cost.
 
-The library is **exec-free**: no shell tool exists, and nothing in the library spawns a process except granted child agents. A sandboxed `code_exec` (pinned interpreter, cwd = scratchpad, no network, capped) is a designed future addition; a general `shell` never enters the library.
+Process access remains grant-driven. Restricted shell mode bypasses shell parsing and executes only an exact allowlisted program; full shell mode deliberately trusts the operator's outer sandbox. The complete option and limit reference is in [Built-in capabilities](capabilities.md).
 
-Custom tools, in order of weight, can be **another Hugr agent** (`[tools.agent.<name>]`), an **MCP server** (`[tools.mcp.<name>]`, stdio, with namespaced tools), or a compiled-in Rust `Capability` for direct runtime embeddings. MCP is the only external-process escape hatch; Hugr has no separate plugin protocol.
+Custom tools can be **another Hugr agent** (`[tools.agent.<name>]`), an **MCP server** (`[tools.mcp.<name>]`, stdio, with namespaced tools), or a compiled-in Rust `Capability` for direct runtime embeddings. Full shell, MCP, and agent calls are explicit external-process grants; Hugr has no separate plugin protocol.
 
 ## Agents as tools
 
 Because every agent exposes the same ask contract, granting one agent to another is a manifest line. The grant registers **ordinary capabilities** named `agent_<name>` and `agent_<name>_feedback`.
+
+For an isolated context using the same agent and manifest, `[tools.delegate]` registers `delegate`. It uses the current CLI artifact by default and accepts an explicit `artifact` for language-hosted processes.
 
 `agent_<name>` accepts an `Ask` containing a question, an optional `trace_id` for follow-ups, and blob handles. It returns the full `Answer`.
 

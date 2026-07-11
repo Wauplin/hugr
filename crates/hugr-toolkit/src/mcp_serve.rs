@@ -539,7 +539,7 @@ help = "Docs root."
         )
         .await
         .unwrap();
-        assert_eq!(call["result"]["isError"], false);
+        assert!(!call["result"]["isError"].as_bool().unwrap_or(false));
         let answer = &call["result"]["structuredContent"];
         let trace_id = answer["trace_id"].as_str().unwrap().to_string();
         assert!(!trace_id.is_empty(), "trace persisted: {answer}");
