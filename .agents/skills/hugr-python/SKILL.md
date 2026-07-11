@@ -26,22 +26,15 @@ Import the package as `hugr_agents`. It runs the native Rust runtime; the Python
 
 ## Define tools and the agent
 
-Define an explicit JSON Schema for every callable. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
+Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead — the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
 
 ```python
 import hugr_agents as hugr
 
-@hugr.tool(
-    name="lookup_policy",
-    description="Search policy text by keyword.",
-    schema={
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-    },
-)
-def lookup_policy(args):
-    return {"matches": search_policy_text(args["query"])}
+@hugr.tool
+def lookup_policy(query: str) -> dict:
+    """Search policy text by keyword."""
+    return {"matches": search_policy_text(query)}
 
 agent = hugr.Agent(
     name="policy-helper",

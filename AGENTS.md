@@ -10,7 +10,7 @@ A subagent is a small Rust crate plus a system prompt and a set of tools with de
 
 The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality.
 
-`docs/tutorials/` contains teaching material that links to the reference documentation instead of restating it. A behavior change is not complete until the reference documentation matches reality and every tutorial that shows the changed behavior still works.
+`docs/tutorials/` contains teaching material that links to the reference documentation instead of restating it; `docs/guides/` contains self-contained end-to-end walkthroughs whose command outputs come from real runs. A behavior change is not complete until the reference documentation matches reality and every tutorial or guide that shows the changed behavior still works.
 
 ## The one rule that matters most
 
@@ -81,6 +81,10 @@ examples/hugr-weather/  # the self-contained beginner example; also the source o
                         #   at compile time, name substituted)
 examples/hugr-insights/ # offline self-improvement agent: mines another agent's
                         #   traces + feedback via traces_read and reports suggestions
+examples/hugr-datasmith/ # docs-QA dataset synthesizer: fs_read-jailed, typed QaDataset
+                        #   contract, buildable as a typed Python wheel
+examples/hf-librarian/  # Python-surface pipeline: datasmith wheel → jailed Hub
+                        #   publisher → judge-graded eval of hugr-docs
 examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   side-panel UI, MV3 manifest (vendors the generic JS)
 .agents/skills/          # concise coding-agent workflows for building Hugr agents,

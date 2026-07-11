@@ -1,17 +1,20 @@
 """Define Hugr subagents in Python, running on the Rust runtime.
 
 Config keys mirror ``hugr.toml`` sections 1:1 (``models``, ``limits``,
-``context``, ``grants`` for ``[tools]``); tools are ordinary Python callables.
-Tool callables are trusted host code: Hugr jails what the *model* can invoke,
-not what your Python does once invoked.
+``context``, ``grants`` for ``[tools]``); tools are ordinary Python callables
+whose parameter schema is inferred from type annotations (or passed explicitly
+via ``schema=``). Tool callables are trusted host code: Hugr jails what the
+*model* can invoke, not what your Python does once invoked.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from dataclasses import dataclass
 from typing import (
+    Any,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -20,6 +23,9 @@ from typing import (
     Sequence,
     Union,
     cast,
+    get_args,
+    get_origin,
+    get_type_hints,
     overload,
 )
 
@@ -158,14 +164,15 @@ __all__ = [
     "STATUS_ERROR",
 ]
 
-ToolFn = Callable[[JsonObject], Union[JsonValue, Awaitable[JsonValue]]]
+ToolFn = Callable[..., Union[JsonValue, Awaitable[JsonValue]]]
+DictToolFn = Callable[[JsonObject], Union[JsonValue, Awaitable[JsonValue]]]
 
 
 @dataclass
 class Tool:
-    """One model-invocable tool: an explicit name/description/JSON-schema plus a sync or async callable."""
+    """One model-invocable tool: a name/description/JSON-schema plus a sync or async callable taking the arguments dict."""
 
-    fn: ToolFn
+    fn: DictToolFn
     name: str
     description: str
     schema: JsonObject
@@ -174,6 +181,74 @@ class Tool:
 
     def __call__(self, args: JsonObject) -> Union[JsonValue, Awaitable[JsonValue]]:
         return self.fn(args)
+
+
+_SCALAR_SCHEMAS: dict[Any, JsonObject] = {
+    str: {"type": "string"},
+    int: {"type": "integer"},
+    float: {"type": "number"},
+    bool: {"type": "boolean"},
+}
+
+
+def _annotation_schema(annotation: Any) -> JsonObject:
+    """JSON schema for one parameter annotation; raises for shapes we cannot map."""
+    if annotation in _SCALAR_SCHEMAS:
+        return dict(_SCALAR_SCHEMAS[annotation])
+    if annotation is list:
+        return {"type": "array"}
+    if annotation is dict:
+        return {"type": "object"}
+    if annotation is Any:
+        return {}
+    origin = get_origin(annotation)
+    if origin is list:
+        args = get_args(annotation)
+        return {"type": "array", "items": _annotation_schema(args[0])} if args else {"type": "array"}
+    if origin is dict:
+        return {"type": "object"}
+    if origin is Union:
+        variants = [a for a in get_args(annotation) if a is not type(None)]
+        if len(variants) == 1:
+            return _annotation_schema(variants[0])
+    raise TypeError(
+        f"cannot infer a JSON schema for annotation {annotation!r}; "
+        "use str/int/float/bool/list[...]/dict/Optional[...] or pass schema= explicitly"
+    )
+
+
+def _schema_from_signature(fn: ToolFn) -> JsonObject:
+    """Infer the tool's parameters schema from `fn`'s type annotations, FastAPI-style."""
+    hints = get_type_hints(fn)
+    properties: JsonObject = {}
+    required: List[JsonValue] = []
+    for param in inspect.signature(fn).parameters.values():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise TypeError(f"tool `{fn.__name__}` cannot use *args/**kwargs; declare named parameters")
+        if param.name not in hints:
+            raise TypeError(
+                f"tool `{fn.__name__}` parameter `{param.name}` has no type annotation; "
+                "annotate it or pass schema= explicitly"
+            )
+        prop = _annotation_schema(hints[param.name])
+        if param.default is not inspect.Parameter.empty:
+            prop["default"] = param.default
+        else:
+            required.append(param.name)
+        properties[param.name] = prop
+    schema: JsonObject = {"type": "object", "properties": properties, "additionalProperties": False}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def _splat(fn: ToolFn) -> DictToolFn:
+    """Adapt a named-parameters callable to the runtime's arguments-dict calling convention."""
+
+    def call(args: JsonObject) -> Union[JsonValue, Awaitable[JsonValue]]:
+        return fn(**args)
+
+    return call
 
 
 @overload
@@ -211,17 +286,25 @@ def tool(
     requires_permission: bool = False,
     background: bool = False,
 ) -> Union[Tool, Callable[[ToolFn], Tool]]:
-    """Wrap a callable as a :class:`Tool`. Usable as ``tool(fn, ...)`` or ``@tool(...)``.
+    """Wrap a callable as a :class:`Tool`. Usable as ``@tool``, ``@tool(...)``, or ``tool(fn, ...)``.
 
-    Schemas are explicit by design — the advertised tool surface stays auditable.
+    By default the parameters schema is inferred from the function's type
+    annotations, FastAPI-style: each named parameter becomes a schema property
+    (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]`), parameters
+    without defaults are required, and the model's arguments are passed as
+    keyword arguments. The name defaults to the function name and the
+    description to its docstring.
+
+    Pass ``schema=`` to advertise a hand-written JSON schema instead; the
+    callable then receives the raw arguments dict as its single parameter.
     """
 
     def wrap(fn: ToolFn) -> Tool:
         return Tool(
-            fn=fn,
+            fn=cast(DictToolFn, fn) if schema is not None else _splat(fn),
             name=name or fn.__name__,
             description=description or (fn.__doc__ or "").strip(),
-            schema=schema or {"type": "object"},
+            schema=schema if schema is not None else _schema_from_signature(fn),
             requires_permission=requires_permission,
             background=background,
         )

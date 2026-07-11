@@ -1,0 +1,3 @@
+# PyPI dependencies of the pipeline. The Hugr packages (hugr-agents, hugr-datasmith,
+# hugr-docs) are PyO3 wheels built locally from this repo — see README.md.
+huggingface_hub>=1.0

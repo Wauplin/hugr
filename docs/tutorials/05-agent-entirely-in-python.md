@@ -1,8 +1,8 @@
 # An agent entirely in Python
 
-This tutorial defines a Hugr subagent from scratch in pure Python. The system prompt is a string, model config is a dict, and tools are ordinary callables. The agent runs on the same Rust runtime as every other surface.
+This tutorial defines a Hugr subagent from scratch in pure Python. The system prompt is a string, model config is a dict, and tools are ordinary callables. The agent runs on the same Rust runtime as every other surface. It is a natural fit when the useful capabilities already live in a Python SDK, data pipeline, notebook, or internal library.
 
-The tutorial covers the `hugr-agents` package end to end. Topics include the `@hugr.tool` decorator for sync and async tools, the `Agent` constructor and its manifest-shaped config, `agent.ask()` for blocking runs, and `async for event in agent.run(...)` for streaming. It also covers generating tool and response JSON Schemas from Pydantic dataclasses, `agent.feedback()`, `agent.stats()`, and Rust CLI verification of traces stored under `~/.hugr/<name>/`.
+The tutorial covers the `hugr-agents` package end to end. Topics include the `@hugr.tool` decorator for sync and async tools, standard-library dataclasses alongside explicit JSON Schemas, the `Agent` constructor and its manifest-shaped config, `agent.ask()` for blocking runs, and `async for event in agent.run(...)` for streaming. It closes with an optional Pydantic example for applications that already use it, as well as `agent.feedback()`, `agent.stats()`, and Rust CLI verification of traces stored under `~/.hugr/<name>/`.
 
 Prerequisite: [tutorial 01](01-first-agent-cli.md) for the ask/answer/trace vocabulary. For the design rationale behind runtime embedding and its distinction from `hugr build --surface python`, see [the language surfaces documentation](../agents.md#language-surfaces).
 
@@ -23,43 +23,51 @@ maturin develop --release
 import hugr_agents as hugr
 ```
 
+Pydantic is not required to define or run a Python agent; the base tutorial uses only the standard library. Install it only for the optional schema-generation example later in this page.
+
 The native crate (`hugr_agents._native`) embeds a tokio runtime and drives the real `hugr-agent` assembly path. A Python-defined agent therefore behaves like a manifest-defined one.
 
 The boundary between the two layers is JSON strings. The native module owns the runtime and all validation. The pure-Python layer declares inputs with `TypedDict`s and recursively casts structured outputs into dataclasses.
 
 ## Define a tool
 
-A tool is a callable plus an explicit JSON Schema; the advertised surface stays auditable, and Hugr never infers a schema from your signature. Wrap any callable with `@hugr.tool`:
+A tool is an ordinary annotated function. `@hugr.tool` reads the advertised surface straight off it — the name from the function, the description from the docstring, and the JSON Schema from the type annotations, FastAPI-style:
 
 ```python
 import hugr_agents as hugr
 
-@hugr.tool(
-    name="lookup_policy",
-    description="Search policy text by keyword.",
-    schema={
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-    },
-)
-def lookup_policy(args):
-    return {"matches": search_policy_text(args["query"])}
+
+@hugr.tool
+def lookup_policy(query: str, limit: int = 5) -> dict:
+    """Search policy text by keyword."""
+    return {"matches": search_policy_text(query)[:limit]}
 ```
 
-The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@hugr.tool`), called (`hugr.tool(fn, ...)`), or as a decorator factory (`@hugr.tool(...)`).
+This advertises `{"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"], "additionalProperties": false}`, and the model's arguments arrive as keyword arguments. Supported annotations: `str`, `int`, `float`, `bool`, `list[...]`, `dict`, and `Optional[...]`; parameters without defaults are required. An unannotated parameter is an error — the advertised surface must stay auditable, so Hugr refuses to guess.
 
-When `name` is omitted, it defaults to `fn.__name__`. When `description` is omitted, it falls back to the function's docstring. When `schema` is omitted, the tool gets `{"type": "object"}` with no required fields and accepts any args dict.
+The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@hugr.tool`), called (`hugr.tool(fn, ...)`), or as a decorator factory (`@hugr.tool(...)`), and `name`/`description` override the inferred values.
 
-The callable takes one argument: a `dict` of decoded JSON args that matches the schema. It returns a JSON-serializable result.
+When a tool's input shape outgrows what annotations can express (nested objects, enums, cross-field constraints), pass `schema=` explicitly. The callable then receives the raw decoded arguments as a single `dict` and validates however it likes:
+
+```python
+@hugr.tool(schema={
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+})
+def lookup_policy(args):
+    """Search policy text by keyword."""
+    return {"matches": search_policy_text(args["query"])}
+```
 
 ### Async tools
 
 The callable may be `async`. The runtime awaits it inside the tokio worker pool:
 
 ```python
-@hugr.tool(name="lookup", description="d", schema={"type": "object"})
-async def lookup(args):
+@hugr.tool
+async def lookup(word: str) -> dict:
+    """Look a word up."""
     await some_async_work()
     return {"definition": "async ok"}
 ```
@@ -130,9 +138,32 @@ Tools you define in Python (the `tools=[...]` list) are registered as capabiliti
 
 `context` mirrors the manifest's `[context]` block for context projection and deterministic compaction.
 
-`response_schema` is an optional JSON Schema dict. When set, the schema rides the provider request as `response_format`, and the final JSON is validated against it.
+`response_schema` is an optional JSON Schema dict. When set, the schema rides the provider request as `response_format`, so a compatible provider can constrain the model's final JSON.
 
-This is the pure-Python equivalent of the Rust `RESPONSE_RUST_TYPE` contract from [tutorial 02](02-typed-responses-and-hooks.md). Without a Rust type, validation occurs at the schema level rather than through a `serde` cast.
+This is the pure-Python counterpart to the Rust `RESPONSE_RUST_TYPE` contract from [tutorial 02](02-typed-responses-and-hooks.md). The generic Python path preserves the final value as a JSON object; it does not return a domain dataclass or locally validate it against this schema. A small application can keep using a raw schema dict and construct its own standard-library dataclass from `answer.response`. The optional Pydantic example below shows how an existing Pydantic application can generate the schema and validate the final object from one set of types.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class PolicyAnswer:
+    answer: str
+
+
+policy_response_schema = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+    "required": ["answer"],
+    "additionalProperties": False,
+}
+
+# Pass response_schema=policy_response_schema to Agent(...).
+answer = agent.ask("Can I expense a train ticket?")
+policy_answer = PolicyAnswer(**answer.response)
+```
+
+This keeps small contracts easy to inspect and has no dependency beyond Python itself. A standard-library dataclass rejects missing or unexpected constructor fields, but it does not perform runtime type validation; add explicit checks when needed, or choose the optional Pydantic pattern later in this tutorial.
 
 ### `traces` and `scratchpad`
 
@@ -261,13 +292,13 @@ hugr replay ~/.hugr/policy-helper <trace_id> --step
 
 This works because capability results (your Python tools' return values) are recorded as events in the trace; the replayed brain re-folds them without calling Python. The brain is sans-IO and pure, so its output is a pure function of the recorded input log. (See [tutorial 08](08-traces-replay-debugging.md) for the full replay/verify workflow.)
 
-## A practical data-analysis agent
+## Optional: derive schemas with Pydantic in a data-analysis agent
 
-Python runtime embedding is especially useful when the capabilities the agent needs already live in a Python SDK or data stack. This example gives a subscription-retention agent controlled access to a pandas `DataFrame`: pandas does the deterministic filtering and arithmetic, while the model explains the result and recommends follow-up actions. The same pattern works with a warehouse client, analytics SDK, notebook library, or an internal Python package without putting those implementation details into Hugr core.
+Python runtime embedding is especially useful when the capabilities the agent needs already live in a Python SDK or data stack. This optional example gives a subscription-retention agent controlled access to a pandas `DataFrame`: pandas does the deterministic filtering and arithmetic, while the model explains the result and recommends follow-up actions. The same pattern works with a warehouse client, analytics SDK, notebook library, or an internal Python package without putting those implementation details into Hugr core.
 
-Pydantic dataclasses are a convenient source of JSON Schema for this boundary. `TypeAdapter.json_schema()` produces the explicit schema that Hugr advertises to the model, and `TypeAdapter.validate_python()` validates the decoded tool arguments before the callable uses them. Hugr does not depend on Pydantic or infer schemas from Python annotations; this is application code choosing Pydantic as its schema generator.
+Pydantic is not required by Hugr, and it is not the default choice for a small agent: the raw schema and standard-library dataclass pattern above has no extra dependency and stays very transparent. Use Pydantic here when the surrounding application already depends on it, or when generated JSON Schema and stricter runtime validation outweigh another dependency. `TypeAdapter.json_schema()` produces the explicit schema that Hugr advertises to the model, and `TypeAdapter.validate_python()` validates decoded tool arguments before the callable uses them. Hugr does not depend on Pydantic or infer schemas from Python annotations; this is application code choosing Pydantic as its schema generator.
 
-Install the two application dependencies next to `hugr-agents`:
+If you choose this variant, install its application dependencies next to `hugr-agents`:
 
 ```bash
 pip install pandas "pydantic>=2"
@@ -280,7 +311,7 @@ from typing import Literal
 
 import hugr_agents as hugr
 import pandas as pd
-from pydantic import Field, TypeAdapter
+from pydantic import ConfigDict, Field, TypeAdapter
 from pydantic.dataclasses import dataclass
 
 ACCOUNTS = pd.DataFrame.from_records(
@@ -293,21 +324,21 @@ ACCOUNTS = pd.DataFrame.from_records(
 )
 
 
-@dataclass
+@dataclass(config=ConfigDict(extra="forbid"))
 class RiskQuery:
     segment: Literal["all", "startup", "growth", "enterprise"] = "all"
     min_failed_payments: int = Field(default=1, ge=0)
     max_weekly_logins: int = Field(default=2, ge=0)
 
 
-@dataclass
+@dataclass(config=ConfigDict(extra="forbid"))
 class RiskAccount:
     account_id: str
     reason: str
     monthly_revenue_usd: float
 
 
-@dataclass
+@dataclass(config=ConfigDict(extra="forbid"))
 class RetentionReport:
     summary: str
     accounts: list[RiskAccount]
@@ -379,8 +410,6 @@ answer = agent.ask(
 if not answer.ok:
     raise RuntimeError(answer.response["error"])
 
-# Hugr validates the final JSON against the Pydantic-generated schema. Parse it
-# into the same application type for typed downstream use.
 report = retention_report.validate_python(answer.response)
 print(report.summary)
 for account in report.accounts:
@@ -399,14 +428,14 @@ Run it with `python run.py`. The first run writes a trace to `~/.hugr/retention-
 hugr verify ~/.hugr/retention-analyst <trace_id_from_stdout>
 ```
 
-There are two distinct validation points. Pydantic validates each tool call inside `find_at_risk_accounts`; an invalid threshold raises an exception, which Hugr returns to the model as a semantic tool error it can correct. Hugr validates the model's final object against `response_schema`; after a successful answer, `retention_report.validate_python(answer.response)` turns the opaque JSON payload into the application's typed dataclass graph.
+There are two distinct validation points. Pydantic validates each tool call inside `find_at_risk_accounts`; an invalid threshold raises an exception, which Hugr returns to the model as a semantic tool error it can correct. `response_schema` asks the provider for the same shape, and after a successful answer `retention_report.validate_python(answer.response)` validates the opaque JSON payload and turns it into the application's typed dataclass graph. `extra="forbid"` both rejects unexpected fields in the application and emits `additionalProperties: false` in the generated JSON Schema.
 
 ### Resume and fork
 
 Pass a prior answer's `trace_id` to continue the conversation. A new trace is written with `depends_on` pointing at the parent:
 
 ```python
-follow_up = agent.ask("And what about flights?", trace_id=answer.trace_id)
+follow_up = agent.ask("Now assess every segment with the same thresholds.", trace_id=answer.trace_id)
 assert follow_up.trace_id != answer.trace_id
 heads = agent.traces()
 by_id = {head.trace_id: head for head in heads}

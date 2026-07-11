@@ -1,0 +1,31 @@
+# Hugr agent definition — edit, then run with:
+#   hugr-datasmith <docs_path> "<question>"   (a built binary)
+#   hugr run . <docs_path> "<question>"       (from this folder)
+# Set the provider key first:   export HUGR_API_KEY=...
+
+[agent]
+name = "hugr-datasmith"
+version = "0.1.0"
+description = "Mines a documentation folder and synthesizes grounded Q&A evaluation pairs."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGR_API_KEY"
+default = "medium"
+
+[models.medium]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
+temperature = 0.4
+
+# Read-only filesystem access, jailed to the docs folder passed at run time.
+[tools.fs_read]
+root = "."
+
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+env = "HUGR_DATASMITH_DOCS"
+help = "Folder containing the documentation to mine for Q&A pairs."

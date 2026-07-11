@@ -219,6 +219,84 @@ def test_blob_input_uses_typed_ref_dataclass():
     }
 
 
+def test_inferred_schema_from_annotations():
+    @hugr.tool
+    def lookup(word: str, limit: int = 3) -> dict:
+        """Look a word up."""
+        return {"word": word, "limit": limit}
+
+    assert lookup.name == "lookup"
+    assert lookup.description == "Look a word up."
+    assert lookup.schema == {
+        "type": "object",
+        "properties": {
+            "word": {"type": "string"},
+            "limit": {"type": "integer", "default": 3},
+        },
+        "additionalProperties": False,
+        "required": ["word"],
+    }
+    # The runtime's arguments dict is splatted into the named parameters.
+    assert lookup({"word": "hugr"}) == {"word": "hugr", "limit": 3}
+
+
+def test_inferred_schema_optional_list_and_dict():
+    from typing import Optional
+
+    @hugr.tool
+    def report(tags: list[str], meta: dict, note: Optional[str] = None):
+        return {"tags": tags, "meta": meta, "note": note}
+
+    props = report.schema["properties"]
+    assert props["tags"] == {"type": "array", "items": {"type": "string"}}
+    assert props["meta"] == {"type": "object"}
+    assert props["note"] == {"type": "string", "default": None}
+    assert report.schema["required"] == ["tags", "meta"]
+
+
+def test_inferred_schema_rejects_unannotated_params():
+    with pytest.raises(TypeError, match="no type annotation"):
+
+        @hugr.tool
+        def bad(word):
+            return word
+
+
+def test_inferred_tool_round_trip(server):
+    calls = []
+
+    @hugr.tool
+    def lookup(word: str):
+        """Look a word up."""
+        calls.append(word)
+        return {"definition": f"meaning of {word}"}
+
+    agent = make_agent(server, tools=[lookup])
+    server.script_tool_call("lookup", {"word": "hugr"})
+    server.script_text('{"answer": "ok"}')
+    answer = agent.ask("What is hugr?")
+    assert answer.ok
+    assert calls == ["hugr"]
+
+
+def test_inferred_async_tool_round_trip(server):
+    calls = []
+
+    @hugr.tool
+    async def lookup(word: str):
+        """Look a word up."""
+        await asyncio.sleep(0)
+        calls.append(word)
+        return {"definition": "async ok"}
+
+    agent = make_agent(server, tools=[lookup])
+    server.script_tool_call("lookup", {"word": "x"})
+    server.script_text('{"answer": "done"}')
+    answer = agent.ask("q")
+    assert answer.ok
+    assert calls == ["x"]
+
+
 def test_describe_lists_tools_and_tiers(server):
     agent = make_agent(server, tools=[lookup_tool([])])
     card = agent.describe()

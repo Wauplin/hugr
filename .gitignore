@@ -31,3 +31,7 @@ bindings/typescript/package-lock.json
 examples/chrome-extension/pkg/
 examples/chrome-extension/vendor/
 *-extension.zip
+
+# Built agent surfaces and pipeline artifacts (examples)
+examples/*/dist/
+examples/hf-librarian/qa.jsonl

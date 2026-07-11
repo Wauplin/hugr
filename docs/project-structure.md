@@ -20,6 +20,10 @@ examples/hugr-weather/  # the self-contained beginner agent; single source of tr
                         #   `hugr new --template weather` scaffold (embedded at compile time).
 examples/hugr-insights/ # offline self-improvement agent: mines another agent's traces +
                         #   feedback via `traces_read` and reports improvement suggestions.
+examples/hugr-datasmith/ # docs-QA dataset synthesizer: fs_read-jailed, typed QaDataset
+                        #   contract, buildable as a typed Python wheel.
+examples/hf-librarian/  # Python-surface pipeline: the datasmith wheel in-process, a jailed
+                        #   Hub publisher, and a judge-graded eval of hugr-docs.
 crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS hosts: submit/poll
                         #   over JSON, the portable-trace AgentSession + verify_trace_json (the
                         #   hugr-replay fold compiled to wasm), and the browser tool schemas.

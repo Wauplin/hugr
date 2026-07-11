@@ -491,6 +491,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hugr-datasmith"
+version = "0.0.2"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hugr-docs"
 version = "0.0.2"
 dependencies = [

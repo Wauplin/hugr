@@ -8,6 +8,7 @@ members = [
     "crates/hugr-agent",
     "crates/hugr-toolkit",
     "crates/hugr-wasm",
+    "examples/hugr-datasmith",
     "examples/hugr-docs",
     "examples/hugr-insights",
     "examples/hugr-weather",
