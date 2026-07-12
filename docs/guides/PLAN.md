@@ -4,8 +4,7 @@ This file tracks the guides still to write under `docs/guides/`. Guides 1 throug
 
 ## Planned guides
 
-1. **Tool grants and jails** (`10-tool-grants-and-jails.md`). Sandbox-by-registration in practice: granting and scoping `fs_read`/`fs_write`, restricted versus full `shell`, `web_fetch` allowlists, `web_search`, `traces_read`, and how each jail holds against adversarial arguments.
-2. **Skills** (`11-skills.md`). The Agent Skills folder format, progressive disclosure via `skill_read`, definition-owned versus runtime skills (`Ask.skills`, `--skill`), validation rules, and the trust model.
+1. **Skills** (`11-skills.md`). The Agent Skills folder format, progressive disclosure via `skill_read`, definition-owned versus runtime skills (`Ask.skills`, `--skill`), validation rules, and the trust model.
 3. **Files and state: blobs, scratchpad, and memory** (`12-blobs-scratchpad-memory.md`). Inbound and outbound blob exchange, the shared content-addressed store, per-lineage scratch with copy-on-fork, and opt-in durable memory.
 4. **Models, tiers, and pricing** (`13-models-tiers-pricing.md`). The `[models]` block, free-form tier names and selectors, per-tier pricing and cost accounting, adapter retry rules, and transport versus semantic errors.
 5. **Limits and unattended runs** (`14-limits-and-cron.md`). Opt-in `[limits]`, errors as answers with partial traces, `[cron.<name>]` jobs, `fresh` versus `chain` lineage, per-job limit overrides, and the uncapped-job refusal.

@@ -11,5 +11,6 @@ These hands-on guides cover one surface each. Every guide is standalone and runn
 7. [Composition and cost](07-composition-and-cost.md); agents as tools, zero-copy blob passing, feedback, `huggr stats`.
 8. [Traces, replay, and debugging](08-traces-replay-debugging.md); trace anatomy, `huggr replay --step`, `verify`, cron, and the insights workflow.
 9. [Context compaction and pruning](09-context-compaction.md); why contexts grow, forget rules, the deterministic budget pass, summarization, and every `[context]` knob.
+10. [Tool grants and jails](10-tool-grants-and-jails.md); sandbox-by-registration, scoping every grant in the tool library, and where each jail's boundary is.
 
 For a self-contained, end-to-end walkthrough that composes several agents into a working pipeline, see [the tutorials](../tutorials/README.md).
