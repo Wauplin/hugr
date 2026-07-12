@@ -1,6 +1,6 @@
-"""Generate a docs-QA dataset with the hugr-datasmith agent, then publish it to the Hugging Face Hub.
+"""Generate a docs-QA dataset with the huglet-datasmith agent, then publish it to the Hugging Face Hub.
 
-The datasmith runs in-process through its typed Python wheel. The librarian is defined right here on the `hugr-agents` surface, and its entire tool surface is three functions bound to one dataset repo — even with full Hub credentials in the environment, the model cannot touch anything else.
+The datasmith runs in-process through its typed Python wheel. The librarian is defined right here on the `huggr-agents` surface, and its entire tool surface is three functions bound to one dataset repo — even with full Hub credentials in the environment, the model cannot touch anything else.
 """
 
 import json
@@ -9,8 +9,8 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-import hugr_agents as hugr
-import hugr_datasmith
+import huggr_agents as huggr
+import huglet_datasmith
 from huggingface_hub import HfApi
 
 COUNT = 10
@@ -18,10 +18,10 @@ DOCS = Path(__file__).resolve().parents[2] / "docs"
 STAGED = Path(__file__).resolve().parent / "qa.jsonl"
 
 api = HfApi()
-REPO_ID = f"{api.whoami()['name']}/hugr-docs-qa"
+REPO_ID = f"{api.whoami()['name']}/huglet-docs-qa"
 
 
-@hugr.tool
+@huggr.tool
 def dataset_summary() -> dict:
     """Statistics and sample rows of the staged dataset. Call this first."""
     items = [json.loads(line) for line in STAGED.read_text().splitlines()]
@@ -34,7 +34,7 @@ def dataset_summary() -> dict:
     }
 
 
-@hugr.tool
+@huggr.tool
 def upload_readme(content: str) -> str:
     """Upload the dataset card (markdown with YAML front matter) as the repo's README.md."""
     if not content.startswith("---"):
@@ -45,7 +45,7 @@ def upload_readme(content: str) -> str:
     return f"uploaded README.md to {REPO_ID}"
 
 
-@hugr.tool
+@huggr.tool
 def publish_data() -> str:
     """Upload the staged JSONL data file as data/qa.jsonl of the repo."""
     api.upload_file(
@@ -54,20 +54,20 @@ def publish_data() -> str:
     return f"uploaded data/qa.jsonl to {REPO_ID}"
 
 
-librarian = hugr.Agent(
+librarian = huggr.Agent(
     name="hf-librarian",
     description="Publishes one staged dataset to one Hugging Face dataset repo.",
     system=(
         "You are hf-librarian, a Hugging Face Hub publishing specialist. Call `dataset_summary` first and ground "
         "everything you write in it. Then write a proper dataset card and upload it with `upload_readme`: YAML front "
-        "matter (license, task_categories, tags including `hugr` and `synthetic`), a short summary, a field-by-field "
+        "matter (license, task_categories, tags including `huggr` and `synthetic`), a short summary, a field-by-field "
         "schema description, how the data was generated (synthesized by a jailed docs-mining agent), the intended use "
         "(evaluating documentation assistants), and honest limitations (synthetic, unreviewed). Finally call "
         "`publish_data`. Respond only with the structured JSON response requested by the provider schema."
     ),
     models={
         "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGR_API_KEY",
+        "api_key_env": "HUGGR_API_KEY",
         "default": "medium",
         "medium": {
             "model": "google/gemma-4-31B-it:cerebras",
@@ -87,7 +87,7 @@ librarian = hugr.Agent(
 
 def main() -> None:
     print(f"[1/2] datasmith: mining {DOCS} for {COUNT} Q&A pairs...")
-    generated = hugr_datasmith.ask(
+    generated = huglet_datasmith.ask(
         str(DOCS), f"Generate {COUNT} question/answer pairs covering the whole documentation set."
     )
     if not generated.ok:

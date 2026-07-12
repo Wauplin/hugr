@@ -1,5 +1,5 @@
 // OpenAI-compatible streaming /chat/completions client over fetch, with the
-// same retry rules as hugr-providers: 429/5xx only, exponential backoff.
+// same retry rules as huggr-providers: 429/5xx only, exponential backoff.
 // Request shaping comes from the brain's ModelRequest blocks — no adapter-side
 // pruning.
 

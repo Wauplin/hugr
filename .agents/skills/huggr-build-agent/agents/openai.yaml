@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huggr Build Agent"
+  short_description: "Scaffold and ship a huglet"
+  default_prompt: "Use $huggr-build-agent to scaffold, configure, test, and package a huglet."

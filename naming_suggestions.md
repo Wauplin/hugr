@@ -1,6 +1,6 @@
 # Naming suggestions
 
-Replacement names for `hugr`, which is taken on crates.io and PyPI. The names here are meant to read naturally to English speakers, stay short and quick to type, and keep the owner's stated preference: **ants for the individual agents**. Where possible they also nod to the optional associations the owner called out (rust/oxide imagery, a light many-small-agents or brain feel). A French flavor was considered and set aside: it made the leading names hard to read for English speakers.
+Replacement names for `huggr`, which is taken on crates.io and PyPI. The names here are meant to read naturally to English speakers, stay short and quick to type, and keep the owner's stated preference: **ants for the individual agents**. Where possible they also nod to the optional associations the owner called out (rust/oxide imagery, a light many-small-agents or brain feel). A French flavor was considered and set aside: it made the leading names hard to read for English speakers.
 
 Every name marked free below returned no project from the crates.io sparse index and the PyPI JSON endpoint on 12 July 2026, and a web search found no prominent software, AI, or CLI product using the exact spelling. This is a point-in-time registry check, not a reservation, trademark search, or domain clearance. Words used only as product vocabulary (ant, trail, colony) are not availability claims.
 
@@ -59,7 +59,7 @@ Registry-free or nearly so, but rejected for the reason given:
 
 - `teem` (as in "teeming with ants") reads well and is short, but the space is crowded: Teeme.ai is an AI-agent platform, and several other products use "Teem."
 - `swarm`, `colony`, `hive`, `flock`, `forge`, `ember`, `patina`, `ochre`: strong English words, all taken on one or both registries.
-- French words such as `essaim` (swarm), `calin` (hug), `galet` (pebble), and `fourmi` (ant): pleasant and mostly free, but they read awkwardly for English speakers, which the owner ruled out. `calin` remains the closest French successor to `hugr` and the strongest keeper of the Hugging Face "hug" association if that constraint ever outweighs English readability.
+- French words such as `essaim` (swarm), `calin` (hug), `galet` (pebble), and `fourmi` (ant): pleasant and mostly free, but they read awkwardly for English speakers, which the owner ruled out. `calin` remains the closest French successor to `huggr` and the strongest keeper of the Hugging Face "hug" association if that constraint ever outweighs English readability.
 - `eciton` (the army-ant genus, the most on-target meaning found) is already used by a drone/edge-computing company, an FPGA inference accelerator, and a logistics-AI startup.
 
 ## Method and limitations

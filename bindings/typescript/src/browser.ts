@@ -12,8 +12,8 @@ let cachedWasm: Promise<WasmModule> | null = null;
 export function loadWasm(pkgUrl?: string): Promise<WasmModule> {
   cachedWasm ??= (async () => {
     const base = pkgUrl ?? new URL("../pkg/", import.meta.url).href;
-    const module = await import(/* webpackIgnore: true */ new URL("hugr_wasm.js", base).href);
-    await module.default({ module_or_path: fetch(new URL("hugr_wasm_bg.wasm", base)) });
+    const module = await import(/* webpackIgnore: true */ new URL("huggr_wasm.js", base).href);
+    await module.default({ module_or_path: fetch(new URL("huggr_wasm_bg.wasm", base)) });
     return module as unknown as WasmModule;
   })();
   return cachedWasm;
@@ -48,7 +48,7 @@ export class IndexedDbTraceStore implements TraceStore {
   private db: Promise<IDBDatabase>;
 
   constructor(agentName: string) {
-    this.db = openDb(`hugr:${agentName}`);
+    this.db = openDb(`huggr:${agentName}`);
   }
 
   async put(trace: Json, header: TraceHeader): Promise<string> {
@@ -92,7 +92,7 @@ export class IndexedDbFeedbackStore implements FeedbackStore {
   private db: Promise<IDBDatabase>;
 
   constructor(agentName: string) {
-    this.db = openDb(`hugr:${agentName}`);
+    this.db = openDb(`huggr:${agentName}`);
   }
 
   async append(feedback: Feedback): Promise<void> {

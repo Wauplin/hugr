@@ -1,6 +1,6 @@
 # Built-in capabilities
 
-This page lists the capabilities provided by `hugr-toolkit`. Nothing is registered unless its manifest grant is present. Relative filesystem roots resolve from the agent crate, and `root = "/"` explicitly grants the full filesystem while tool paths remain relative to that root.
+This page lists the capabilities provided by `huggr-toolkit`. Nothing is registered unless its manifest grant is present. Relative filesystem roots resolve from the agent crate, and `root = "/"` explicitly grants the full filesystem while tool paths remain relative to that root.
 
 ## Filesystem reads
 
@@ -46,7 +46,7 @@ cwd = "."
 max_output_bytes = 1000000
 ```
 
-Full mode is arbitrary process and filesystem access under the agent's operating-system identity. Hugr does not sandbox it; use an outer container, VM, OS sandbox, or a trusted agent when isolation is required. `cwd` is optional in either mode. Stdout and stderr are returned separately and capped independently.
+Full mode is arbitrary process and filesystem access under the agent's operating-system identity. Huggr does not sandbox it; use an outer container, VM, OS sandbox, or a trusted agent when isolation is required. `cwd` is optional in either mode. Stdout and stderr are returned separately and capped independently.
 
 ## Web fetch
 
@@ -62,7 +62,7 @@ Set `markdown = true` in the manifest to convert every returned HTML body to Mar
 
 `[tools.delegate]` registers `delegate`, which starts the current built agent as a subprocess with a fresh context and the same manifest. Its arguments use the standard `Ask` shape: `question`, optional `trace_id`, and optional blob handles. The child writes its own immutable trace, its metadata folds into the parent's cost, and the existing depth budget stops recursive self-calls after three nested delegations by default.
 
-The default artifact is the current executable, which suits CLI agent binaries and generated development shims. Set `artifact` to an explicit CLI agent binary when the current process is the generic legacy `hugr run` host or a language host such as Python. Self-delegation uses the same privileges; use `[tools.agent.<name>]` for a child with different grants.
+The default artifact is the current executable, which suits CLI agent binaries and generated development shims. Set `artifact` to an explicit CLI agent binary when the current process is the generic legacy `huggr run` host or a language host such as Python. Self-delegation uses the same privileges; use `[tools.agent.<name>]` for a child with different grants.
 
 ## State and inspection
 
@@ -70,4 +70,4 @@ The default artifact is the current executable, which suits CLI agent binaries a
 
 ## External capabilities
 
-`[tools.agent.<name>] artifact = "..."` registers `agent_<name>` and `agent_<name>_feedback` for a different built Hugr agent. `[tools.mcp.<name>]` starts an operator-declared stdio MCP server and registers its discovered, namespaced tools. Both are subprocess boundaries. An MCP server and a full shell are trusted operator grants and can perform anything allowed by their operating-system environment.
+`[tools.agent.<name>] artifact = "..."` registers `agent_<name>` and `agent_<name>_feedback` for a different built Huggr agent. `[tools.mcp.<name>]` starts an operator-declared stdio MCP server and registers its discovered, namespaced tools. Both are subprocess boundaries. An MCP server and a full shell are trusted operator grants and can perform anything allowed by their operating-system environment.

@@ -1,8 +1,8 @@
 # chrome-extension example
 
-A Chrome Manifest V3 extension that runs the Hugr brain in WebAssembly and performs browser IO through extension JavaScript. It is one concrete host built from the reusable pieces:
+A Chrome Manifest V3 extension that runs the Huggr brain in WebAssembly and performs browser IO through extension JavaScript. It is one concrete host built from the reusable pieces:
 
-- `crates/hugr-wasm` — the generic WASM bindings around `hugr-core` (no Chrome APIs, nothing baked in).
+- `crates/huggr-wasm` — the generic WASM bindings around `huggr-core` (no Chrome APIs, nothing baked in).
 - `bindings/typescript` — the generic agent driver, OpenAI-compatible fetch adapter, and IndexedDB storage.
 - this folder — everything Chrome-specific: the capability dispatcher over `chrome.*` (`chrome_api.js`), the content script, the side-panel UI, the system prompt, and the MV3 manifest.
 
@@ -10,7 +10,7 @@ To build a *different* extension (other layout, tools, policies), copy this fold
 
 ## What works now
 
-- The side panel runs a Hugr turn loop through `hugr-core` compiled to WASM.
+- The side panel runs a Huggr turn loop through `huggr-core` compiled to WASM.
 - The extension always runs in YOLO mode: browser capabilities are auto-approved and no permission prompt is shown for tool calls.
 - The browser model adapter calls an OpenAI-compatible streaming `/chat/completions` endpoint with the API key configured in the side panel.
 - The WASM brain uses the built-in context policy by default: model-backed summaries trigger near the 64k-token range, and stale heavyweight page observations are dropped via `keep_last_per_tool` rules before the provider request is rendered.
@@ -26,7 +26,7 @@ From the repository root:
 ./examples/chrome-extension/build.sh
 ```
 
-This compiles `hugr-wasm` for `wasm32-unknown-unknown`, writes the wasm-bindgen glue into `examples/chrome-extension/pkg/`, and vendors the generic JS modules into `examples/chrome-extension/vendor/` (extensions can only load modules from inside their own folder; both folders are gitignored).
+This compiles `huggr-wasm` for `wasm32-unknown-unknown`, writes the wasm-bindgen glue into `examples/chrome-extension/pkg/`, and vendors the generic JS modules into `examples/chrome-extension/vendor/` (extensions can only load modules from inside their own folder; both folders are gitignored).
 
 If the build fails with a `wasm-bindgen` schema mismatch, install the matching CLI version:
 
@@ -53,7 +53,7 @@ Build first, then zip the folder (it must include `pkg/` and `vendor/`):
 ```bash
 ./examples/chrome-extension/build.sh
 cd examples
-zip -r hugr-chrome-extension.zip chrome-extension
+zip -r huggr-chrome-extension.zip chrome-extension
 ```
 
 The recipient unzips, loads the folder via `Load unpacked`, and enters their own API key in `Settings`.

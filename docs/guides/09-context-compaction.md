@@ -1,6 +1,6 @@
 # Context compaction and pruning
 
-This guide explains how a Hugr agent keeps its model context small as a conversation grows: what problem compaction solves, how the mechanism works, how it is implemented in the core, and every knob you can configure. It applies to all surfaces that accept a `[context]` block: the manifest, the Python and TypeScript runtime APIs, and browser hosts on the WASM brain.
+This guide explains how a Huggr agent keeps its model context small as a conversation grows: what problem compaction solves, how the mechanism works, how it is implemented in the core, and every knob you can configure. It applies to all surfaces that accept a `[context]` block: the manifest, the Python and TypeScript runtime APIs, and browser hosts on the WASM brain.
 
 ## The problem
 
@@ -14,7 +14,7 @@ Compaction addresses all three by shrinking what is *sent* per turn. Pruning is 
 
 ## Log versus projection
 
-The key design fact: Hugr never shortens its history. The durable log in `hugr-core` is append-only, and the trace written from it is immutable. What shrinks is the **projection**: the per-turn rendering of the log into a `ModelRequest`.
+The key design fact: Huggr never shortens its history. The durable log in `huggr-core` is append-only, and the trace written from it is immutable. What shrinks is the **projection**: the per-turn rendering of the log into a `ModelRequest`.
 
 Projection is owned by the `TurnPolicy` (see [runtime](../runtime.md)). Each turn, the policy's pure `project_context(log, budget)` produces a `ContextPlan` that records, for every log entry, a disposition:
 
@@ -86,7 +86,7 @@ Setting `trigger_tokens` below `budget_tokens` gives the agent headroom: compact
 The same shape works on every surface:
 
 ```python
-agent = hugr.Agent(
+agent = huggr.Agent(
     name="researcher",
     models={...},
     context={
@@ -117,13 +117,13 @@ A docs agent with a 64k budget reads files in a loop. Turn by turn:
 2. Turn 7 crosses the trigger. With `summarize`, the host first calls the summarizer over everything older than the last 8k tokens, appends the `ContextSummary`, and only then runs the main turn: system prompt, one summary block, and the recent window.
 3. Turn 8 projects the summary plus new turns. Nothing is re-summarized until the projection crosses the trigger again, at which point a new summary replaces a larger prefix.
 
-The log still contains every file read and every model reply; `hugr traces` and `hugr replay` show them all, and the trace verifies bit-for-bit.
+The log still contains every file read and every model reply; `huggr traces` and `huggr replay` show them all, and the trace verifies bit-for-bit.
 
 ## Observing and debugging
 
 - The `ContextPlan` is the explanation: every entry carries its disposition and estimated tokens, and drops carry a note naming the rule that removed them (`dropped by deterministic forget rule`, `dropped by deterministic budget policy`, `dropped with paired tool transcript block`).
 - The injected compaction note and any `ContextSummary` blocks are visible in the trace, so a model that "forgot" something can be diagnosed by reading what it was actually sent.
-- Because policies are pure and the summary is a recorded event, `hugr verify` remains the gate: a trace recorded under compaction replays and verifies exactly like any other. See [traces, replay, and debugging](08-traces-replay-debugging.md).
+- Because policies are pure and the summary is a recorded event, `huggr verify` remains the gate: a trace recorded under compaction replays and verifies exactly like any other. See [traces, replay, and debugging](08-traces-replay-debugging.md).
 
 ## Limitations
 

@@ -5,15 +5,15 @@
 ```
 my-agent/
   Cargo.toml          # the agent crate; owns typed contracts and optional Rust wiring
-  hugr.toml          # manifest: name, model tiers + pricing, tool grants, limits
+  huggr.toml          # manifest: name, model tiers + pricing, tool grants, limits
   SYSTEM.md          # the system prompt (plain markdown)
   src/lib.rs          # optional typed response / hooks / compile-in capability registration
 ```
 
-- `hugr new <name> [--template weather|blank]` scaffolds a working agent crate folder. The default `weather` template is the self-contained beginner example: it grants only the allowlisted `web_fetch` tool (scoped to the Open-Meteo API hosts) and needs no local data folder, so `hugr new` → set the provider key → `hugr run` answers immediately. `blank` is the tool-free starting point.
-- `hugr run <agent-dir> "question" [--trace <id>]` is the development loop. Agents with a Rust response contract or hooks compile and reuse a cached dev shim that links the current agent crate, then run the same generated surface as the built binary; legacy manifest-schema agents can still run directly.
-- `hugr build <agent-dir> [--surface cli|python]` embeds the manifest, prompt, and bundled agent files into a **single standalone binary** that wraps the shared runtime (the default `cli` surface). It can also emit a typed language binding with `--surface python`. Building needs a Rust toolchain; running the CLI artifact does not.
-- `hugr traces <agent-dir>` lists the trace lineage tree with feedback counts. `hugr stats <agent-dir> [--trace <id> | --since <id>] [--json]` aggregates trace analytics. `hugr cron <agent-dir> [--allow-uncapped]` runs configured recurring asks. `hugr replay` / `hugr verify` point the replay machinery at a stored trace.
+- `huggr new <name> [--template weather|blank]` scaffolds a working agent crate folder. The default `weather` template is the self-contained beginner example: it grants only the allowlisted `web_fetch` tool (scoped to the Open-Meteo API hosts) and needs no local data folder, so `huggr new` → set the provider key → `huggr run` answers immediately. `blank` is the tool-free starting point.
+- `huggr run <agent-dir> "question" [--trace <id>]` is the development loop. Agents with a Rust response contract or hooks compile and reuse a cached dev shim that links the current agent crate, then run the same generated surface as the built binary; legacy manifest-schema agents can still run directly.
+- `huggr build <agent-dir> [--surface cli|python]` embeds the manifest, prompt, and bundled agent files into a **single standalone binary** that wraps the shared runtime (the default `cli` surface). It can also emit a typed language binding with `--surface python`. Building needs a Rust toolchain; running the CLI artifact does not.
+- `huggr traces <agent-dir>` lists the trace lineage tree with feedback counts. `huggr stats <agent-dir> [--trace <id> | --since <id>] [--json]` aggregates trace analytics. `huggr cron <agent-dir> [--allow-uncapped]` runs configured recurring asks. `huggr replay` / `huggr verify` point the replay machinery at a stored trace.
 
 Every built agent binary has the same shape:
 
@@ -35,7 +35,7 @@ The process writes one JSON `Answer` to stdout and logs to stderr, and always ex
 
 Any language can consume the CLI binary through a subprocess or MCP. A native, typed binding is an optional convenience generated on demand.
 
-`--stats` and `hugr stats` are pure analytics over persisted traces and feedback sidecars. `AnswerMeta` remains the per-call accounting returned to an orchestrator.
+`--stats` and `huggr stats` are pure analytics over persisted traces and feedback sidecars. `AnswerMeta` remains the per-call accounting returned to an orchestrator.
 
 Stats recompute and aggregate own cost, tokens, tool calls, and model calls from `OpEnded` records. They also add feedback counts.
 
@@ -43,15 +43,15 @@ Delegated child-agent cost is attributed only to the direct `agent_<name>` tool 
 
 ## Language surfaces
 
-Both language surfaces are host layers over the same runtime. **Generated wrappers** ship an existing agent to another language with commands such as `hugr build --surface python`. **Runtime embeddings** define the agent in that language through the Python API in `crates/hugr-python` + `bindings/python`, or the TypeScript API in `bindings/typescript`.
+Both language surfaces are host layers over the same runtime. **Generated wrappers** ship an existing agent to another language with commands such as `huggr build --surface python`. **Runtime embeddings** define the agent in that language through the Python API in `crates/huggr-python` + `bindings/python`, or the TypeScript API in `bindings/typescript`.
 
 Use a wrapper when the agent is a Rust crate and the caller needs a typed interface. Use an embedding when the tools are Python or TypeScript functions.
 
 ### Runtime embedding in Python
 
-The `hugr-agents` package consists of the PyO3 crate in `crates/hugr-python` and the pure-Python layer in `bindings/python`. It exposes `hugr_agents.Agent(name=..., system=..., models={...}, tools=[...], grants={...}, limits={...}, context={...})`.
+The `huggr-agents` package consists of the PyO3 crate in `crates/huggr-python` and the pure-Python layer in `bindings/python`. It exposes `huggr_agents.Agent(name=..., system=..., models={...}, tools=[...], grants={...}, limits={...}, context={...})`.
 
-Config keys mirror `hugr.toml` sections 1:1. Assembly uses the same `hugr_toolkit::runtime::build_agent` path as `hugr run`, so a Python-defined agent behaves like a manifest-defined one. It uses the same `~/.hugr/<name>/` home, trace format, limits, pricing, and compaction.
+Config keys mirror `huggr.toml` sections 1:1. Assembly uses the same `huggr_toolkit::runtime::build_agent` path as `huggr run`, so a Python-defined agent behaves like a manifest-defined one. It uses the same `~/.huggr/<name>/` home, trace format, limits, pricing, and compaction.
 
 Fixed-shape inputs are declared as `TypedDict`s. Selector and grant maps remain typed mappings because their keys are user-defined.
 
@@ -61,31 +61,31 @@ Python callables register as ordinary host `Capability`s. They may be synchronou
 
 The FFI boundary uses JSON strings in both directions. Rust remains the sole validator, and Python only deserializes values that Rust has validated. Replay never imports Python because capability results are recorded events. As a result, Python-recorded traces verify with the Rust CLI.
 
-Python tool callables are **trusted host code**. Hugr jails what the model can invoke through sandbox-by-registration, but it does not restrict what trusted Python does once invoked. The same applies to any operator-written Rust capability.
+Python tool callables are **trusted host code**. Huggr jails what the model can invoke through sandbox-by-registration, but it does not restrict what trusted Python does once invoked. The same applies to any operator-written Rust capability.
 
 ### Runtime embedding in TypeScript
 
-The `hugr-agents` npm package in `bindings/typescript` supports Node and the browser. It combines one WASM core artifact with a typed TypeScript host that owns every effect. The artifact is `crates/hugr-wasm`'s `AgentSession`, which contains the brain and recorder over JSON.
+The `huggr-agents` npm package in `bindings/typescript` supports Node and the browser. It combines one WASM core artifact with a typed TypeScript host that owns every effect. The artifact is `crates/huggr-wasm`'s `AgentSession`, which contains the brain and recorder over JSON.
 
 `new Agent({ name, system, models, tools, limits, context }, runtime)` uses the same config keys as the manifest and Python API. Tools are `{ name, description, schema, invoke }` objects. `agent.ask()` returns the typed `Answer`, while `for await (const event of agent.run(...))` streams the shared event vocabulary.
 
-Storage uses `TraceStore` and `FeedbackStore` interfaces. Node implementations write the portable trace format into `~/.hugr/<name>/`, where the Rust CLI can read it directly. Browser implementations use IndexedDB.
+Storage uses `TraceStore` and `FeedbackStore` interfaces. Node implementations write the portable trace format into `~/.huggr/<name>/`, where the Rust CLI can read it directly. Browser implementations use IndexedDB.
 
-The model adapter is a generic, fetch-based OpenAI-compatible client. It uses the same retry rules as `hugr-providers`: 429 and 5xx responses only, with exponential backoff.
+The model adapter is a generic, fetch-based OpenAI-compatible client. It uses the same retry rules as `huggr-providers`: 429 and 5xx responses only, with exponential backoff.
 
-Traces verify across languages in both directions. `agent.verify(id)` calls the wasm-exported `verify_trace_json`, which is the `hugr-replay` fold compiled to WASM. `hugr verify` can replay TypeScript-recorded traces.
+Traces verify across languages in both directions. `agent.verify(id)` calls the wasm-exported `verify_trace_json`, which is the `huggr-replay` fold compiled to WASM. `huggr verify` can replay TypeScript-recorded traces.
 
 `[context]` config passes through to the core `BudgetPolicy`, so compaction runs inside the WASM brain. TypeScript tool functions are trusted host code.
 
 ### Generated Python wrapper
 
-In addition to the CLI binary, `hugr build --surface python` generates a native **PyO3 + maturin** package. An orchestrator can then run `import <agent>; <agent>.ask(...)` in process instead of starting a subprocess.
+In addition to the CLI binary, `huggr build --surface python` generates a native **PyO3 + maturin** package. An orchestrator can then run `import <agent>; <agent>.ask(...)` in process instead of starting a subprocess.
 
 Surfaces are additive and open-ended: `python` exists today, while `kotlin`, `ts`, and others may follow. Each surface is a generated wrapper crate like the CLI shim. This keeps the agent crate limited to its response contract while the toolkit owns surface generation.
 
 There is still one runtime and one Ask/Answer contract. A surface is a typed interface to them.
 
-**Validation stays on the Rust side; every surface is a thin typed-deserialization layer, not a second validator.** Hugr casts model output into the agent's response type before it reaches `Answer.response`. A surface only needs to deserialize the valid JSON into native typed values.
+**Validation stays on the Rust side; every surface is a thin typed-deserialization layer, not a second validator.** Huggr casts model output into the agent's response type before it reaches `Answer.response`. A surface only needs to deserialize the valid JSON into native typed values.
 
 Validation in each surface would reimplement the same schema in Python, Kotlin, and TypeScript. That duplication conflicts with the [narrow-waist rule](runtime.md#the-narrow-waist-rule).
 
@@ -102,7 +102,7 @@ The Python surface makes this concrete:
 ## The Ask and Answer contract
 
 ```rust
-// hugr-agent. Plain serde structs with public fields — no builder ceremony.
+// huggr-agent. Plain serde structs with public fields — no builder ceremony.
 pub struct Ask {
     pub question: String,            // the one required field
     pub trace_id: Option<TraceId>,   // resume/fork anchor
@@ -136,7 +136,7 @@ pub struct Feedback {
 
 `AnswerMeta` is never optional, so an orchestrator can always account for a call. `response` is always a JSON object. Without a declared response contract, plain model text is wrapped as `{ "text": ... }`.
 
-A typed response contract is a Rust `serde` + `schemars` type. Hugr derives JSON Schema from it, passes that schema to the model provider as `response_format`, and casts the final JSON into the Rust type before returning it. If that cast fails, the agent asks the model to repair the response up to the contract's attempt limit.
+A typed response contract is a Rust `serde` + `schemars` type. Huggr derives JSON Schema from it, passes that schema to the model provider as `response_format`, and casts the final JSON into the Rust type before returning it. If that cast fails, the agent asks the model to repair the response up to the contract's attempt limit.
 
 A Rust-only final answer hook may then rewrite the `Answer` deterministically at the last host-layer boundary before returning it to the caller. This hook is not a core event and does not enter the trace. `extra` is reserved for non-answer extras and is never load-bearing for the contract.
 
@@ -164,7 +164,7 @@ description = "Answers questions about the company travel policy."
 
 [models]
 base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGR_API_KEY"
+api_key_env = "HUGGR_API_KEY"
 [models.default]                      # tier names are free-form strings; one tier is the common case
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0
@@ -183,7 +183,7 @@ help = "Folder containing policies to search."
 [tools.mcp.github]                    # external tools: an MCP server (the one escape hatch)
 command = "gh-mcp"
 
-[tools.agent.receipts]                # another built Hugr agent as a tool
+[tools.agent.receipts]                # another built Huggr agent as a tool
 artifact = "./receipts-agent"
 
 [tools.memory]                        # optional durable, agent-wide notes
@@ -216,11 +216,11 @@ page_snapshot = 1                    # open tool-name map; keep only the latest 
 
 ### Prompt and privileges
 
-`SYSTEM.md` beside the manifest is the agent-owned system prompt. It supports `{{agent_name}}`, `{{tools}}`, and `{{date}}`. Hugr appends concise runtime guidance for the capabilities actually present, including scratch inheritance, inbound and outbound blobs, filesystem discovery and writes, process execution, web search and fetch, durable memory, trace feedback analysis, and delegation. This keeps the reusable infrastructure discoverable without requiring each agent author to repeat it; guidance for an ungranted capability is omitted.
+`SYSTEM.md` beside the manifest is the agent-owned system prompt. It supports `{{agent_name}}`, `{{tools}}`, and `{{date}}`. Huggr appends concise runtime guidance for the capabilities actually present, including scratch inheritance, inbound and outbound blobs, filesystem discovery and writes, process execution, web search and fetch, durable memory, trace feedback analysis, and delegation. This keeps the reusable infrastructure discoverable without requiring each agent author to repeat it; guidance for an ungranted capability is omitted.
 
 ### Skills
 
-Hugr supports the standard Agent Skills folder format: a folder named for the skill with a `SKILL.md` containing YAML frontmatter (`name` and `description`) followed by Markdown instructions. Optional scripts, references, and assets stay beside it.
+Huggr supports the standard Agent Skills folder format: a folder named for the skill with a `SKILL.md` containing YAML frontmatter (`name` and `description`) followed by Markdown instructions. Optional scripts, references, and assets stay beside it.
 
 Definition-owned skills are declared as manifest-relative paths:
 
@@ -228,13 +228,13 @@ Definition-owned skills are declared as manifest-relative paths:
 skills = ["skills/source-citation", "../shared-skills"]
 ```
 
-Each path may name one skill, a `SKILL.md` file, or a directory whose immediate child directories are skills. Names must be unique. Hugr validates the standard naming and frontmatter rules when an ask starts.
+Each path may name one skill, a `SKILL.md` file, or a directory whose immediate child directories are skills. Names must be unique. Huggr validates the standard naming and frontmatter rules when an ask starts.
 
 Skills use progressive disclosure. The model receives only each skill's name and description in its system context. When the task matches, it calls the automatically registered `skill_read` capability to load `SKILL.md`; referenced UTF-8 files can be read with the same capability and are jailed to that skill folder. Files are capped at 1 MB. Skill instructions are trusted prompt context and do not grant tools or widen existing privileges.
 
 Callers can add skills to one invocation through `Ask.skills`, the repeatable CLI flag `--skill <PATH>`, the MCP `ask.skills` array, or the Rust-generated and pure-Python `skills=` argument. Runtime paths resolve from the caller's working directory. Definition and runtime skills share the same validation and disclosure path.
 
-The `hugr.toml` manifest defines the subagent's blast radius. A tool that is not granted is not registered, and an unregistered capability **cannot** be invoked. This is sandbox-by-registration, as described in [Security](security.md).
+The `huggr.toml` manifest defines the huglet's blast radius. A tool that is not granted is not registered, and an unregistered capability **cannot** be invoked. This is sandbox-by-registration, as described in [Security](security.md).
 
 ### Runtime arguments
 
@@ -254,9 +254,9 @@ Optional `[context.forget.tool_ttl]` and `[context.forget.keep_last_per_tool]` m
 
 The Rust response contract belongs to the current agent crate. `src/lib.rs` must expose `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` and define that public `serde` + `schemars` type.
 
-`hugr run` and `hugr build` infer the crate from the `Cargo.toml` beside `hugr.toml`. They fail explicitly if `RESPONSE_RUST_TYPE` is missing, derive a provider schema name and JSON Schema from the Rust type, pass that schema to the model provider, and cast the final JSON with `serde`.
+`huggr run` and `huggr build` infer the crate from the `Cargo.toml` beside `huggr.toml`. They fail explicitly if `RESPONSE_RUST_TYPE` is missing, derive a provider schema name and JSON Schema from the Rust type, pass that schema to the model provider, and cast the final JSON with `serde`.
 
-An agent crate may expose `pub const MODEL_RESPONSE_RUST_TYPE: &str = "crate_name::ModelType";` when the model should produce a narrower shape than the public answer. It may also expose `pub fn answer_hooks() -> Vec<hugr_agent::AnswerHook>` for deterministic final-answer enrichment and `pub fn storage() -> hugr_agent::StorageOverrides` for custom trace, blob, and scratch backends.
+An agent crate may expose `pub const MODEL_RESPONSE_RUST_TYPE: &str = "crate_name::ModelType";` when the model should produce a narrower shape than the public answer. It may also expose `pub fn answer_hooks() -> Vec<huggr_agent::AnswerHook>` for deterministic final-answer enrichment and `pub fn storage() -> huggr_agent::StorageOverrides` for custom trace, blob, and scratch backends.
 
 When `MODEL_RESPONSE_RUST_TYPE` is set, the model schema comes from that type, while `--config` and language surfaces expose `RESPONSE_RUST_TYPE`. Hooks run after trace, blob, and scratch finalization, immediately before the answer crosses the surface boundary. A storage override replaces the manifest or default filesystem stores for that generated surface.
 
@@ -266,7 +266,7 @@ Response repair uses the runtime's fixed default attempt limit for now, not mani
 
 `[limits]` is enforced host-side on every ask. Limits are opt-in: an agent has none by default, and every unset key is unbounded. An exceeded limit yields an ordinary `status: "error"` answer with a persisted partial trace that still verifies.
 
-Cost accounting is in micro-USD (`max_cost_micro_usd`, `AnswerMeta.cost_micro_usd`) for precision; user-facing reports such as `hugr stats` display USD, showing `<$0.01` for a nonzero amount under a penny.
+Cost accounting is in micro-USD (`max_cost_micro_usd`, `AnswerMeta.cost_micro_usd`) for precision; user-facing reports such as `huggr stats` display USD, showing `<$0.01` for a nonzero amount under a penny.
 
 ## Tools and capabilities
 
@@ -289,14 +289,14 @@ The tool library provides vetted, parameterized capabilities selected by manifes
 - **`shell`:** either direct execution of an operator allowlist without shell syntax or explicit full access through `<shell> -lc`.
 - **`scratchpad`:** ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime and always enabled).
 - **`memory`:** optional `memory_read` / `memory_write` / `memory_list`, jailed to durable agent-wide memory at `<agent-home>/memory` by default. `readonly = true` makes writes semantic errors.
-- **`traces_read`:** root-jailed read-only family over one agent home's stored traces and feedback sidecars: `trace_list` / `trace_ops` / `trace_transcript` / `feedback_list`. Results are summaries and paged, size-capped excerpts rather than raw trace JSON, so offline analysis such as the `hugr-insights` example fits a context budget.
+- **`traces_read`:** root-jailed read-only family over one agent home's stored traces and feedback sidecars: `trace_list` / `trace_ops` / `trace_transcript` / `feedback_list`. Results are summaries and paged, size-capped excerpts rather than raw trace JSON, so offline analysis such as the `huglet-insights` example fits a context budget.
 - **`web_fetch`:** host-allowlisted GET-only fetch that fails closed on an empty allowlist, does not follow redirects automatically, and can convert HTML to Markdown.
 - **`web_search`:** Exa-backed search using a key read from an operator-named environment variable.
 - **`delegate`:** self-delegation into a fresh subprocess context, with depth-capped recursion and folded cost.
 
 Process access remains grant-driven. Restricted shell mode bypasses shell parsing and executes only an exact allowlisted program; full shell mode deliberately trusts the operator's outer sandbox. The complete option and limit reference is in [Built-in capabilities](capabilities.md).
 
-Custom tools can be **another Hugr agent** (`[tools.agent.<name>]`), an **MCP server** (`[tools.mcp.<name>]`, stdio, with namespaced tools), or a compiled-in Rust `Capability` for direct runtime embeddings. Full shell, MCP, and agent calls are explicit external-process grants; Hugr has no separate plugin protocol.
+Custom tools can be **another Huggr agent** (`[tools.agent.<name>]`), an **MCP server** (`[tools.mcp.<name>]`, stdio, with namespaced tools), or a compiled-in Rust `Capability` for direct runtime embeddings. Full shell, MCP, and agent calls are explicit external-process grants; Huggr has no separate plugin protocol.
 
 ## Agents as tools
 
@@ -310,7 +310,7 @@ For an isolated context using the same agent and manifest, `[tools.delegate]` re
 
 - **The child is a built artifact.** The grant points at a built agent binary. The parent starts it as a subprocess that uses the standard CLI JSON contract, providing one composition mechanism based on the shipped artifact.
 - **Privileges compose downward only.** The child runs under its own manifest, jail, tiers, and limits. Granting an agent never exposes the parent's capabilities to it.
-- **Blob refs compose.** `agent_<name>` tool calls may include `blobs`; `Sha256` refs are passed to the child as `--blob sha256:<hash>` and both processes point at the same `HUGR_BLOB_STORE`, so large payloads do not cross the process boundary.
+- **Blob refs compose.** `agent_<name>` tool calls may include `blobs`; `Sha256` refs are passed to the child as `--blob sha256:<hash>` and both processes point at the same `HUGGR_BLOB_STORE`, so large payloads do not cross the process boundary.
 - **Feedback composes beside the trace.** A parent model can file feedback on the child trace immediately after delegation through `agent_<name>_feedback`; the parent records the feedback call's result as an ordinary tool result, while the child's trace remains immutable.
-- **Cost folds up.** The child's `Answer.metadata` merges into the parent's `AnswerMeta`, so the orchestrator's cost line stays complete; `hugr stats` also reports direct child-agent delegated cost without recursively walking grandchildren.
+- **Cost folds up.** The child's `Answer.metadata` merges into the parent's `AnswerMeta`, so the orchestrator's cost line stays complete; `huggr stats` also reports direct child-agent delegated cost without recursively walking grandchildren.
 - **Determinism is preserved.** The child's `Answer` (with its `trace_id`) is recorded as the tool's result in the parent trace; replaying the parent never re-runs the child. Recursion depth is capped (`max_agent_depth`).

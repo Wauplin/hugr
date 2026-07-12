@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huggr.dev/schemas/answer.schema.json",
+  "title": "Answer",
+  "description": "The uniform result of one ask to a huglet. The wire form of huggr_agent::Answer. Errors are answers: status \"error\" still yields this shape (and exit code 0 on a CLI).",
+  "type": "object",
+  "required": ["status", "response", "trace_id", "metadata"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"],
+      "description": "Outcome to branch on."
+    },
+    "response": {
+      "type": "object",
+      "description": "Structured response object. Huggr only requires an object; a typed response contract may cast it into a narrower Rust type. Error answers use response.error."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "The NEW trace this run persisted — the anchor for follow-ups and forks."
+    },
+    "blobs": {
+      "type": "array",
+      "description": "Outbound files, content-addressed.",
+      "items": { "$ref": "ask.schema.json#/$defs/blob_handle" },
+      "default": []
+    },
+    "metadata": { "$ref": "#/$defs/answer_meta" },
+    "extra": {
+      "description": "Agent-specific structured extras; never load-bearing for the contract."
+    }
+  },
+  "$defs": {
+    "answer_meta": {
+      "type": "object",
+      "description": "Mandatory accounting, derivable from the persisted trace alone (children included).",
+      "required": [
+        "duration_ms",
+        "cost_micro_usd",
+        "tokens_in",
+        "tokens_out",
+        "model_calls",
+        "tool_calls"
+      ],
+      "properties": {
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total cost in micro-USD (1 USD = 1000000)."
+        },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 },
+        "model_calls": { "type": "integer", "minimum": 0 },
+        "tool_calls": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

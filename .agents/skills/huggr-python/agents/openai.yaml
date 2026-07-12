@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huggr Python"
+  short_description: "Build Huggr agents with Python"
+  default_prompt: "Use $huggr-python to define and run a Huggr agent with Python tools."

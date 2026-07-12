@@ -17,14 +17,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   switch (message?.type) {
-    case "hugr.tabs.list":
+    case "huggr.tabs.list":
       return { ok: true, tabs: await chrome.tabs.query({}) };
-    case "hugr.tab.open":
+    case "huggr.tab.open":
       return { ok: true, tab: await chrome.tabs.create({ url: message.url, active: message.active !== false }) };
-    case "hugr.tab.close":
+    case "huggr.tab.close":
       await chrome.tabs.remove(message.tabId);
       return { ok: true };
-    case "hugr.tab.switch":
+    case "huggr.tab.switch":
       await chrome.tabs.update(message.tabId, { active: true });
       return { ok: true };
     default:

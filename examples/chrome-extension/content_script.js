@@ -86,7 +86,7 @@ function snapshotNodes() {
   return [...document.querySelectorAll(selector)].slice(0, 200).map((node, index) => {
     const rect = node.getBoundingClientRect();
     const nodeId = `n${index + 1}`;
-    node.dataset.hugrNodeId = nodeId;
+    node.dataset.huggrNodeId = nodeId;
     return {
       node_id: nodeId,
       tag: node.tagName.toLowerCase(),
@@ -120,7 +120,7 @@ function withTarget(args, fn) {
 
 function findTarget(args) {
   if (args.node_id) {
-    const byNodeId = document.querySelector(`[data-hugr-node-id="${cssEscape(args.node_id)}"]`);
+    const byNodeId = document.querySelector(`[data-huggr-node-id="${cssEscape(args.node_id)}"]`);
     if (byNodeId) return byNodeId;
   }
   if (args.selector) return document.querySelector(args.selector);

@@ -1,0 +1,49 @@
+[package]
+name = "huggr-toolkit"
+description = "huglet crate manifests: the huggr.toml parser, the predefined tool library, and the `huggr` builder CLI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "huggr_toolkit"
+
+[[bin]]
+name = "huggr"
+path = "src/bin/huggr.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+# `toml` gives us both a typed `Deserialize` path and byte-offset error spans,
+# which we surface as precise line/column diagnostics.
+toml = "0.8"
+# The predefined tool library implements host `Capability`s, so the toolkit
+# stacks on huggr-host + huggr-core as pure data.
+huggr-core = { workspace = true }
+huggr-host = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+# web_fetch (allowlisted, GET-only) reuses the workspace reqwest client.
+reqwest = { workspace = true }
+regex = "1"
+globset = "0.4"
+html2md = "0.2"
+# `huggr run` assembles a huggr-agent runtime from an agent manifest and executes
+# one ask over the native engine with the OpenAI-compatible adapter.
+huggr-agent = { workspace = true }
+huggr-providers = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+# Trace tooling reuses the versioned replay/inspect machinery.
+huggr-replay = { workspace = true }
+# Cron scheduling is host-side; the core never reads a clock.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+croner = "2"
+
+[dev-dependencies]
+tokio = { workspace = true }
