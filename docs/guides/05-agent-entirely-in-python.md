@@ -43,7 +43,7 @@ def lookup_policy(query: str, limit: int = 5) -> dict:
     return {"matches": search_policy_text(query)[:limit]}
 ```
 
-This advertises `{"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"], "additionalProperties": false}`, and the model's arguments arrive as keyword arguments. Supported annotations: `str`, `int`, `float`, `bool`, `list[...]`, `dict`, and `Optional[...]`; parameters without defaults are required. An unannotated parameter is an error — the advertised surface must stay auditable, so Huggr refuses to guess.
+This advertises `{"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"], "additionalProperties": false}`, and the model's arguments arrive as keyword arguments. Supported annotations: `str`, `int`, `float`, `bool`, `list[...]`, `dict`, and `Optional[...]` (or the equivalent `X | None`); parameters without defaults are required. An unannotated parameter is an error — the advertised surface must stay auditable, so Huggr refuses to guess.
 
 The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@huggr.tool`), called (`huggr.tool(fn, ...)`), or as a decorator factory (`@huggr.tool(...)`), and `name`/`description` override the inferred values.
 

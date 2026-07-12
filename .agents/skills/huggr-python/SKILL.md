@@ -26,7 +26,7 @@ Import the package as `huggr_agents`. It runs the native Rust runtime; the Pytho
 
 ## Define tools and the agent
 
-Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead — the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
+Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]` or `X | None`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead — the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
 
 ```python
 import huggr_agents as huggr

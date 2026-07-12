@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import types
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -207,13 +208,13 @@ def _annotation_schema(annotation: Any) -> JsonObject:
         return {"type": "array", "items": _annotation_schema(args[0])} if args else {"type": "array"}
     if origin is dict:
         return {"type": "object"}
-    if origin is Union:
+    if origin is Union or origin is getattr(types, "UnionType", None):
         variants = [a for a in get_args(annotation) if a is not type(None)]
         if len(variants) == 1:
             return _annotation_schema(variants[0])
     raise TypeError(
         f"cannot infer a JSON schema for annotation {annotation!r}; "
-        "use str/int/float/bool/list[...]/dict/Optional[...] or pass schema= explicitly"
+        "use str/int/float/bool/list[...]/dict/Optional[...]/X | None or pass schema= explicitly"
     )
 
 
@@ -225,6 +226,11 @@ def _schema_from_signature(fn: ToolFn) -> JsonObject:
     for param in inspect.signature(fn).parameters.values():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             raise TypeError(f"tool `{fn.__name__}` cannot use *args/**kwargs; declare named parameters")
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise TypeError(
+                f"tool `{fn.__name__}` parameter `{param.name}` is positional-only; "
+                "tool arguments are passed by keyword, so drop the `/` marker"
+            )
         if param.name not in hints:
             raise TypeError(
                 f"tool `{fn.__name__}` parameter `{param.name}` has no type annotation; "
