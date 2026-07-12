@@ -14,5 +14,6 @@ These hands-on guides cover one surface each. Every guide is standalone and runn
 10. [Tool grants and jails](10-tool-grants-and-jails.md); sandbox-by-registration, scoping every grant in the tool library, and where each jail's boundary is.
 11. [Skills](11-skills.md); the Agent Skills folder format, progressive disclosure through `skill_read`, definition versus runtime skills, and the trust model.
 12. [Files and state: blobs, scratchpad, and memory](12-blobs-scratchpad-memory.md); blob exchange and the content-addressed store, per-lineage scratch with copy-on-fork, and durable memory.
+13. [Models, tiers, and pricing](13-models-tiers-pricing.md); the `[models]` block, tier selection, adapter retries versus semantic errors, and cost accounting from the trace.
 
 For a self-contained, end-to-end walkthrough that composes several agents into a working pipeline, see [the tutorials](../tutorials/README.md).
