@@ -31,7 +31,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0     # optional: feeds AnswerMeta.cost_micro_usd
 output_usd_per_m_tokens = 1.5
-max_tokens = 2048
 
 # [tools.<name>] — grants from the predefined tool library. The scope keys are
 # tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard
@@ -68,11 +67,26 @@ root = "./policies"              # read/list/search/grep/glob jailed to this fol
 # [tools.agent.receipts]
 # artifact = "./receipts"          # path to a built agent binary (subprocess)
 
-# [limits] — declared runtime limits.
-[limits]
-max_model_calls = 20
-max_cost_micro_usd = 50000
-timeout_s = 120
+# [limits] — declared runtime limits, enforced host-side per ask. Every limit
+# is opt-in: an unset key (and an absent block) means unbounded.
+# [limits]
+# max_model_calls = 20
+# max_cost_micro_usd = 50000       # accounting is in micro-USD; 50000 = $0.05
+# timeout_s = 120
+
+# [context] — context projection and deterministic compaction. Optional;
+# without it the full log is projected every turn. See
+# docs/guides/09-context-compaction.md.
+# [context]
+# compaction = "summarize"          # "none" (default) | "truncate" | "summarize"
+# budget_tokens = 64000             # target size of the projected context
+# trigger_tokens = 56000            # start compacting once the projection crosses this
+# keep_recent_tokens = 8000         # never compact the most recent blocks
+# max_block_tokens = 2000           # truncate any single block above this
+# summary_model = "medium"          # tier used for summarize; defaults to `default`
+# [context.forget]
+# tool_ttl = { web_fetch = 2 }      # drop a tool's results N user turns later
+# keep_last_per_tool = { fs_read = 1 } # keep only the newest N results per tool
 
 # [scratchpad] — per-lineage scratch directory. Optional; defaults to
 # ~/.hugr/<agent>/scratch.

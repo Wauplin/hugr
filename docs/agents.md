@@ -189,7 +189,7 @@ artifact = "./receipts-agent"
 [tools.memory]                        # optional durable, agent-wide notes
 readonly = false
 
-[limits]
+[limits]                              # optional; an agent has no caps by default
 max_model_calls = 20
 max_cost_micro_usd = 50000
 timeout_s = 120
@@ -248,7 +248,7 @@ Runtime path values are resolved from the caller's current directory. The same d
 
 `[context]` controls projection policy. `compaction = "none"` is the default static projection. `compaction = "truncate"` records a built-in `kind = "budget"` policy with deterministic token caps. `compaction = "summarize"` uses the same budget policy and a summarizer model selector before the main turn when older context needs a durable summary.
 
-Optional `[context.forget.tool_ttl]` and `[context.forget.keep_last_per_tool]` maps are keyed by open tool names.
+Optional `[context.forget.tool_ttl]` and `[context.forget.keep_last_per_tool]` maps are keyed by open tool names. [Guide 9](guides/09-context-compaction.md) walks through the full mechanism and every knob.
 
 ### Response contracts and storage
 
@@ -264,7 +264,9 @@ Response repair uses the runtime's fixed default attempt limit for now, not mani
 
 ### Limits
 
-`[limits]` is enforced host-side on every ask. An exceeded limit yields an ordinary `status: "error"` answer with a persisted partial trace that still verifies.
+`[limits]` is enforced host-side on every ask. Limits are opt-in: an agent has none by default, and every unset key is unbounded. An exceeded limit yields an ordinary `status: "error"` answer with a persisted partial trace that still verifies.
+
+Cost accounting is in micro-USD (`max_cost_micro_usd`, `AnswerMeta.cost_micro_usd`) for precision; user-facing reports such as `hugr stats` display USD, showing `<$0.01` for a nonzero amount under a penny.
 
 ## Tools and capabilities
 

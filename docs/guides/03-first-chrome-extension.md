@@ -12,7 +12,7 @@ A browser host is a stack, and only the top layer knows about Chrome:
 
 - **`crates/hugr-wasm`** compiles `hugr-core` to `wasm32-unknown-unknown` and exposes it through wasm-bindgen.
 
-  The extension-facing class is `HugrWasm`. Construct it with a `BrowserAgentConfig` JSON object containing `base_url`, `model`, `api_key`, `max_model_calls`, `max_cost_micro_usd`, `system_prompt`, and `context`.
+  The extension-facing class is `HugrWasm`. Construct it with a `BrowserAgentConfig` JSON object containing `base_url`, `model`, `api_key`, `system_prompt`, and `context`, plus optional `max_model_calls` / `max_cost_micro_usd` caps (unset means unbounded).
 
   Drive it with `submit_user_input`, `poll_commands_json`, `submit_model_done`/`submit_model_error`, `submit_capability_done`/`submit_capability_error`, `submit_permission_decision`, and `abort`. Read results with `final_text()`, `trace_json()`, and `log_json()`.
 

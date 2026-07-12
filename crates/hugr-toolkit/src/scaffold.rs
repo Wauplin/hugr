@@ -184,10 +184,9 @@ fn blank_manifest_for(name: &str) -> String {
          # No external tools — this agent has only its scratchpad. Add a\n\
          # library grant here, e.g. [tools.fs_read] root = \"./data\".\n\
          \n\
-         [limits]\n\
-         max_model_calls = 20\n\
-         max_cost_micro_usd = 50000\n\
-         timeout_s = 120\n",
+         # Limits are opt-in (unset = unbounded). Cap an ask with e.g.:\n\
+         # [limits]\n\
+         # max_cost_micro_usd = 50000\n",
     )
 }
 

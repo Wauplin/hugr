@@ -46,7 +46,6 @@ agent = hugr.Agent(
         "medium": {"model": "google/gemma-4-31B-it:cerebras"},
     },
     tools=[lookup_policy],
-    limits={"max_model_calls": 10, "max_cost_micro_usd": 50000, "timeout_s": 60},
     response_schema={
         "type": "object",
         "properties": {"answer": {"type": "string"}},

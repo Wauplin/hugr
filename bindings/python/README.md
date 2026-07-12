@@ -17,11 +17,10 @@ agent = hugr.Agent(
         "default": "medium",
         "base_url": "https://router.huggingface.co/v1",
         "api_key_env": "HUGR_API_KEY",
-        "medium": {"model": "moonshotai/Kimi-K2-Instruct", "temperature": 0.2,
+        "medium": {"model": "moonshotai/Kimi-K2-Instruct",
                    "input_usd_per_m_tokens": 1.0, "output_usd_per_m_tokens": 1.5},
     },
     tools=[lookup_policy],
-    limits={"max_model_calls": 10, "timeout_s": 60},
 )
 
 answer = agent.ask("Can I expense a train ticket?")

@@ -85,8 +85,6 @@ export interface ToolSpec {
 /// One `[models.<tier>]`-shaped entry (same keys as the manifest).
 export interface TierConfig {
   model: string;
-  temperature?: number;
-  max_tokens?: number;
   input_usd_per_m_tokens?: number;
   output_usd_per_m_tokens?: number;
 }

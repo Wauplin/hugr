@@ -145,7 +145,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
 
 ## Model provider abstraction
 
-- **Canonical request/response.** `ModelRequest { blocks, tools, params, extra }` with structured `ContextBlock`s; `ModelOutput { text, tool_calls, stop }`. Provider-specific knobs the brain never reads ride the opaque `extra`.
+- **Canonical request/response.** `ModelRequest { blocks, tools, extra }` with structured `ContextBlock`s; `ModelOutput { text, tool_calls, stop }`. Provider-specific knobs the brain never reads ride the opaque `extra`.
 - **A model call is a typed command, not a capability**, because the brain *reasons about model output* (tool calls drive the turn loop) but never about tool output (opaque leaves). At the host level a model adapter is still registered like any capability.
 - **`ModelSelector` is a plain string newtype.** The manifest maps free-form tier names to concrete adapters (`[models.<tier>]` → endpoint, model id, pricing); the policy picks a selector; the host registry resolves it. Each model op records its selector in `OpMeta`, so per-tier spend falls out of the trace.
 - **Streaming is the only mode.** Adapters stream deltas live via the sink and return the consolidated output; there is no non-streaming path. Transport errors (429s, network blips, timeouts) are retried inside the adapter and never reach the brain; only the final outcome is recorded, so a replayed session doesn't re-suffer transient failures.

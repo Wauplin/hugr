@@ -142,16 +142,6 @@ fn apply_target(
             };
             match *key {
                 "model" => tier.model = value,
-                "temperature" => {
-                    tier.temperature = Some(value.parse().map_err(|_| {
-                        fail("temperature must be a number".to_string())
-                    })?)
-                }
-                "max_tokens" => {
-                    tier.max_tokens = Some(value.parse().map_err(|_| {
-                        fail("max_tokens must be an integer".to_string())
-                    })?)
-                }
                 "input_usd_per_m_tokens" => {
                     tier.input_usd_per_m_tokens = Some(value.parse().map_err(|_| {
                         fail("input_usd_per_m_tokens must be a number".to_string())

@@ -16,7 +16,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.0
 
 [tools.traces_read]
 root = "."
@@ -28,7 +27,3 @@ required = true
 env = "HUGR_INSIGHTS_HOME"
 help = "Agent home directory to analyze (e.g. ~/.hugr/hugr-docs)."
 
-[limits]
-max_model_calls = 40
-max_cost_micro_usd = 100000
-timeout_s = 300

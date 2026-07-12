@@ -35,12 +35,6 @@ function buildBody(request, settings) {
     }
   }));
   if (tools.length) body.tools = tools;
-  if (request.params?.temperature !== null && request.params?.temperature !== undefined) {
-    body.temperature = request.params.temperature;
-  }
-  if (request.params?.max_tokens !== null && request.params?.max_tokens !== undefined) {
-    body.max_tokens = request.params.max_tokens;
-  }
   if (request.extra && typeof request.extra === "object" && !Array.isArray(request.extra)) {
     Object.assign(body, Object.fromEntries(Object.entries(request.extra).filter(([, value]) => value !== null)));
   }

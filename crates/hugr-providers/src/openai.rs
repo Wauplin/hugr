@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hugr_core::{ContentPart, ModelOutput, ModelRequest, Role, SamplingParams, ToolCall, Usage};
+use hugr_core::{ContentPart, ModelOutput, ModelRequest, Role, ToolCall, Usage};
 use hugr_host::{ModelAdapter, ModelSink};
 use serde_json::{Value, json};
 
@@ -28,7 +28,6 @@ pub struct OpenAiAdapter {
     api_key: String,
     model: String,
     base_url: String,
-    default_params: SamplingParams,
     max_attempts: u32,
 }
 
@@ -40,7 +39,6 @@ impl OpenAiAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: DEFAULT_BASE_URL.to_string(),
-            default_params: SamplingParams::default(),
             max_attempts: DEFAULT_MAX_ATTEMPTS,
         }
     }
@@ -54,13 +52,6 @@ impl OpenAiAdapter {
     /// Override the concrete model id (e.g. from a CLI flag).
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
-        self
-    }
-
-    /// Set adapter-default sampling parameters. Per-request parameters from the
-    /// brain still win when present; these are host-side tier defaults.
-    pub fn with_default_params(mut self, params: SamplingParams) -> Self {
-        self.default_params = params;
         self
     }
 
@@ -172,16 +163,6 @@ impl OpenAiAdapter {
         });
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
-        }
-        if let Some(t) = request
-            .params
-            .temperature
-            .or(self.default_params.temperature)
-        {
-            body["temperature"] = json!(t);
-        }
-        if let Some(m) = request.params.max_tokens.or(self.default_params.max_tokens) {
-            body["max_tokens"] = json!(m);
         }
         if let Some(extra) = request.extra.as_object() {
             for (key, value) in extra {
@@ -562,9 +543,7 @@ fn stringify(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hugr_core::{
-        ContextBlock, Event, ModelDelta, ModelRequest, Role, SamplingParams, ToolSchema,
-    };
+    use hugr_core::{ContextBlock, Event, ModelDelta, ModelRequest, Role, ToolSchema};
     use hugr_host::ModelSink;
 
     fn adapter() -> OpenAiAdapter {
@@ -598,9 +577,6 @@ mod tests {
                 "run a command",
                 json!({ "type": "object" }),
             )],
-            SamplingParams::new()
-                .with_temperature(0.5)
-                .with_max_tokens(128),
         );
 
         let body = adapter().build_body(&request);
@@ -625,8 +601,6 @@ mod tests {
 
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["stream"], true);
-        assert_eq!(body["temperature"], json!(0.5));
-        assert_eq!(body["max_tokens"], json!(128));
         assert_eq!(body["tools"][0]["function"]["name"], "shell");
     }
 
@@ -638,7 +612,6 @@ mod tests {
                 vec![ContentPart::Text("answer".into())],
             )],
             Vec::new(),
-            SamplingParams::new(),
         );
         request.extra = json!({
             "response_format": {

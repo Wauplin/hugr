@@ -92,13 +92,11 @@ agent = hugr.Agent(
         "api_key_env": "HUGR_API_KEY",
         "medium": {
             "model": "moonshotai/Kimi-K2-Instruct",
-            "temperature": 0.2,
             "input_usd_per_m_tokens": 1.0,
             "output_usd_per_m_tokens": 1.5,
         },
     },
     tools=[lookup_policy],
-    limits={"max_model_calls": 10, "timeout_s": 60},
 )
 ```
 
@@ -110,11 +108,11 @@ The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig
 
 ### `models`
 
-The `models` dict has three reserved keys (`base_url`, `api_key_env`, and `default`) plus one nested table per tier. A tier table requires a `model` id and optionally carries `temperature`, `max_tokens`, and per-million-token pricing (`input_usd_per_m_tokens`, `output_usd_per_m_tokens`). The `default` knob names which tier the agent uses. This is the exact shape of the `[models]` manifest block.
+The `models` dict has three reserved keys (`base_url`, `api_key_env`, and `default`) plus one nested table per tier. A tier table requires a `model` id and optionally carries per-million-token pricing (`input_usd_per_m_tokens`, `output_usd_per_m_tokens`). Sampling knobs such as temperature are never set; the provider's defaults apply. The `default` knob names which tier the agent uses. This is the exact shape of the `[models]` manifest block.
 
 ### `limits`
 
-The `limits` dict accepts `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`, matching the manifest's `[limits]` keys. Each key is optional; an unset key is unbounded.
+The `limits` dict accepts `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`, matching the manifest's `[limits]` keys. Limits are opt-in: an agent has none by default, and each unset key is unbounded.
 
 ### `grants`
 
@@ -399,7 +397,6 @@ Return a RetentionReport JSON object and no additional fields.
         },
     },
     tools=[find_at_risk_accounts],
-    limits={"max_model_calls": 4, "max_cost_micro_usd": 20_000, "timeout_s": 60},
     response_schema=retention_report.json_schema(),
 )
 

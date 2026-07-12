@@ -19,7 +19,6 @@ fn reference_manifest_parses_without_warnings() {
     assert_eq!(def.default_tier(), Some("medium"));
     let medium = &def.models.tiers["medium"];
     assert_eq!(medium.input_usd_per_m_tokens, Some(1.0));
-    assert_eq!(medium.max_tokens, Some(2048));
 
     // Only fs_read is uncommented in the reference.
     assert_eq!(def.tools.len(), 1);
@@ -27,6 +26,8 @@ fn reference_manifest_parses_without_warnings() {
     assert_eq!(def.tools[0].name, "fs_read");
     assert_eq!(def.tools[0].config["root"], "./policies");
 
-    assert_eq!(def.limits.max_model_calls, Some(20));
-    assert_eq!(def.limits.timeout_s, Some(120));
+    // Limits are opt-in; the reference documents them commented out.
+    assert_eq!(def.limits.max_model_calls, None);
+    assert_eq!(def.limits.max_cost_micro_usd, None);
+    assert_eq!(def.limits.timeout_s, None);
 }

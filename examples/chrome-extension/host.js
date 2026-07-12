@@ -22,8 +22,6 @@ export const host = {
   systemPrompt: SYSTEM_PROMPT,
   defaults: {
     baseUrl: "https://router.huggingface.co/v1",
-    model: "google/gemma-4-31B-it:cerebras",
-    maxModelCalls: 20,
-    maxCostMicroUsd: 50000
+    model: "google/gemma-4-31B-it:cerebras"
   }
 };

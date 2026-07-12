@@ -42,7 +42,6 @@ const agent = createAgent({
     },
     invoke: async (args) => ({ matches: await searchPolicyText((args as { query: string }).query) }),
   }],
-  limits: { max_model_calls: 10, max_cost_micro_usd: 50000, timeout_s: 60 },
 });
 
 const answer = await agent.ask("Can I expense a train ticket?");

@@ -98,6 +98,8 @@ The built binary has the same fold behind `--stats`. The thing to know is the **
 - The orchestrator's **own** line reports `cost_own`; grandchildren are already folded into the child's number and are **not** re-walked.
 - So `cost_micro_usd == cost_own + cost_delegated`: one level of delegation, accounted where it was spent. This keeps the orchestrator's bill complete without recursive walks through arbitrary subtrees.
 
+Accounting is kept in micro-USD (`cost_micro_usd` in `AnswerMeta` and the `--json` output) for precision; the pretty table displays USD, rendering a nonzero amount under a penny as `<$0.01`.
+
 The same fold provides per-tier, per-tool, and duration percentiles; see `crates/hugr-agent/src/analytics.rs` and `crates/hugr-toolkit/src/stats.rs` for the exact shape.
 
 ## Next

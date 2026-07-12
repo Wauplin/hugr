@@ -50,17 +50,12 @@ output_usd_per_m_tokens = 1.5
 # GET-only HTTP, jailed to an allowlist of hosts (the sandbox boundary).
 [tools.web_fetch]
 allow_hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
-
-[limits]
-max_model_calls = 20
-max_cost_micro_usd = 50000
-timeout_s = 120
 ```
 
 - `[agent]` is the identity: the name also names the agent's state home (`~/.hugr/<name>/` by default, where traces and the scratchpad live).
 - `[models]` points at any OpenAI-compatible endpoint; `api_key_env` names the environment variable that holds the key (the value itself never appears in any output). Tiers like `[models.medium]` carry the model id and its per-million-token prices, which is how every answer gets a cost.
 - `[tools.web_fetch]` is a *grant*: it registers the library's GET-only HTTP tool, jailed to those two Open-Meteo hosts. Delete the section and the agent has no network at all.
-- `[limits]` caps model calls, spend (in micro-USD), and wall time per ask.
+- There is no `[limits]` block and none is required: an agent has no caps by default. Add `[limits]` (`max_model_calls`, `max_cost_micro_usd`, `timeout_s`) when you want to bound an ask; every unset key is unbounded.
 
 ### SYSTEM.md
 

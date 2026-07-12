@@ -67,11 +67,6 @@ function buildBody(request: Record<string, Json>, tier: TierConfig): Record<stri
     return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
   });
   if (tools.length) body.tools = tools;
-  const params = (request.params as Record<string, Json>) ?? {};
-  const temperature = params.temperature ?? tier.temperature ?? null;
-  if (temperature !== null && temperature !== undefined) body.temperature = temperature;
-  const maxTokens = params.max_tokens ?? tier.max_tokens ?? null;
-  if (maxTokens !== null && maxTokens !== undefined) body.max_tokens = maxTokens;
   const extra = request.extra;
   if (extra && typeof extra === "object" && !Array.isArray(extra)) {
     for (const [key, value] of Object.entries(extra)) {

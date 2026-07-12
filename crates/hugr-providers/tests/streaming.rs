@@ -1,7 +1,7 @@
 //! Drives [`OpenAiAdapter`] against a local mock SSE server, exercising the real
 //! reqwest streaming + SSE-parsing path end-to-end (no external network).
 
-use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams};
+use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role};
 use hugr_host::{ModelAdapter, ModelSink};
 use hugr_providers::OpenAiAdapter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,7 +33,6 @@ fn user_request(text: &str) -> ModelRequest {
             vec![ContentPart::Text(text.to_string())],
         )],
         vec![],
-        SamplingParams::new(),
     )
 }
 

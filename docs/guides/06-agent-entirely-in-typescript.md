@@ -43,16 +43,15 @@ const config: AgentConfig = {
     base_url: "https://router.huggingface.co/v1",
     api_key_env: "HUGR_API_KEY",
     default: "medium",
-    medium: { model: "moonshotai/Kimi-K2-Instruct", temperature: 0.2,
+    medium: { model: "moonshotai/Kimi-K2-Instruct",
               input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
   },
-  limits: { max_model_calls: 10, max_cost_micro_usd: 50000, timeout_s: 60 },
 };
 ```
 
 - `name` names the agent's state home (`~/.hugr/<name>/` by default), just like `[agent]` name.
-- `models` is `[models]`: provider knobs (`base_url`, `api_key`, `api_key_env`, `default`) plus one tier per other key. Each tier (`TierConfig`) carries `model`, optional `temperature`/`max_tokens`, and `input_usd_per_m_tokens`/`output_usd_per_m_tokens`; the prices that make every answer carry a cost, identical to `[models.medium]`.
-- `limits` (`LimitsConfig`) caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`.
+- `models` is `[models]`: provider knobs (`base_url`, `api_key`, `api_key_env`, `default`) plus one tier per other key. Each tier (`TierConfig`) carries `model` and optional `input_usd_per_m_tokens`/`output_usd_per_m_tokens`; the prices that make every answer carry a cost, identical to `[models.medium]`. Sampling knobs such as temperature are never set; the provider's defaults apply.
+- `limits` (`LimitsConfig`) is optional and caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`. An agent has no limits by default; each unset key is unbounded.
 - `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host.
 - `api_key_env` names an environment variable; the Node runtime resolves it from `process.env`, the browser runtime has no env (pass `api_key` directly there). The value never appears in any output.
 
@@ -287,7 +286,7 @@ const agent = createAgent({
     base_url: "https://router.huggingface.co/v1",
     api_key_env: "HUGR_API_KEY",
     default: "medium",
-    medium: { model: "moonshotai/Kimi-K2-Instruct", temperature: 0.2,
+    medium: { model: "moonshotai/Kimi-K2-Instruct",
               input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
   },
   tools: [{
@@ -296,7 +295,6 @@ const agent = createAgent({
     schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
     invoke: async (args) => ({ matches: [`policy line about ${(args as any).query}`] }),
   }],
-  limits: { max_model_calls: 10, timeout_s: 60 },
 });
 
 const answer = await agent.ask("Can I expense a train ticket?");

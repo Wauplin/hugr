@@ -12,8 +12,12 @@ pub struct BrowserAgentConfig {
     pub base_url: String,
     pub model: String,
     pub api_key: String,
-    pub max_model_calls: u32,
-    pub max_cost_micro_usd: u64,
+    /// Optional per-session cap on model calls; unset means unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_model_calls: Option<u32>,
+    /// Optional per-session cost cap in micro-USD; unset means unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost_micro_usd: Option<u64>,
     /// The system prompt for the session; empty means "no system block".
     #[serde(default)]
     pub system_prompt: String,
@@ -47,8 +51,8 @@ impl Default for BrowserAgentConfig {
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
             api_key: String::new(),
-            max_model_calls: 2000,
-            max_cost_micro_usd: 500_000,
+            max_model_calls: None,
+            max_cost_micro_usd: None,
             system_prompt: String::new(),
             context: BrowserContextConfig::default(),
         }

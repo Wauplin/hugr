@@ -22,7 +22,3 @@ output_usd_per_m_tokens = 1.5
 [tools.web_fetch]
 allow_hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
 
-[limits]
-max_model_calls = 20
-max_cost_micro_usd = 50000
-timeout_s = 120

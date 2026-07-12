@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
-    ContextPlanEntry, ContextSource, ModelRequest, ModelSelector, Role, SamplingParams,
-    SummaryRequest, TokenBudget, ToolSchema,
+    ContextPlanEntry, ContextSource, ModelRequest, ModelSelector, Role, SummaryRequest,
+    TokenBudget, ToolSchema,
 };
 use crate::primitives::Value;
 use crate::record::{LogEntry, Record};
@@ -138,7 +138,6 @@ pub struct StaticPolicy {
     tools: Vec<ToolSchema>,
     permissioned: Vec<String>,
     background: Vec<String>,
-    params: SamplingParams,
     system: Option<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     extra: Value,
@@ -158,7 +157,6 @@ impl Default for StaticPolicy {
             tools: Vec::new(),
             permissioned: Vec::new(),
             background: Vec::new(),
-            params: SamplingParams::default(),
             system: None,
             extra: Value::Null,
             context_budget: TokenBudget::default(),
@@ -193,12 +191,6 @@ impl StaticPolicy {
     /// turn, so the model keeps streaming while they run.
     pub fn with_background(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.background = names.into_iter().collect();
-        self
-    }
-
-    /// Set sampling parameters applied to every request.
-    pub fn with_params(mut self, params: SamplingParams) -> Self {
-        self.params = params;
         self
     }
 
@@ -424,14 +416,7 @@ impl TurnPolicy for StaticPolicy {
             }
         }
 
-        ContextPlan::new(
-            budget,
-            entries,
-            totals,
-            self.tools.clone(),
-            self.params.clone(),
-        )
-        .with_extra(self.extra.clone())
+        ContextPlan::new(budget, entries, totals, self.tools.clone()).with_extra(self.extra.clone())
     }
 
     fn needs_permission(&self, capability: &str) -> bool {
@@ -817,7 +802,7 @@ fn summary_request(
     SummaryRequest::new(
         replaces_up_to,
         selector,
-        ModelRequest::new(blocks, Vec::new(), SamplingParams::default()),
+        ModelRequest::new(blocks, Vec::new()),
     )
 }
 

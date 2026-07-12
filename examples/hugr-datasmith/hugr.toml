@@ -17,7 +17,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.4
 
 # Read-only filesystem access, jailed to the docs folder passed at run time.
 [tools.fs_read]

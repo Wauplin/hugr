@@ -10,5 +10,6 @@ These hands-on guides cover one surface each. Every guide is standalone and runn
 6. [An agent entirely in TypeScript](06-agent-entirely-in-typescript.md); the TS runtime API in Node and the browser.
 7. [Composition and cost](07-composition-and-cost.md); agents as tools, zero-copy blob passing, feedback, `hugr stats`.
 8. [Traces, replay, and debugging](08-traces-replay-debugging.md); trace anatomy, `hugr replay --step`, `verify`, cron, and the insights workflow.
+9. [Context compaction and pruning](09-context-compaction.md); why contexts grow, forget rules, the deterministic budget pass, summarization, and every `[context]` knob.
 
 For a self-contained, end-to-end walkthrough that composes several agents into a working pipeline, see [the tutorials](../tutorials/README.md).

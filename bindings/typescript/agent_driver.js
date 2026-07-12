@@ -248,8 +248,8 @@ function toRustConfig(settings, host) {
     base_url: settings.baseUrl || defaults.baseUrl || "https://router.huggingface.co/v1",
     model: settings.model || defaults.model || "google/gemma-4-31B-it:cerebras",
     api_key: settings.apiKey || "",
-    max_model_calls: Number(settings.maxModelCalls || defaults.maxModelCalls || 20),
-    max_cost_micro_usd: Number(settings.maxCostMicroUsd || defaults.maxCostMicroUsd || 50000),
+    max_model_calls: settings.maxModelCalls ?? defaults.maxModelCalls ?? null,
+    max_cost_micro_usd: settings.maxCostMicroUsd ?? defaults.maxCostMicroUsd ?? null,
     system_prompt: host.systemPrompt || "",
     context: {
       compaction: context.compaction || "summarize",

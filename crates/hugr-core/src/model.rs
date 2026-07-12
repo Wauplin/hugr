@@ -33,8 +33,6 @@ pub struct ModelRequest {
     pub blocks: Vec<ContextBlock>,
     /// Tool schemas advertised to the model this turn.
     pub tools: Vec<ToolSchema>,
-    /// Sampling parameters.
-    pub params: SamplingParams,
     /// Provider-specific knobs the brain never reads (narrow-waist passthrough).
     pub extra: Value,
 }
@@ -42,11 +40,10 @@ pub struct ModelRequest {
 impl ModelRequest {
     /// Construct a request. `extra` defaults to null; set it afterwards for
     /// provider-specific passthrough.
-    pub fn new(blocks: Vec<ContextBlock>, tools: Vec<ToolSchema>, params: SamplingParams) -> Self {
+    pub fn new(blocks: Vec<ContextBlock>, tools: Vec<ToolSchema>) -> Self {
         Self {
             blocks,
             tools,
-            params,
             extra: Value::Null,
         }
     }
@@ -87,7 +84,6 @@ pub struct ContextPlan {
     pub entries: Vec<ContextPlanEntry>,
     pub totals: ContextBudgetTotals,
     pub tools: Vec<ToolSchema>,
-    pub params: SamplingParams,
     pub extra: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wants_summary: Option<SummaryRequest>,
@@ -99,14 +95,12 @@ impl ContextPlan {
         entries: Vec<ContextPlanEntry>,
         totals: ContextBudgetTotals,
         tools: Vec<ToolSchema>,
-        params: SamplingParams,
     ) -> Self {
         Self {
             budget,
             entries,
             totals,
             tools,
-            params,
             extra: Value::Null,
             wants_summary: None,
         }
@@ -121,7 +115,6 @@ impl ContextPlan {
                 .filter_map(|entry| entry.disposition.as_request_block().cloned())
                 .collect(),
             tools: self.tools.clone(),
-            params: self.params.clone(),
             extra: self.extra.clone(),
         }
     }
@@ -307,29 +300,6 @@ pub enum ContentPart {
         id: String,
         result: Value,
     },
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct SamplingParams {
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-}
-
-impl SamplingParams {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = Some(temperature);
-        self
-    }
-
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = Some(max_tokens);
-        self
-    }
 }
 
 /// A tool schema advertised to the model. The brain treats the JSON-schema

@@ -16,8 +16,6 @@ STATUS_ERROR = "error"
 class _TierConfigOptional(TypedDict, total=False):
     input_usd_per_m_tokens: float
     output_usd_per_m_tokens: float
-    temperature: float
-    max_tokens: int
 
 
 class TierConfig(_TierConfigOptional):

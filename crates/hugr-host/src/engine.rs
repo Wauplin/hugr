@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hugr_core::{
     Brain, BudgetPolicy, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
-    PolicyRegistry, SamplingParams, StaticPolicy, Timestamp, TurnPolicy, Value,
+    PolicyRegistry, StaticPolicy, Timestamp, TurnPolicy, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -470,7 +470,6 @@ pub struct EngineBuilder {
     first_model: Option<ModelSelector>,
     system_prompt: Option<String>,
     model_request_extra: Value,
-    sampling: SamplingParams,
     policy: Option<(Box<dyn TurnPolicy>, Value)>,
     budget_policy: Option<BudgetPolicy>,
     policy_registry: PolicyRegistry,
@@ -492,7 +491,6 @@ impl Default for EngineBuilder {
             first_model: None,
             system_prompt: None,
             model_request_extra: Value::Null,
-            sampling: SamplingParams::default(),
             policy: None,
             budget_policy: None,
             policy_registry: PolicyRegistry::default(),
@@ -554,12 +552,6 @@ impl EngineBuilder {
     /// Set provider-specific opaque extras attached to every model request.
     pub fn model_request_extra(mut self, extra: Value) -> Self {
         self.model_request_extra = extra;
-        self
-    }
-
-    /// Set sampling parameters for every request.
-    pub fn sampling(mut self, params: SamplingParams) -> Self {
-        self.sampling = params;
         self
     }
 
@@ -652,7 +644,6 @@ impl EngineBuilder {
                         .with_tools(self.caps.schemas())
                         .with_permissioned(self.caps.permissioned_names())
                         .with_background(self.caps.background_names())
-                        .with_params(self.sampling)
                         .with_extra(self.model_request_extra);
                     if let Some(system) = self.system_prompt {
                         static_policy = static_policy.with_system_prompt(system);

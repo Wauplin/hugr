@@ -49,8 +49,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.0
-max_tokens = 4096
 
 [tools.fs_read]
 root = "./policies"
@@ -85,6 +83,7 @@ args = []
 [tools.agent.receipts]
 artifact = "./dist/receipts-agent"
 
+# Optional: limits are opt-in; without [limits] nothing is capped.
 [limits]
 max_model_calls = 20
 max_cost_micro_usd = 50000

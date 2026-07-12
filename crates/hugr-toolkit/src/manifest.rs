@@ -94,7 +94,7 @@ pub struct ModelsConfig {
     /// Which tier the turn policy calls by default (`default`); when unset the
     /// runtime falls back to `medium`, else the first tier.
     pub default: Option<String>,
-    /// Logical tier → model id + pricing + sampling knobs.
+    /// Logical tier → model id + pricing.
     pub tiers: BTreeMap<String, TierConfig>,
 }
 
@@ -108,10 +108,6 @@ pub struct TierConfig {
     pub input_usd_per_m_tokens: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_usd_per_m_tokens: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
 }
 
 /// A single granted tool (`[tools.<name>]` or `[tools.<ns>.<instance>]`).
@@ -1034,7 +1030,6 @@ model = "small-m"
 model = "big-m"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.2
 "#;
         let def = AgentDefinition::parse(src, "hugr.toml").unwrap();
         assert_eq!(
@@ -1047,7 +1042,7 @@ temperature = 0.2
         let big = &def.models.tiers["big"];
         assert_eq!(big.model, "big-m");
         assert_eq!(big.input_usd_per_m_tokens, Some(1.0));
-        assert_eq!(big.temperature, Some(0.2));
+        assert_eq!(big.output_usd_per_m_tokens, Some(1.5));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use hugr_agent::{
     BlobRef, FsBlobStore, FsFeedbackStore, FsMemory, FsScratch, Pricing, StorageOverrides,
     TraceStore, depth_exceeded_resolver,
 };
-use hugr_core::{BudgetPolicy, ModelSelector, SamplingParams, ToolSchema, Value};
+use hugr_core::{BudgetPolicy, ModelSelector, ToolSchema, Value};
 use hugr_host::{
     Capability, ChunkSink,
     mcp::{McpError, McpServerConfig, load_stdio},
@@ -327,14 +327,6 @@ pub async fn build_agent_with_options(
         if let Some(base) = &def.models.base_url {
             adapter = adapter.with_base_url(base.clone());
         }
-        let mut sampling = SamplingParams::new();
-        if let Some(t) = tier.temperature {
-            sampling = sampling.with_temperature(t as f32);
-        }
-        if let Some(m) = tier.max_tokens {
-            sampling = sampling.with_max_tokens(m);
-        }
-        adapter = adapter.with_default_params(sampling);
         agent.models.push((selector, Arc::new(adapter)));
 
         // Price a tier that declares either side; a missing side is 0.

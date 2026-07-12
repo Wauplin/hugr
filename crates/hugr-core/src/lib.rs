@@ -42,7 +42,7 @@ pub use event::{Decision, Event};
 pub use model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
     ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,
-    SamplingParams, TokenBudget, ToolCall, ToolSchema, Usage,
+    TokenBudget, ToolCall, ToolSchema, Usage,
 };
 pub use policy::{
     BudgetPolicy, PolicyDecoder, PolicyRegistry, StaticPolicy, TurnPolicy, decode_policy,

@@ -39,7 +39,6 @@ default = "medium"
 model = "google/gemma-4-31B-it:cerebras"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
-temperature = 0.4
 
 [tools.fs_read]
 root = "."
@@ -189,7 +188,7 @@ librarian = hugr.Agent(
         "base_url": "https://router.huggingface.co/v1",
         "api_key_env": "HUGR_API_KEY",
         "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras", "temperature": 0.2},
+        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
     },
     tools=[dataset_summary, upload_readme, publish_data],
     response_schema={
@@ -253,7 +252,7 @@ judge = hugr.Agent(
         "base_url": "https://router.huggingface.co/v1",
         "api_key_env": "HUGR_API_KEY",
         "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras", "temperature": 0.0},
+        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
     },
     response_schema={
         "type": "object",
@@ -327,12 +326,12 @@ $ hugr traces examples/hugr-docs
 ```text
 $ hugr stats examples/hugr-datasmith
 asks: 1  feedback: 0
-cost: total=85855 microUSD own=85855 microUSD delegated=0 microUSD
+cost: total=$0.09 own=$0.09 delegated=$0.00
 tokens: in=82598 out=2170  calls: models=5 tools=4
 duration_ms: mean=4883 median=4883 p95=4883
 
 models:
-  medium calls=5 tokens_in=82598 tokens_out=2170 cost=85855 microUSD
+  medium calls=5 tokens_in=82598 tokens_out=2170 cost=$0.09
 
 tools:
   fs_list calls=1 errors=0 total_latency_ms=1 mean_latency_ms=1
@@ -346,12 +345,12 @@ This one screen answers the operational questions a pipeline owner actually has.
 ```text
 $ hugr stats examples/hugr-docs
 asks: 10  feedback: 0
-cost: total=102857 microUSD own=102857 microUSD delegated=0 microUSD
+cost: total=$0.10 own=$0.10 delegated=$0.00
 tokens: in=99752 out=2063  calls: models=37 tools=28
 duration_ms: mean=1886 median=1782 p95=3992
 
 models:
-  docs calls=37 tokens_in=99752 tokens_out=2063 cost=102857 microUSD
+  docs calls=37 tokens_in=99752 tokens_out=2063 cost=$0.10
 
 tools:
   fs_list calls=2 errors=0 total_latency_ms=2 mean_latency_ms=1

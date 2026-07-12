@@ -15,8 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use hugr_core::{
-    BudgetPolicy, DoneReason, LogEntry, ModelSelector, OpId, OutputEvent, Record, SamplingParams,
-    ToolSchema, Usage,
+    BudgetPolicy, DoneReason, LogEntry, ModelSelector, OpId, OutputEvent, Record, ToolSchema, Usage,
 };
 use hugr_host::{Capability, Clock, Engine, Frontend, ModelAdapter};
 use hugr_replay::{BlobStore, Trace};
@@ -149,7 +148,6 @@ pub struct Agent {
     pub models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
     pub default_model: Option<ModelSelector>,
     pub capabilities: Vec<Arc<dyn Capability>>,
-    pub sampling: Option<SamplingParams>,
     pub context_policy: Option<BudgetPolicy>,
     pub clock: Option<Clock>,
     pub scratch: Arc<dyn ScratchBackend>,
@@ -183,7 +181,6 @@ impl Clone for Agent {
             models: self.models.clone(),
             default_model: self.default_model.clone(),
             capabilities: self.capabilities.clone(),
-            sampling: self.sampling.clone(),
             context_policy: self.context_policy.clone(),
             clock: self.clock.clone(),
             scratch: self.scratch.clone(),
@@ -238,7 +235,6 @@ impl Agent {
             models: Vec::new(),
             default_model: None,
             capabilities: Vec::new(),
-            sampling: None,
             context_policy: None,
             clock: None,
             scratch: storage.scratch,
@@ -464,9 +460,6 @@ impl Agent {
         }
         for capability in skills.capabilities() {
             builder = builder.capability(capability);
-        }
-        if let Some(sampling) = &self.sampling {
-            builder = builder.sampling(sampling.clone());
         }
         if let Some(policy) = &self.context_policy {
             builder = builder.budget_policy(policy.clone());

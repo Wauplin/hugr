@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role, SamplingParams};
+use hugr_core::{ContentPart, ContextBlock, ModelRequest, OpId, Role};
 use hugr_host::{ModelAdapter, ModelSink};
 use hugr_providers::OpenAiAdapter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -70,7 +70,6 @@ fn user_request() -> ModelRequest {
             vec![ContentPart::Text("hi".to_string())],
         )],
         vec![],
-        SamplingParams::new(),
     )
 }
 

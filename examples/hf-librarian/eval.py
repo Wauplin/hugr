@@ -29,7 +29,6 @@ judge = hugr.Agent(
         "default": "medium",
         "medium": {
             "model": "google/gemma-4-31B-it:cerebras",
-            "temperature": 0.0,
             "input_usd_per_m_tokens": 1.0,
             "output_usd_per_m_tokens": 1.5,
         },
