@@ -4,6 +4,69 @@ This page collects possible replacements for the `hugr` project name. It favors 
 
 Every framework or standalone package candidate described as registry-free on this page was absent from both the crates.io index and the PyPI project endpoint on 12 July 2026. Component words such as “cell,” “thread,” and “tessera” are product vocabulary rather than claims of standalone package availability. This is a point-in-time registry check, not a reservation, trademark search, company-name search, or domain clearance.
 
+## CLI-first recommendation
+
+The CLI name is a primary constraint. It will appear in shell history, documentation, scripts, CI files, support messages, and package installation instructions more often than the ecosystem story will be explained. A strong candidate should therefore be three to five lowercase ASCII characters, one or two syllables, easy to type after hearing it once, and preferably identical to the product and root package name. Six characters can work when the word is unusually clear. Seven or more is a meaningful cost.
+
+The related nouns should follow the same rule. An individual agent can have a short distinctive name, but ordinary concepts should remain ordinary: **tool**, **hook**, **trace**, **run**, and **group** are often better than extending a metaphor into every API. A naming system should improve prose without requiring users to translate it.
+
+### Revised shortlist
+
+| Product and CLI | Length | Agent | Plugin or capability | Group | Registry status | Assessment |
+| --- | ---: | --- | --- | --- | --- | --- |
+| **`huggr`** | 5 | huglet | hook | huddle | Free on crates.io and PyPI | The best command and vocabulary, but an existing [Huggr R project already provides Hugging Face access](https://github.com/benjaminguinaudeau/huggr). This is only viable if that exact collision can be cleared. |
+| **`hugri`** | 5 | huglet | hook | huddle | Free on crates.io and PyPI | The safest direct continuation of Hugr found so far. It is quick to type and broad search found no obvious software product, but the final `i` feels appended rather than meaningful. |
+| **`swyr`** | 4 | swyrl | hook | swarm | Both `swyr` and `swyrl` are free on crates.io and PyPI | Compact and visually distinctive, with no obvious software collision in a broad search. A user may not know whether to say “swire,” “swear,” or “swir.” |
+| **`plect`** | 5 | strand | knot | braid | Free on crates.io and PyPI | Short, available, and built on a root meaning twisted or plaited. It gives simple component names, but `plect` is not a familiar English word. |
+| **`nidu`** | 4 | nid | twig | nest | Free on crates.io and PyPI | A compact version of the nest family. It is easy to type, although pronunciation is not immediate and NIDU appears as a networking-hardware abbreviation. |
+| **`merc`** | 4 | runner | wing | relay | Free on crates.io and PyPI | Preserves the Mercury messenger idea in a fast command. “Merc” also means mercenary, is a common abbreviation, and has older software uses, so searchability is weak. |
+
+The practical recommendation is conditional:
+
+1. **Huggr** is the strongest system if the existing Hugging Face R project can be renamed, transferred, or otherwise cleared with its author.
+2. **Hugri** is the lowest-risk continuation if preserving the Hugr identity matters most.
+3. **Swyr** is the cleanest four-character package candidate, although it needs an explicit pronunciation.
+4. **Plect** is the strongest short name outside the Hugr family.
+
+### The Huggr vocabulary
+
+`huggr` is substantially better on the command line than `myrmesh`, `holobiont`, or `tessellary`. It retains the visual and phonetic identity of Hugr, is five keystrokes, and creates a compact vocabulary without obscure scientific terms.
+
+- Product, root package, and CLI: **Huggr** and `huggr`
+- One self-contained agent: a **huglet**
+- A plugin or capability extension: a **hook**, while the API can continue to say “tool” or “capability”
+- A configured group of cooperating agents: a **huddle**
+- Package family: `huggr-core`, `huggr-host`, `huggr-agent`, `huggr-python`
+
+The basic commands remain short and readable:
+
+```console
+huggr new weather
+huggr run weather
+huggr build weather
+huggr traces weather
+```
+
+The exact collision matters because it is unusually close: the existing repository is named `huggr`, describes itself as a way to use the Hugging Face API from R, and imports as `library(huggr)`. It has no registry claim on crates.io or PyPI, but taking the name without coordination would create two Hugging Face-related developer projects with the same spelling.
+
+The three-character alias `hgr` is free on crates.io and PyPI, but it should not replace `huggr` in primary documentation. It has no natural pronunciation, is used as an acronym across technical fields, and makes commands harder to repeat verbally. It could be an optional shell alias later.
+
+### The Hg, Mercure, and Mercury family
+
+The Mercury idea has two good stories. Mercury is the fast messenger, which suggests agents as runners and groups as relays. Elemental mercury forms droplets and amalgams, which suggests small independent units combining into a larger material.
+
+`hg` would be an excellent two-character symbol in isolation, but it is not available in practice. [Mercurial uses `hg` as its driver command](https://mercurial-scm.org/help/topics/flags), referring to the chemical symbol for mercury, and both crates.io and PyPI already contain packages named `hg`. A new developer tool should not make `hg run` or `hg build` ambiguous beside an established version-control command.
+
+`mercure` is also unavailable on both registries. More importantly, [Mercure is an active real-time protocol and hub](https://mercure.rocks/) that explicitly supports streaming LLM tokens, agent steps, and tool-call updates. `mercury` is heavily occupied by programming languages, developer toolkits, financial software, and current CLIs.
+
+The shorter variants have their own problems:
+
+- `merq` is free on crates.io and PyPI, but [Merq is an established .NET command and event bus](https://www.clarius.org/Merq/) whose name is already derived from Mercury.
+- `amalg` is free on crates.io and PyPI and offers a good drop/bond/amalgam vocabulary, but it is already the executable name of a Lua module-amalgamation tool and appears in current Python development tooling.
+- `merc` is the only usable short branch found in this family. Its ecosystem would be `merc` for the CLI, **runner** for an agent, **wing** for an extension, **relay** for a group, and **route** for a composition. The vocabulary is clear, but the name is generic and carries the mercenary meaning.
+
+The Mercury exploration therefore supplies good imagery but no candidate as clean as Huggr or Hugri.
+
 ## Naming the ecosystem
 
 A useful name should produce a vocabulary, not just a package. The framework needs a collective or habitat, each self-contained agent needs a singular noun, and tools or plugins benefit from a related term. The strongest systems also leave room for manifests, traces, shared context, and delegation without forcing every technical concept into the metaphor.
@@ -23,9 +86,9 @@ The ecosystem test is whether ordinary documentation remains clear: “create a 
 | **`sootkin`** | **mote** | spark | hearth for shared state | Feels like a family of tiny animated helpers. It has the common-word charm of Bun and a light connection to soot sprites without taking a character name. | Whimsical and less suitable if the project wants a serious scientific tone. |
 | **`nidula`** | **nestling** | twig | nest for the manifest, flight for delegation | Uses *Nidula*, Latin for “little nest” and a [genus of bird’s-nest fungi](https://en.wikipedia.org/wiki/Nidula), as the home of small agents assembled from declared pieces. Both `nidula` and `nestling` are registry-free. | A nest is a home rather than a collective, and “nestling” suggests an immature agent. |
 
-### Best overall system: Myrmesh
+### Best ecosystem semantics: Myrmesh
 
-The ecosystem framing changes my first choice from **Myrlet** to **Myrmesh**. Myrlet is better used for the individual artifact, while Myrmesh names the framework that connects many of them.
+When only the whole-to-part metaphor is considered, **Myrmesh** is the strongest system and Myrlet is best used for the individual artifact. With CLI length included, `myrmesh` is too long to remain the overall recommendation.
 
 - Product and CLI: `myrmesh`
 - Self-contained agent: a **myrlet**
@@ -115,9 +178,9 @@ These names were absent from crates.io and PyPI, but their existing uses are too
 - `lamarr`: used by a simulation framework, AI companies, and a research institute working on multi-agent systems.
 - `aviarium`: used by a game and an AI organization, while `ornithon` is used by poultry-management software.
 
-## Standalone-name shortlist
+## Earlier standalone-name shortlist
 
-When names are judged without a larger vocabulary, my preferred name is **`myrlet`**. It combines the clipped, slightly mysterious feel of `hugr` with the [Myrmidons](https://www.etymonline.com/word/myrmidon), Achilles' army traditionally associated with ants, and the diminutive `-let`: a small member of an organized army. In a complete naming system, however, it works better for the individual agent under **Myrmesh**.
+Before applying the CLI constraint, the semantic-only shortlist preferred **`myrlet`**. It combines the clipped, slightly mysterious feel of `hugr` with the [Myrmidons](https://www.etymonline.com/word/myrmidon), Achilles' army traditionally associated with ants, and the diminutive `-let`: a small member of an organized army. It now works better as the individual agent term under Myrmesh than as the product command.
 
 | Name | Why it fits | Caveat |
 | --- | --- | --- |
@@ -132,7 +195,7 @@ When names are judged without a larger vocabulary, my preferred name is **`myrle
 | **`coenon`** | Feels like a common organism or collective intelligence while remaining compact and neutral. | Invented and somewhat abstract. |
 | **`plecta`** | Evokes plaiting, weaving, and many strands becoming one structure. | `Plectra` is already used by an AI academy, so this is not a first choice. |
 
-The preference order for a single project name, without considering ecosystem vocabulary, is:
+The earlier preference order for a single project name, without considering ecosystem vocabulary or CLI length, was:
 
 1. **Myrlet**, for the closest match to the product story.
 2. **Cerelet**, for the clearest small-brain association.
@@ -141,7 +204,7 @@ The preference order for a single project name, without considering ecosystem vo
 5. **Swyra**, for the best invented brand name.
 6. **Hugri**, for the easiest migration from Hugr.
 
-The `myrlet` package family would read naturally as `myrlet-core`, `myrlet-host`, `myrlet-agent`, `myrlet-python`, and the `myrlet` CLI.
+The package family reads naturally, but `myrlet` is six characters and `myrmesh` is seven. Both lose to the CLI-first candidates for repeated terminal use.
 
 ## Additional registry-free names
 
@@ -149,7 +212,7 @@ The following names are also free on both crates.io and PyPI as of the check dat
 
 ### Close to Hugr
 
-`hugri`, `hugrin`, `hugkin`, `hugglet`, `hugling`, `hugverk`, `hugleik`, `hjarni`, `hugino`, `hugari`
+`hugri`, `hugrin`, `hugkin`, `hugglet`, `hugling`, `hugverk`, `hugleik`, `hjarni`, `hugino`, `hugari`, `hugz`, `hugx`, `huga`, `hgur`
 
 ### Army, colony, and assembly
 
@@ -169,7 +232,7 @@ The following names are also free on both crates.io and PyPI as of the check dat
 
 ### Invented swarm names
 
-`myrva`, `myrme`, `myral`, `myrmesh`, `swarmlet`, `swarmling`, `taskling`, `cogling`, `mindling`, `fleetlet`, `rava`, `plecta`, `plekta`, `koppa`, `digamma`, `qoppa`
+`myrva`, `myrme`, `myral`, `myrmesh`, `swyr`, `swyrl`, `swarmlet`, `swarmling`, `taskling`, `cogling`, `mindling`, `fleetlet`, `rava`, `plect`, `plecta`, `plekta`, `koppa`, `digamma`, `qoppa`
 
 ## Unusual options
 
