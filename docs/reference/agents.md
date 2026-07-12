@@ -1,4 +1,4 @@
-# Agents
+# Agent reference
 
 ## Define, run, and build
 
@@ -86,7 +86,7 @@ There is still one runtime and one Ask/Answer contract. A surface is a typed int
 
 **Validation stays on the Rust side; every surface is a thin typed-deserialization layer, not a second validator.** Huggr casts model output into the model-facing Rust response type before it reaches `Answer.response`. When a separate public type is declared, a trusted answer hook must transform the cast value into that public shape; Huggr does not cast it again. A surface only deserializes the resulting JSON into native typed values.
 
-Validation in each surface would reimplement the same schema in Python, Kotlin, and TypeScript. That duplication conflicts with the [narrow-waist rule](runtime.md#the-narrow-waist-rule).
+Validation in each surface would reimplement the same schema in Python, Kotlin, and TypeScript. That duplication conflicts with the [narrow-waist rule](../concepts/runtime.md#the-narrow-waist-rule).
 
 The Python surface makes this concrete:
 
@@ -225,7 +225,7 @@ Skills use progressive disclosure. The model receives only each skill's name and
 
 Callers can add skills to one invocation through `Ask.skills`, the repeatable CLI flag `--skill <PATH>`, the MCP `ask.skills` array, or the Rust-generated and pure-Python `skills=` argument. Runtime paths resolve from the caller's working directory. Definition and runtime skills share the same validation and disclosure path.
 
-The `huggr.toml` manifest defines the huglet's optional blast radius; scratchpad capabilities are part of every ask. An optional tool that is not granted is not registered, and an unregistered capability **cannot** be invoked. This is sandbox-by-registration, as described in [Security](security.md).
+The `huggr.toml` manifest defines the huglet's optional blast radius; scratchpad capabilities are part of every ask. An optional tool that is not granted is not registered, and an unregistered capability **cannot** be invoked. This is sandbox-by-registration, as described in [Security](../concepts/security.md).
 
 ### Runtime arguments
 
@@ -237,7 +237,7 @@ Runtime path values are resolved from the caller's current directory. The same d
 
 `[context]` controls projection policy. `compaction = "none"` is the default static projection. `compaction = "truncate"` records a built-in `kind = "budget"` policy with deterministic token caps. `compaction = "summarize"` uses the same budget policy and a summarizer model selector before the main turn when older context needs a durable summary.
 
-Optional `[context.forget.tool_ttl]` and `[context.forget.keep_last_per_tool]` maps are keyed by open tool names. [Guide 9](guides/09-context-compaction.md) walks through the full mechanism and every knob.
+Optional `[context.forget.tool_ttl]` and `[context.forget.keep_last_per_tool]` maps are keyed by open tool names. [Context management](../concepts/context-management.md) describes the full mechanism and every knob.
 
 ### Response contracts and storage
 
@@ -271,7 +271,7 @@ In short: you grant tools in the manifest and the model calls tools; the host re
 
 ## The tool library
 
-The tool library provides vetted, parameterized capabilities selected by manifest grant. Each is jailed to its declared scope and covered by a [threat-model note](security.md#capability-threat-notes):
+The tool library provides vetted, parameterized capabilities selected by manifest grant. Each is jailed to its declared scope and covered by a [threat-model note](../concepts/security.md#capability-threat-notes):
 
 - **`fs_read`:** root-jailed read-only family including list, literal search, regular-expression grep, glob, reads, and outlines.
 - **`fs_write`:** root-jailed file creation/replacement/append, single-directory creation, and non-recursive removal.

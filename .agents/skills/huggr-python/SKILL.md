@@ -8,7 +8,7 @@ description: Define and run huglets in Python with typed contract objects, sync 
 Select the surface based on where the agent is defined:
 
 - To define the system prompt, model config, and tools in Python, use the `huggr-agents` runtime API below.
-- To consume an existing Rust-defined agent as a typed Python package, keep its definition in Rust and run `huggr build <agent-dir> --surface python --release`; follow [guide 04](../../../docs/guides/04-agent-binary-from-python.md).
+- To consume an existing Rust-defined agent as a typed Python package, keep its definition in Rust and run `huggr build <agent-dir> --surface python --release`; follow [Package an agent for Python](../../../docs/guides/package-agent-for-python.md).
 
 ## Prepare the runtime package
 
@@ -99,4 +99,4 @@ huggr verify <matching-agent-dir> <trace-id>
 huggr replay <matching-agent-dir> <trace-id> --step
 ```
 
-Read [guide 05](../../../docs/guides/05-agent-entirely-in-python.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by `api_key_env`. If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.
+Read [Define an agent in Python](../../../docs/tutorials/python-agent.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by `api_key_env`. If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.

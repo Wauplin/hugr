@@ -31,7 +31,7 @@ huggr/
 │   │                       #   publisher, and a judge-graded eval of huglet-docs
 │   └── chrome-extension/   # a concrete browser host: chrome.* capability dispatcher, side-panel UI,
 │                           #   MV3 manifest; vendors the generic JS at build time
-├── docs/                   # reference documentation, per-surface guides, end-to-end tutorials
+├── docs/                   # tutorials, task guides, concepts, and reference
 └── .agents/skills/         # coding-agent cheat sheets kept in sync with the docs
 ```
 

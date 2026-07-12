@@ -5,7 +5,7 @@ description: Build, configure, run, test, and package manifest-defined huglets. 
 
 # Build a Huggr agent
 
-Create a focused agent for one domain. Grant only the capabilities it needs and return a stable structured response. Use [guide 01](../../../docs/guides/01-first-agent-cli.md) for a narrative walkthrough and [the reference documentation](../../../docs/README.md) for the design rationale.
+Create a focused agent for one domain. Grant only the capabilities it needs and return a stable structured response. Use [Build your first agent](../../../docs/tutorials/first-agent.md) for a narrative walkthrough and [the reference documentation](../../../docs/README.md) for the design rationale.
 
 ## Workflow
 
@@ -134,7 +134,7 @@ Use `[response].schema` only for the legacy manifest-owned schema path. Prefer a
 - `[tools.agent.<name>]` grants a built Huggr binary and registers `agent_<name>` plus `agent_<name>_feedback`; child privileges never widen to the parent's.
 - `[tools.mcp.<name>]`, full shell, and delegation are external-process grants. Treat their command and OS environment as trusted operator configuration.
 
-Registration is the sandbox: do not register an optional capability by another path when it is absent from the manifest. The scratchpad is the universal exception. See [the capability reference](../../../docs/capabilities.md) before granting shell, full-disk filesystem access, or network egress.
+Registration is the sandbox: do not register an optional capability by another path when it is absent from the manifest. The scratchpad is the universal exception. See [the capability reference](../../../docs/reference/capabilities.md) before granting shell, full-disk filesystem access, or network egress.
 
 ## Define the response contract
 
@@ -154,7 +154,7 @@ pub struct Response {
 }
 ```
 
-Add `MODEL_RESPONSE_RUST_TYPE` only when the model should fill a simpler shape than callers receive. Export `answer_hooks() -> Vec<AnswerHook>` for deterministic, IO-free final transformations. Export `storage() -> StorageOverrides` only for trusted host-side custom backends. See [guide 02](../../../docs/guides/02-typed-responses-and-hooks.md).
+Add `MODEL_RESPONSE_RUST_TYPE` only when the model should fill a simpler shape than callers receive. Export `answer_hooks() -> Vec<AnswerHook>` for deterministic, IO-free final transformations. Export `storage() -> StorageOverrides` only for trusted host-side custom backends. See [Define typed responses and answer hooks](../../../docs/guides/typed-responses.md).
 
 ## Validate and package
 
@@ -167,7 +167,7 @@ huggr build ./my-agent --release
 
 Use `--stream` on a built binary for newline-delimited lifecycle events. Use `--blob <path>` for inbound files and repeatable `--skill <folder>` for invocation-specific standard Agent Skills. Definition-owned `skills = [...]` paths are manifest-relative; runtime skill paths are caller-relative. Treat `status: "error"` as contract data: ask paths exit 0 even on missing keys, limits, or model failures.
 
-For composition and accounting, read [guide 07](../../../docs/guides/07-composition-and-cost.md). For replay diagnosis, use `$huggr-debug-traces` or [guide 08](../../../docs/guides/08-traces-replay-debugging.md).
+For composition and accounting, read [Compose agents and account for cost](../../../docs/guides/compose-agents.md). For replay diagnosis, use `$huggr-debug-traces` or [Inspect, replay, and verify traces](../../../docs/guides/inspect-traces.md).
 
 ## Troubleshoot
 

@@ -1,4 +1,4 @@
-# Serving and consuming MCP
+# Serve and consume MCP
 
 This guide covers both directions of Huggr's MCP support: exposing a built huglet as an MCP server with `--mcp-serve`, so any MCP client can call it, and granting an external MCP server to an agent with `[tools.mcp.<name>]`, so its tools appear next to the built-in library. MCP is the one external-tool escape hatch by design; everything else composes through the ask/answer contract.
 
@@ -39,21 +39,21 @@ command = "gh-mcp"
 args = ["--stdio"]      # optional
 ```
 
-At assembly time the host starts the command as a subprocess, performs the MCP handshake, lists its tools, and registers each one as an ordinary capability named `mcp__<name>__<tool>`, with the schema the server advertised. The model sees them next to `fs_read` or `web_fetch` with no special status; the [narrow waist](../runtime.md#the-narrow-waist-rule) means their arguments and results are opaque payloads like any other tool's. A server that fails to start or answer the handshake fails agent assembly up front rather than surfacing mid-conversation.
+At assembly time the host starts the command as a subprocess, performs the MCP handshake, lists its tools, and registers each one as an ordinary capability named `mcp__<name>__<tool>`, with the schema the server advertised. The model sees them next to `fs_read` or `web_fetch` with no special status; the [narrow waist](../concepts/runtime.md#the-narrow-waist-rule) means their arguments and results are opaque payloads like any other tool's. A server that fails to start or answer the handshake fails agent assembly up front rather than surfacing mid-conversation.
 
 Failure handling at call time follows the usual split: a tool result flagged as an error by the server, or a transport failure such as the server dying mid-call, comes back to the model as a structured tool error it can react to, not a host crash. Results arrive whole; MCP tool calls do not stream chunks.
 
-Since every built huglet serves MCP, one huglet can consume another this way. Prefer `[tools.agent.<name>]` for that, though: the agent grant folds the child's cost into your `AnswerMeta`, forwards blob refs, and records the child's trace id, none of which a generic MCP grant knows how to do (see [composition and cost](07-composition-and-cost.md)).
+Since every built huglet serves MCP, one huglet can consume another this way. Prefer `[tools.agent.<name>]` for that, though: the agent grant folds the child's cost into your `AnswerMeta`, forwards blob refs, and records the child's trace id, none of which a generic MCP grant knows how to do (see [composition and cost](compose-agents.md)).
 
 ## Trust and audit
 
-An MCP grant is the widest line a manifest can carry. The server is an operator-declared external process: Huggr does not sandbox its filesystem or network, it inherits the agent process's full environment (including any secrets in it) and working directory, and there is no `env` scoping in the grant. Granting `[tools.mcp.<name>]` is precisely as trusting as running `command` yourself, which is why it sits with full shell and agent grants in the [security model](../security.md) as an explicit external-process escape hatch. `--config` on a built binary exposes the command and args for audit.
+An MCP grant is the widest line a manifest can carry. The server is an operator-declared external process: Huggr does not sandbox its filesystem or network, it inherits the agent process's full environment (including any secrets in it) and working directory, and there is no `env` scoping in the grant. Granting `[tools.mcp.<name>]` is precisely as trusting as running `command` yourself, which is why it sits with full shell and agent grants in the [security model](../concepts/security.md) as an explicit external-process escape hatch. `--config` on a built binary exposes the command and args for audit.
 
 The same reasoning applies in reverse when serving: anyone who can call your agent's MCP `ask` can spend your model budget and exercise every granted tool, and runtime args in the schema let a caller re-scope what the manifest made patchable, for example pointing `fs_read` at a different directory. Serve an agent whose manifest you would be comfortable handing to the caller, set `[limits]`, and remember that `--mcp-serve` itself does not authenticate anyone; whoever owns the client registration owns the calls.
 
 ## Worked example
 
-The docs huglet from [guide 1](01-first-agent-cli.md) is built once, then registered in an MCP client with command `./dist/huglet-docs-cli/target/release/huglet-docs` and args `["./docs", "--mcp-serve"]`. The client calls `ask {"question": "How do runtime args work?"}` and receives an `Answer` with a `trace_id`; a follow-up passes that `trace_id` back and gets a resumed conversation; `feedback {"trace_id": ..., "payload": {"score": 1}}` files a review the insights workflow can mine later ([guide 8](08-traces-replay-debugging.md)). Meanwhile, the same binary could itself grant `[tools.mcp.github]` and call `mcp__github__*` tools during its turns. Both boundaries are subprocesses speaking the same protocol.
+The docs huglet from [Build your first agent](../tutorials/first-agent.md) is built once, then registered in an MCP client with command `./dist/huglet-docs-cli/target/release/huglet-docs` and args `["./docs", "--mcp-serve"]`. The client calls `ask {"question": "How do runtime args work?"}` and receives an `Answer` with a `trace_id`; a follow-up passes that `trace_id` back and gets a resumed conversation; `feedback {"trace_id": ..., "payload": {"score": 1}}` files a review the insights workflow can mine later ([Inspect, replay, and verify traces](inspect-traces.md)). Meanwhile, the same binary could itself grant `[tools.mcp.github]` and call `mcp__github__*` tools during its turns. Both boundaries are subprocesses speaking the same protocol.
 
 ## Limitations
 

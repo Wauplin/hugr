@@ -1,4 +1,4 @@
-# Reference
+# Glossary and open questions
 
 ## Open questions
 
@@ -19,7 +19,7 @@
 - **Scratchpad:** the agent's private filesystem subtree, writable without gates and jailed to its root.
 - **Tool:** the model-facing view of an effect: a manifest grant that advertises one or more named, schema-described functions to the model. A built Huggr agent can itself be granted as a tool.
 - **Capability:** the host-side implementation behind a tool, registered in the host's capability registry and invoked when the brain emits `StartCapability`. See [Tools and capabilities](agents.md#tools-and-capabilities).
-- **Event / Command / Op / Projection / Policy:** the core vocabulary described in [Runtime](runtime.md).
+- **Event / Command / Op / Projection / Policy:** the core vocabulary described in [Runtime](../concepts/runtime.md).
 
 ## Name
 

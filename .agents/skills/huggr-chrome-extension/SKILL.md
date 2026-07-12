@@ -5,7 +5,7 @@ description: Build or modify a Chrome Manifest V3 extension that hosts the Huggr
 
 # Build a Huggr Chrome extension
 
-Use `examples/chrome-extension` as the starting point and keep the three-layer boundary: `crates/huggr-wasm` owns the generic brain and browser tool schemas, `bindings/typescript` owns generic driver, model, and storage modules, and the extension folder owns every `chrome.*` call and UI choice. Read [guide 03](../../../docs/guides/03-first-chrome-extension.md).
+Use `examples/chrome-extension` as the starting point and keep the three-layer boundary: `crates/huggr-wasm` owns the generic brain and browser tool schemas, `bindings/typescript` owns generic driver, model, and storage modules, and the extension folder owns every `chrome.*` call and UI choice. Read [Build a Chrome extension](../../../docs/tutorials/chrome-extension.md).
 
 ## Copy and narrow the example
 

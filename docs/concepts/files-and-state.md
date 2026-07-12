@@ -1,6 +1,6 @@
 # Files and state: blobs, scratchpad, and memory
 
-This guide explains how a huglet works with files and persistent state: how a caller hands files in and gets files back (blobs), where the agent keeps working state that follows a conversation (the scratchpad), and how it keeps notes that outlive any conversation (memory). The three mechanisms have different lifetimes and different trust properties, and picking the right one is most of the design work.
+This page explains how a huglet works with files and persistent state: how a caller hands files in and gets files back (blobs), where the agent keeps working state that follows a conversation (the scratchpad), and how it keeps notes that outlive any conversation (memory). The three mechanisms have different lifetimes and different trust properties, and picking the right one is most of the design work.
 
 ## The problem
 
@@ -27,7 +27,7 @@ my-agent "Compare with the baseline" --blob sha256:ba7816bf...   # existing stor
 
 **Outbound.** The convention is one directory name: the agent writes caller-facing files under `out/` in its scratchpad. After the turn, Huggr sweeps `out/` recursively, stores each file in the content-addressed blob store, and returns one handle per file on `Answer.blobs`, named by its path relative to `out/`. Files the agent writes anywhere else in the scratchpad stay private working state.
 
-**The store.** The default store is shared at `~/.huggr/blobs` (override with `HUGGR_BLOB_STORE`, or `HUGGR_HOME/blobs`). Objects are keyed by SHA-256 and installed atomically as read-only files, so identical content deduplicates to one object no matter how many agents produce it. When the store and scratchpad share a filesystem, an inbound `sha256` blob is hardlinked into the scratch rather than copied, which is what makes passing a large file between agents effectively free: a parent granting `[tools.agent.<name>]` forwards `sha256` refs as `--blob sha256:<hash>` and the bytes never cross the process boundary (see [composition and cost](07-composition-and-cost.md)).
+**The store.** The default store is shared at `~/.huggr/blobs` (override with `HUGGR_BLOB_STORE`, or `HUGGR_HOME/blobs`). Objects are keyed by SHA-256 and installed atomically as read-only files, so identical content deduplicates to one object no matter how many agents produce it. When the store and scratchpad share a filesystem, an inbound `sha256` blob is hardlinked into the scratch rather than copied, which is what makes passing a large file between agents effectively free: a parent granting `[tools.agent.<name>]` forwards `sha256` refs as `--blob sha256:<hash>` and the bytes never cross the process boundary (see [composition and cost](../guides/compose-agents.md)).
 
 Two properties matter for design. The log and trace only ever hold the small reference, never the bytes, so traces stay message-sized. And a hash is a capability, not a secret: any agent handed a `sha256:` ref (or able to guess one) can read that object from the shared store.
 
@@ -41,7 +41,7 @@ What makes the scratchpad more than a temp dir is its lifetime, which is tied to
 - A resumed ask (`trace_id` set) starts from a **copy** of the parent trace's finalized scratch, so notes written in one ask are readable in the follow-up.
 - A fork (two asks resuming the same parent) gives each branch its own copy. Siblings never observe each other's writes; this is copy-on-fork, made once when the ask starts.
 
-The runtime guidance tells the model exactly this: keep reusable working state in the scratchpad rather than in chat history, because a caller may resume by trace id. It combines well with [context compaction](09-context-compaction.md): a forgotten or summarized-away tool result can be re-derived from a scratch note, and the note costs no context until read.
+The runtime guidance tells the model exactly this: keep reusable working state in the scratchpad rather than in chat history, because a caller may resume by trace id. It combines well with [context compaction](context-management.md): a forgotten or summarized-away tool result can be re-derived from a scratch note, and the note costs no context until read.
 
 Scratch contents never enter the log; tool results carry only relative paths. What persists on disk per trace is the finalized subtree, which is also how `depends_on` lineage stays meaningful for state, not just conversation.
 

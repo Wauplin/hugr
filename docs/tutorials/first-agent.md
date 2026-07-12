@@ -1,10 +1,10 @@
-# Your first agent from the CLI
+# Build your first agent
 
-This guide scaffolds a weather-answering huglet with `huggr new` and explains every generated file. It then asks a question with `huggr run`, resumes and forks conversations by trace id, inspects the agent card with `--describe`, and compiles one self-contained binary with `huggr build`.
+In this tutorial, you will scaffold a weather-answering huglet with `huggr new`, inspect every generated file, ask a question with `huggr run`, resume and fork conversations by trace id, inspect the agent card with `--describe`, and compile one self-contained binary with `huggr build`.
 
-No prior Huggr knowledge is assumed. For the design rationale behind any step, see [the huglet overview](../overview.md#what-a-huglet-is).
+No prior Huggr knowledge is assumed. For the design rationale behind any step, see [the huglet overview](../concepts/overview.md#what-a-huglet-is).
 
-## 1. Scaffold the agent
+## Scaffold the agent
 
 From the directory where you want the new folder to appear, run:
 
@@ -14,7 +14,7 @@ huggr new my-agent
 
 This creates `./my-agent` from the default `weather` template (the checked-in `examples/huglet-weather` crate, embedded at compile time with the name substituted; pass `--template blank` for a tool-free starting point instead). The command refuses to overwrite an existing folder and tells you the next step on stderr.
 
-## 2. Anatomy of the generated files
+## Anatomy of the generated files
 
 The folder is both an agent definition and a small Rust crate:
 
@@ -29,7 +29,7 @@ my-agent/
 
 ### huggr.toml
 
-The manifest defines the agent's privileges. The agent can use only what is granted here (see [the manifest reference](../agents.md#the-manifest)). The weather template's manifest has four sections:
+The manifest defines the agent's privileges. The agent can use only what is granted here (see [the manifest reference](../reference/agents.md#the-manifest)). The weather template's manifest has four sections:
 
 ```toml
 [agent]
@@ -75,9 +75,9 @@ pub struct Response {
 }
 ```
 
-`huggr run` and `huggr build` read `RESPONSE_RUST_TYPE`, derive a JSON Schema from the type with `schemars`, ask the provider for that structured output, and cast the final JSON with `serde` before it lands in `Answer.response`. Right now it is a single string; guide 2 shows how to grow it.
+`huggr run` and `huggr build` read `RESPONSE_RUST_TYPE`, derive a JSON Schema from the type with `schemars`, ask the provider for that structured output, and cast the final JSON with `serde` before it lands in `Answer.response`. Right now it is a single string; [Define typed responses and answer hooks](../guides/typed-responses.md) shows how to grow it.
 
-## 3. Ask a question
+## Ask a question
 
 Set the provider key named by `api_key_env`, then run one ask from inside (or pointing at) the folder:
 
@@ -90,11 +90,11 @@ You get one pretty-printed JSON `Answer` on stdout, while diagnostics go to stde
 
 The `Answer` carries `status`, your typed `response` object, a `trace_id`, and mandatory `metadata`: duration, cost in micro-USD, tokens, and model/tool call counts.
 
-**The ask path always exits 0.** A missing key, a bad manifest, or a blown limit returns a `status: "error"` answer instead of crashing. See [the Ask and Answer contract](../agents.md#the-ask-and-answer-contract).
+**The ask path always exits 0.** A missing key, a bad manifest, or a blown limit returns a `status: "error"` answer instead of crashing. See [the Ask and Answer contract](../reference/agents.md#the-ask-and-answer-contract).
 
 Because this agent has a typed Rust contract, the first `huggr run` compiles a small cached shim crate that links your `src/lib.rs`; later runs reuse it, so only the first ask pays the compile.
 
-## 4. Resume and fork with trace ids
+## Resume and fork with trace ids
 
 Every completed turn is recorded as an immutable trace. List them as a lineage tree:
 
@@ -110,11 +110,11 @@ huggr run my-agent --trace <TRACE_ID> "and in London?"
 
 A resumed ask never mutates the old trace. It writes a **new** trace with `depends_on` pointing at the parent. Resuming the same id twice forks the conversation into two branches, and `huggr traces` shows the tree.
 
-`huggr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit. `huggr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../runtime.md#determinism-replay-and-traces) for the underlying design.
+`huggr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit. `huggr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../concepts/runtime.md#determinism-replay-and-traces) for the underlying design.
 
 `huggr stats my-agent` aggregates cost, tokens, and tool usage across stored traces.
 
-## 5. Inspect the agent card
+## Inspect the agent card
 
 Every agent surface answers `--describe` with its agent card, including its name, tools, context policy, priced model tiers, and limits. `--config` returns the effective identity, models, grants, skills, runtime arguments, limits, state paths, and response schema as JSON, including the API key environment variable name and whether it resolves, but never the secret:
 
@@ -124,7 +124,7 @@ huggr run my-agent -- --describe
 
 (The `--` keeps `huggr` from eating the flag; the flags after it go to the agent's own generated surface.)
 
-## 6. Build one standalone binary
+## Build one standalone binary
 
 ```bash
 huggr build my-agent --release
@@ -157,4 +157,4 @@ The workflow is: scaffold the agent, edit two text files, run it, inspect it, an
 
 ## Next
 
-[Guide 2: Typed responses and answer hooks](02-typed-responses-and-hooks.md): grow the response contract beyond a single string, give the model a different schema than your users see, and post-process answers deterministically with `answer_hooks()`.
+To grow the response contract beyond a single string, give the model a different schema than your users see, and post-process answers deterministically with `answer_hooks()`, continue with [Define typed responses and answer hooks](../guides/typed-responses.md).

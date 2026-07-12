@@ -5,7 +5,7 @@ description: Define and run huglets in TypeScript or JavaScript through the hugg
 
 # Build Huggr agents with TypeScript
 
-Use the root package for platform-neutral types and in-memory stores. Use `huggr-agents/node` for filesystem-backed Node agents and `huggr-agents/browser` for IndexedDB-backed browser agents. Read [guide 06](../../../docs/guides/06-agent-entirely-in-typescript.md) for the complete surface.
+Use the root package for platform-neutral types and in-memory stores. Use `huggr-agents/node` for filesystem-backed Node agents and `huggr-agents/browser` for IndexedDB-backed browser agents. Read [Define an agent in TypeScript](../../../docs/tutorials/typescript-agent.md) for the complete surface.
 
 ## Build the package
 

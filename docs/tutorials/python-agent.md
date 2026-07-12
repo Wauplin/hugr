@@ -1,10 +1,10 @@
-# An agent entirely in Python
+# Define an agent in Python
 
-This guide defines a huglet from scratch in pure Python. The system prompt is a string, model config is a dict, and tools are ordinary callables. The agent runs on the same Rust runtime as every other surface. It is a natural fit when the useful capabilities already live in a Python SDK, data pipeline, notebook, or internal library.
+In this tutorial, you will define a huglet from scratch in pure Python. The system prompt is a string, model config is a dict, and tools are ordinary callables. The agent runs on the same Rust runtime as every other surface. It is a natural fit when the useful capabilities already live in a Python SDK, data pipeline, notebook, or internal library.
 
 The guide covers the `huggr-agents` package end to end. Topics include the `@huggr.tool` decorator for sync and async tools, standard-library dataclasses alongside explicit JSON Schemas, the `Agent` constructor and its manifest-shaped config, `agent.ask()` for blocking runs, and `async for event in agent.run(...)` for streaming. It closes with an optional Pydantic example for applications that already use it, as well as `agent.feedback()`, `agent.stats()`, and Rust CLI verification of traces stored under `~/.huggr/<name>/`.
 
-Prerequisite: [guide 01](01-first-agent-cli.md) for the ask/answer/trace vocabulary. For the design rationale behind runtime embedding and its distinction from `huggr build --surface python`, see [the language surfaces documentation](../agents.md#language-surfaces).
+Prerequisite: [Build your first agent](first-agent.md) for the ask/answer/trace vocabulary. For the design rationale behind runtime embedding and its distinction from `huggr build --surface python`, see [the language surfaces documentation](../reference/agents.md#language-surfaces).
 
 ## Install the package
 
@@ -76,7 +76,7 @@ Sync and async tools are interchangeable from the agent's perspective, but async
 
 ### The `requires_permission` and `background` flags
 
-`requires_permission=True` marks a tool as gated in the brain's recorded control flow; the current native host approves registered tools automatically. `background=True` marks a tool as fire-and-forget, so the result is not fed back to the model. Both are advanced flags for specific trust models; leave them at their defaults (`False`) for this guide.
+`requires_permission=True` marks a tool as gated in the brain's recorded control flow; the current native host approves registered tools automatically. `background=True` marks a tool as fire-and-forget, so the result is not fed back to the model. Both are advanced flags for specific trust models; leave them at their defaults (`False`) for this tutorial.
 
 ## Assemble the agent
 
@@ -102,7 +102,7 @@ agent = huggr.Agent(
 
 The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`.
 
-Each config key mirrors the corresponding `huggr.toml` section with the same names and shapes. The manifest details from [guide 01](01-first-agent-cli.md) therefore transfer directly.
+Each config key mirrors the corresponding `huggr.toml` section with the same names and shapes. The manifest details from [Build your first agent](first-agent.md) therefore transfer directly.
 
 The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes as `TypedDict`s for static checking. `ModelsConfig` and the nested `mcp`/`agent` instance tables are typed mappings because tier selectors and external grant instance names are deliberately open strings.
 
@@ -138,7 +138,7 @@ Tools you define in Python (the `tools=[...]` list) are registered as capabiliti
 
 `response_schema` is an optional JSON Schema dict. When set, the schema rides the provider request as `response_format`, so a compatible provider can constrain the model's final JSON.
 
-This is the pure-Python counterpart to the Rust `RESPONSE_RUST_TYPE` contract from [guide 02](02-typed-responses-and-hooks.md). The generic Python path preserves the final value as a JSON object; it does not return a domain dataclass or locally validate it against this schema. A small application can keep using a raw schema dict and construct its own standard-library dataclass from `answer.response`. The optional Pydantic example below shows how an existing Pydantic application can generate the schema and validate the final object from one set of types.
+This is the pure-Python counterpart to the Rust `RESPONSE_RUST_TYPE` contract from [Define typed responses and answer hooks](../guides/typed-responses.md). The generic Python path preserves the final value as a JSON object; it does not return a domain dataclass or locally validate it against this schema. A small application can keep using a raw schema dict and construct its own standard-library dataclass from `answer.response`. The optional Pydantic example below shows how an existing Pydantic application can generate the schema and validate the final object from one set of types.
 
 ```python
 from dataclasses import dataclass
@@ -161,7 +161,7 @@ answer = agent.ask("Can I expense a train ticket?")
 policy_answer = PolicyAnswer(**answer.response)
 ```
 
-This keeps small contracts easy to inspect and has no dependency beyond Python itself. A standard-library dataclass rejects missing or unexpected constructor fields, but it does not perform runtime type validation; add explicit checks when needed, or choose the optional Pydantic pattern later in this guide.
+This keeps small contracts easy to inspect and has no dependency beyond Python itself. A standard-library dataclass rejects missing or unexpected constructor fields, but it does not perform runtime type validation; add explicit checks when needed, or choose the optional Pydantic pattern later in this tutorial.
 
 ### `traces` and `scratchpad`
 
@@ -238,7 +238,7 @@ A successful stream starts with `AskStartedEvent` and ends with `AnswerReadyEven
 
 ## File feedback
 
-Feedback is the asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask and is intended for offline analysis (see [guide 08](08-traces-replay-debugging.md)).
+Feedback is the asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask and is intended for offline analysis (see [Inspect, replay, and verify traces](../guides/inspect-traces.md)).
 
 ```python
 answer = agent.ask("Can I expense a train ticket?")
@@ -250,7 +250,7 @@ assert fb.trace_id == answer.trace_id
 
 ## Inspect and aggregate
 
-Two methods give you the same audit views as the CLI flags from [guide 01](01-first-agent-cli.md):
+Two methods give you the same audit views as the CLI flags from [Build your first agent](first-agent.md):
 
 ```python
 card = agent.describe()
@@ -281,7 +281,7 @@ The pytest suite in `bindings/python/tests/` sets `HUGGR_HOME` to a temporary di
 
 ## Trace compatibility
 
-A trace written by a Python agent is a plain JSON file in the standard Huggr format. It contains no Python metadata and does not need Python to be replayed because capability results are recorded as events. The `huggr` CLI currently requires an agent crate folder that resolves to the trace store, so it cannot take a Python-defined agent home or a trace file directly. The `huggr-replay` library can verify the trace bytes without calling Python. (See [guide 08](08-traces-replay-debugging.md) for the replay/verify workflow.)
+A trace written by a Python agent is a plain JSON file in the standard Huggr format. It contains no Python metadata and does not need Python to be replayed because capability results are recorded as events. The `huggr` CLI currently requires an agent crate folder that resolves to the trace store, so it cannot take a Python-defined agent home or a trace file directly. The `huggr-replay` library can verify the trace bytes without calling Python. See [Inspect, replay, and verify traces](../guides/inspect-traces.md) for the replay/verify workflow.
 
 ## Optional: derive schemas with Pydantic in a data-analysis agent
 
@@ -430,8 +430,8 @@ assert by_id[follow_up.trace_id].depends_on == answer.trace_id
 
 ## A security note
 
-Python callables are **trusted host code**. Huggr jails what the *model* can invoke (sandbox-by-registration; a tool the agent doesn't grant is a tool the model cannot call), not what your Python does once invoked. A tool that reaches outside its declared scope is a hole you drill, not one Huggr can close. (See the threat model in [the security documentation](../security.md).)
+Python callables are **trusted host code**. Huggr jails what the *model* can invoke (sandbox-by-registration; a tool the agent doesn't grant is a tool the model cannot call), not what your Python does once invoked. A tool that reaches outside its declared scope is a hole you drill, not one Huggr can close. See the threat model in [the security documentation](../concepts/security.md).
 
 ## Next
 
-You've defined an agent entirely in Python. Next, see the same runtime from TypeScript through the `huggr-agents` package over the WASM brain in Node and the browser: [An agent entirely in TypeScript](06-agent-entirely-in-typescript.md).
+You have defined an agent entirely in Python. To use the same runtime from TypeScript through the `huggr-agents` package over the WASM brain in Node and the browser, continue with [Define an agent in TypeScript](typescript-agent.md).

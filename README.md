@@ -50,7 +50,7 @@ root = "./policies"        # read-only, jailed to this folder
 
 The manifest defines the agent's blast radius and is the document to audit. Grant-driven tools that are not declared are not registered; the per-lineage scratchpad is part of every ask. Unknown keys are hard errors, so a typo cannot silently widen or narrow the grant.
 
-The built-in library includes jailed filesystem reads and writes, restricted or full shell execution, allowlisted web fetch, Exa web search, memory, trace inspection, scratch state, and isolated self-delegation. High-privilege tools remain opt-in grants: restricted shell commands execute without shell syntax, while full shell and full-disk roots explicitly hand sandboxing to the operator. See the [built-in capability reference](docs/capabilities.md).
+The built-in library includes jailed filesystem reads and writes, restricted or full shell execution, allowlisted web fetch, Exa web search, memory, trace inspection, scratch state, and isolated self-delegation. High-privilege tools remain opt-in grants: restricted shell commands execute without shell syntax, while full shell and full-disk roots explicitly hand sandboxing to the operator. See the [built-in capability reference](docs/reference/capabilities.md).
 
 ## What every agent gets
 
@@ -89,9 +89,9 @@ The docs folder is runtime config, not a compiled-in scope: the same agent crate
 
 The same runtime is available without writing Rust:
 
-- **Consume a built agent from Python.** `huggr build <agent> --surface python` wraps the agent into a typed wheel: `ask()` in-process, dataclasses out. See [guide 4](docs/guides/04-agent-binary-from-python.md).
-- **Define an agent in Python.** The [`huggr-agents` package](bindings/python/README.md) embeds the runtime: tools are decorated callables, config is data, `agent.ask(...)` returns the standard `Answer`. See [guide 5](docs/guides/05-agent-entirely-in-python.md).
-- **Define an agent in TypeScript.** The [`huggr-agents` TS package](bindings/typescript/README.md) drives the same brain compiled to WASM, in Node and the browser. See [guide 6](docs/guides/06-agent-entirely-in-typescript.md).
+- **Consume a built agent from Python.** `huggr build <agent> --surface python` wraps the agent into a typed wheel: `ask()` in-process, dataclasses out. See [Package an agent for Python](docs/guides/package-agent-for-python.md).
+- **Define an agent in Python.** The [`huggr-agents` package](bindings/python/README.md) embeds the runtime: tools are decorated callables, config is data, `agent.ask(...)` returns the standard `Answer`. See [Define an agent in Python](docs/tutorials/python-agent.md).
+- **Define an agent in TypeScript.** The [`huggr-agents` TS package](bindings/typescript/README.md) drives the same brain compiled to WASM, in Node and the browser. See [Define an agent in TypeScript](docs/tutorials/typescript-agent.md).
 
 Traces use the same `huggr-replay` format across surfaces. The Rust CLI can verify a trace when an agent crate resolves to its store; the TypeScript runtime also exposes `agent.verify()`.
 
@@ -142,22 +142,15 @@ huggr/
 │   ├── huglet-datasmith/     # docs-QA dataset synthesizer with a typed QaDataset contract
 │   ├── hf-librarian/       # Python pipeline: datasmith wheel, jailed Hub publisher, judge-graded eval
 │   └── chrome-extension/   # a concrete browser host: chrome.* capabilities, side-panel UI, MV3
-└── docs/                   # reference documentation, guides, and tutorials
+└── docs/                   # tutorials, task guides, concepts, and reference
 ```
 
 ## Documentation
 
-- [Overview](docs/overview.md): vision, goals, non-goals, and the huglet model.
-- [Agents](docs/agents.md): defining, running, building, composing, and embedding agents; the manifest; tools vs capabilities.
-- [Runtime](docs/runtime.md): the sans-IO design, core and host contract, determinism, and replay.
-- [Security](docs/security.md): the security model and threat notes for each capability.
-- [Built-in capabilities](docs/capabilities.md): every toolkit grant, option, limit, and trust boundary.
-- [Project structure](docs/project-structure.md): crate boundaries, dependency rules, and standards positioning.
-- [Reference](docs/reference.md): open questions, glossary, and naming.
-
-The [guides](docs/guides/README.md) are runnable introductions to each surface: [the CLI](docs/guides/01-first-agent-cli.md), [typed responses](docs/guides/02-typed-responses-and-hooks.md), [a Chrome extension](docs/guides/03-first-chrome-extension.md), [an agent binary from Python](docs/guides/04-agent-binary-from-python.md), [agents in pure Python](docs/guides/05-agent-entirely-in-python.md), [agents in TypeScript](docs/guides/06-agent-entirely-in-typescript.md), [composition and cost](docs/guides/07-composition-and-cost.md), and [traces and replay](docs/guides/08-traces-replay-debugging.md).
-
-The [tutorials](docs/tutorials/README.md) are self-contained, end-to-end walkthroughs with real outputs. Start with [a docs Q&A dataset, published to the Hub](docs/tutorials/docs-qa-dataset-pipeline.md).
+- [Tutorials](docs/tutorials/README.md) teach a surface end to end.
+- [Guides](docs/guides/README.md) cover specific tasks.
+- [Concepts](docs/concepts/README.md) explain design and behavior.
+- [Reference](docs/reference/README.md) specifies contracts, configuration, packages, and terminology.
 
 ## Building and testing
 

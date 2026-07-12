@@ -10,7 +10,7 @@ Status legend: each task starts `[ ]`; flip to `[x]` when merged (code + tests +
 - All nondeterminism stays injected as events. Anything that needs a model call (summarization) or IO (storage backends) lives in a host layer or rides the existing command/event cycle.
 - The log stays the source of truth and traces stay immutable. Feedback, memory, and analytics are all sidecars or folds — never mutations of a stored trace. Compaction changes the *projection*, never the log.
 - Narrow waist: new capabilities (memory, feedback-as-tool, traces_read) are ordinary `Capability` registrations with opaque args — zero core type changes. New manifest sections are open string sets where possible.
-- Sandbox-by-registration: every new tool is granted in the manifest, jailed to a declared scope, and gets a threat-model note in `docs/security.md`. The library stays exec-free.
+- Sandbox-by-registration: every new tool is granted in the manifest, jailed to a declared scope, and gets a threat-model note in `docs/concepts/security.md`. The library stays exec-free.
 - One way to do each thing: where this plan adds a mechanism (e.g. storage traits), it replaces the old shape (concrete structs threaded everywhere) rather than living beside it.
 
 ## Traceability: new_ideas.md → plan
@@ -45,12 +45,12 @@ Do these first: they move files around, and every later phase touches the moved 
 ### 0.1 `[x]` Move `huglet-docs` to `examples/huglet-docs` (idea 11) — S
 
 - Why: `huglet-docs` is a reference *user* of the framework, not part of it; keeping it under `crates/` blurs the library boundary.
-- Today: workspace member `crates/huglet-docs` (root `Cargo.toml:10`); referenced by path in `huggr-toolkit/src/build.rs:473` (test), `huggr-toolkit/tests/build_python.rs:20-35`, `README.md:53,92,95,101,116`, `docs/project-structure.md`; carries checked-in traces in `crates/huglet-docs/.huglet-docs-traces/` and a `[traces] store = ".huglet-docs-traces"` override in its manifest.
+- Today: workspace member `crates/huglet-docs` (root `Cargo.toml:10`); referenced by path in `huggr-toolkit/src/build.rs:473` (test), `huggr-toolkit/tests/build_python.rs:20-35`, `README.md:53,92,95,101,116`, `docs/reference/project-layout.md`; carries checked-in traces in `crates/huglet-docs/.huglet-docs-traces/` and a `[traces] store = ".huglet-docs-traces"` override in its manifest.
 - Steps:
   - Move the folder to `examples/huglet-docs/`; add `"examples/*"` (or explicit members) to workspace `members`; keep the package name `huglet-docs`.
   - Update the two toolkit tests that reach into it by relative path (`build.rs:473`, `build_python.rs`).
   - Delete the checked-in `.huglet-docs-traces/` contents (they are stale artifacts, and 1.1 removes the per-agent store override anyway); if a test needs a real trace fixture, generate it in the test.
-  - Update `README.md`, `docs/project-structure.md` crate layout, `AGENTS.md` project layout.
+  - Update `README.md`, `docs/reference/project-layout.md` crate layout, `AGENTS.md` project layout.
 - Acceptance: `cargo test --workspace` green; `huggr run examples/huglet-docs ./docs "..."` works; no `crates/huglet-docs` references left (grep).
 
 ### 0.2 `[x]` Materialize the weather template as `examples/huglet-weather` (idea 11) — M
@@ -72,7 +72,7 @@ Do these first: they move files around, and every later phase touches the moved 
   - `examples/chrome-extension/` — everything Chrome-specific plus the UI, `build.sh`, and a README; it imports the generic driver/adapter/storage and implements the capability dispatcher over `chrome.*`.
 - Steps: extract the capability-dispatch interface (`invokeCapability(name, args) -> Promise<result>`) in `agent_driver.js`; move files; un-hardcode defaults into host-passed config; delete `extension/pkg/` and the `.zip` from git (add to `.gitignore`, document `build.sh` regenerates); update `HUGGR_WASM_PLAN.md` (fold what's still relevant into `docs/` and delete the file — one-doc rule).
 - Compaction POC note: the prune/compact code in `openai_adapter.js` stays temporarily in the generic package but is marked for replacement by 2.1 (built-in policy compaction); the browser-observation staleness rules become a configurable policy the example wires up.
-- Docs: `docs/project-structure.md` and `docs/reference.md` (browser packaging), AGENTS.md layout, README crate layout.
+- Docs: `docs/reference/project-layout.md` and `docs/reference/glossary.md` (browser packaging), AGENTS.md layout, README crate layout.
 - Acceptance: extension builds and runs from `examples/chrome-extension`; `cargo check -p huggr-wasm` clean natively and for wasm32; a second minimal browser host (a plain web page in the tutorial, 4.2) can drive the same package.
 
 ### 0.4 `[x]` Comment cleanup sweep (idea 10) — M
@@ -107,7 +107,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Remove `run_typed_definition`'s forcing of `HUGGR_AGENT_HOME` to the source dir (`bin/huggr.rs:369`) — dev runs now share the same `~/.huggr/<name>` home, which is exactly the point of idea 17.
   - Remove `[traces] store = ".huglet-docs-traces"` from `examples/huglet-docs/huggr.toml`; scrub the override from the reference manifest comments only if wrong, otherwise keep documented-but-commented.
   - `huggr traces`/`replay`/`verify` (`bin/huggr.rs:load_store`) resolve through the same path.
-- Docs: README quickstart output paths; `docs/runtime.md` (TraceStore location); `docs/agents.md` (manifest); `docs/reference.md` (glossary); AGENTS.md layout note.
+- Docs: README quickstart output paths; `docs/concepts/runtime.md` (TraceStore location); `docs/reference/agents.md` (manifest); `docs/reference/glossary.md` (glossary); AGENTS.md layout note.
 - Tests: unit tests for home resolution (env precedence); end-to-end test asserting a dev run and a built-binary run of the same agent share `~/.huggr/<name>/traces` (under a temp `$HUGGR_HOME`).
 - Invariant check: pure path policy in host layers; core untouched.
 
@@ -122,7 +122,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Extension point from an agent crate (matching the `answer_hooks()` compile-time pattern): optional `pub fn storage() -> huggr_agent::StorageOverrides` in the agent's `src/lib.rs`, detected by `build.rs`'s existing const/fn scan (`response_dependency:305`, `has_pub_fn:385`) and wired by the generated shim. A Postgres- or S3-backed agent is then: implement the trait in your agent crate, return it from `storage()`, `huggr build` — no framework change.
 - Ship in-repo: `FsTraceStore`/`FsBlobStore`/`FsScratch` (the defaults) plus `MemTraceStore`/`MemBlobStore`/`MemScratch` (in-memory, used by tests and as the reference "how to write a backend" example). Nothing else — see Won't-do W2.
 - Keep sync fs code inside the async trait impls (they're cheap); the traits are `async_trait` so DB/object-store impls are natural.
-- Docs: resolve the "Storage backends" open question in `docs/reference.md`; add the traits, `storage()` extension point, and threat note to the relevant runtime and security pages (a backend sees all trace/blob content; it is trusted host code like a custom capability); update AGENTS.md "where logic goes".
+- Docs: resolve the "Storage backends" open question in `docs/reference/glossary.md`; add the traits, `storage()` extension point, and threat note to the relevant runtime and security pages (a backend sees all trace/blob content; it is trusted host code like a custom capability); update AGENTS.md "where logic goes".
 - Tests: run the existing store/scratch/blob test suites generically over fs and mem backends; end-to-end ask on `MemTraceStore` proving no fs writes.
 - Invariant check: traits live in host layers; `huggr-core` never learns storage exists; `huggr-replay`'s pure data stays pure.
 
@@ -142,7 +142,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - Design: `Agent::ask_events(ask) -> (impl Stream<Item = AgentEvent>, JoinHandle<Result<Answer, AskError>>)` implemented with a channel-backed `Frontend`; `AgentEvent` is a host-layer enum (serializable, `#[serde(tag = "type")]`): `AskStarted { trace_parent }`, `ModelStarted { op, tier }`, `TextDelta { op, text }`, `ModelEnded { op, usage }`, `ToolStarted { op, name, args }`, `ToolEnded { op, name, is_error }`, `Notice`, `LimitTripped`, `Done`, `AnswerReady { answer }`. Payload details ride opaque `Value` fields — the enum only types what surfaces branch on (render vs finish), mirroring the narrow-waist rule at the host level.
   - `Agent::ask` becomes a thin wrapper draining the stream.
   - CLI: `<agent> "q" --stream` prints NDJSON `AgentEvent`s on stdout followed by the final `Answer` line (machine-consumable), `--pretty` renders them live; default behavior unchanged.
-- Docs: `docs/agents.md` built-binary shape (+`--stream`) and contract note (events are observability, never the contract — `Answer` remains the one product).
+- Docs: `docs/reference/agents.md` built-binary shape (+`--stream`) and contract note (events are observability, never the contract — `Answer` remains the one product).
 - Tests: scripted ask with a fake adapter asserting the exact event sequence; conformance test extended with `--stream`.
 - Invariant check: events are derived host-side observations; nothing new enters the core or the trace.
 
@@ -153,7 +153,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - **Shared store**: default `BlobBackend` root becomes `~/.huggr/blobs/` (global, content-addressed — dedup across *all* agents by construction since keys are `sha256:<hex>`). Per-agent override stays possible via 1.2. Add two-level sharding (`sha256-ab/sha256-abcd...`) while relocating, since a global store will actually accumulate.
   - **Zero-copy paths**: `materialize_inbound` hardlinks from the blob store into scratch when same-filesystem, falling back to copy (`std::fs::hard_link` then fallback); `sweep_outbound` and `BlobBackend::put_file` hash the file streaming, then hardlink/rename into the store instead of read-all+write. Scratch stays writable-safe because blob-store files are set read-only and a tool writing "through" a hardlink is the same trust boundary as today's scratch (document it; if it proves sharp, switch to reflink/copy — decision recorded in the threat note).
   - **Parent↔child forwarding**: extend the `agent_<name>` tool schema (`agent_tool.rs:schema:67`) with optional `blobs: [BlobHandle]`; the subprocess resolver (`runtime.rs:run_subprocess_agent:395`) passes `--blob sha256:<hash>` args (CLI already takes `--blob <path>`; add the `sha256:` ref form) and sets `HUGGR_BLOB_STORE=<shared root>` so the child resolves refs from the same store — no bytes cross the process boundary. Child `Answer.blobs` (already `Sha256` refs) flow back into the parent's tool result unchanged and are resolvable by the parent for the same reason.
-- Docs: `docs/agents.md` contract and composition (BlobHandle materialization and blob composition), `docs/runtime.md` blob store location, and `docs/security.md` threat note (the shared store is cross-agent readable by hash — hashes are unguessable but not secrets; an agent can only obtain hashes it was handed or created).
+- Docs: `docs/reference/agents.md` contract and composition (BlobHandle materialization and blob composition), `docs/concepts/runtime.md` blob store location, and `docs/concepts/security.md` threat note (the shared store is cross-agent readable by hash — hashes are unguessable but not secrets; an agent can only obtain hashes it was handed or created).
 - Tests: hardlink + fallback behavior; parent→child→parent blob round-trip with zero byte duplication asserted (same inode); dedup across two different agents.
 - Depends on: 1.1 (`~/.huggr`), 1.2 (`BlobBackend`).
 
@@ -173,7 +173,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - When deterministic compaction can't reach budget (or config says `compaction = "summarize"`), the brain — told by the policy via a new pure signal on `ContextPlan` (`wants_summary: Option<SummaryRequest { up_to: Seq, selector }>`) — issues a `StartModelCall` with the configured summarizer tier *before* the main call, and appends the result as a new `Record::ContextSummary { op, replaces_up_to: Seq, text, est_tokens }`. Projection then renders the summary block instead of everything ≤ `replaces_up_to`. The log keeps every original record (the log is truth; compaction changes projection only) and replay is bit-for-bit because the summary output is an ordinary recorded model event.
   - Core changes: one `Record` variant + reducer arm + policy signal; each ships with scripted command-sequence tests and a replay test (per AGENTS.md conventions). Summaries cost money → they show up in `AnswerMeta` like any model call, under their own tier selector.
 - **2.1c — Adoption**: browser package (0.3) switches from the adapter-side POC to `BudgetPolicy` (the POC's request-shaping is then deleted from the generic package — one way to do each thing); Python/TS expose `[context]` config verbatim (3.1/3.2); `--describe` includes the context config.
-- Docs: rewrite the state-model text in `docs/runtime.md` that currently says "no in-session summarization/compaction machinery; the projection includes the log"; add context management (deterministic first, model-backed second, log-immutability guarantee); update the manifest in `docs/agents.md` and the risks table.
+- Docs: rewrite the state-model text in `docs/concepts/runtime.md` that currently says "no in-session summarization/compaction machinery; the projection includes the log"; add context management (deterministic first, model-backed second, log-immutability guarantee); update the manifest in `docs/reference/agents.md` and the risks table.
 - Tests: golden `ContextPlan` fixtures across configs; determinism tests re-feeding event streams; a long-session scripted test proving the projection shrinks while the log grows; replay of a summarizing session.
 - Depends on: 1.3.
 
@@ -184,8 +184,8 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Manifest grant `[tools.memory]` with optional `readonly = true`; registers `memory_read` / `memory_write` / `memory_list` — same jail discipline as `ScratchDir` (component-wise rejection + post-canonicalize `starts_with` re-check), rooted at `<agent home>/memory/` (1.1), backed by `ScratchBackend`-style storage via 1.2 so it swaps with the rest.
   - Shared mutable state across concurrent asks: last-write-wins with an advisory file lock per write; documented, not "solved" — memory is for notes, not coordination.
   - Never copied per-ask, never entering the trace as content (tool results carry relative paths + read bytes like scratch results do).
-- Threat note (`docs/security.md`): memory is a *persistence channel for prompt injection* — content written under one ask influences every future ask; that is its purpose, and the mitigation is the grant being opt-in, `readonly` mode for consumer agents, and memory being wipeable (`rm -rf ~/.huggr/<name>/memory`, plus `huggr traces`-adjacent CLI listing in 2.4).
-- Docs: update the infrastructure list in `docs/overview.md`, the manifest and tool library in `docs/agents.md`, the threat note in `docs/security.md`, and the SYSTEM.md template mention in the reference manifest.
+- Threat note (`docs/concepts/security.md`): memory is a *persistence channel for prompt injection* — content written under one ask influences every future ask; that is its purpose, and the mitigation is the grant being opt-in, `readonly` mode for consumer agents, and memory being wipeable (`rm -rf ~/.huggr/<name>/memory`, plus `huggr traces`-adjacent CLI listing in 2.4).
+- Docs: update the infrastructure list in `docs/concepts/overview.md`, the manifest and tool library in `docs/reference/agents.md`, the threat note in `docs/concepts/security.md`, and the SYSTEM.md template mention in the reference manifest.
 - Tests: jail tests (mirror `scratchpad.rs` suite); two sequential asks sharing state; fork isolation of scratch unaffected; readonly mode enforced.
 - Depends on: 1.1; nicer after 1.2.
 
@@ -197,7 +197,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Storage: append-only sidecar under the agent home — `<home>/feedback/<trace_id>.jsonl`, one JSON line per feedback event. Traces stay immutable; feedback is keyed *to* a trace, never *in* it. Behind `TraceBackend`? No — its own tiny `FeedbackStore` (fs + mem impls) so trace verify/replay never sees it.
   - Surfaces (all thin wrappers over `Agent::feedback(Feedback)`): built binary `<agent> --feedback <trace_id> [--json '<payload>' | reads stdin]`; MCP: a second tool `feedback` beside `ask` in `--mcp-serve`; agent-as-tool: the `[tools.agent.<name>]` grant registers a sibling capability `agent_<name>_feedback` (args: `trace_id`, `payload`) so a *parent model* can file feedback right after a delegated call — subprocess resolver maps it to `--feedback`; Rust/Python/TS: `agent.feedback(trace_id, payload)`.
   - Reading it back: `<agent> --traces` and `huggr traces` annotate each head with its feedback count; `huggr stats` (2.4) folds it; raw access is just the JSONL files (4.1 reads them).
-- Docs: update the contract and composition text in `docs/agents.md` (feedback is the one asynchronous back-channel and never load-bearing for an answer) and the threat note in `docs/security.md` (feedback payloads are untrusted text from the caller's model; anything consuming them treats them as attacker-controlled).
+- Docs: update the contract and composition text in `docs/reference/agents.md` (feedback is the one asynchronous back-channel and never load-bearing for an answer) and the threat note in `docs/concepts/security.md` (feedback payloads are untrusted text from the caller's model; anything consuming them treats them as attacker-controlled).
 - Tests: CLI + MCP + capability round-trips; append-only property; unknown trace_id → error answer.
 - Depends on: 1.1 (home layout). Real-time feedback consumption: Won't-do W1.
 
@@ -211,7 +211,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Per child agent — **never nested** (idea 5's constraint): a child's cost is attributed to the direct `agent_<name>` tool call that produced it (read from the recorded child `Answer.metadata`), reported as `cost_delegated` per child name; the agent's own line reports `cost_own` — grandchildren are already folded into the child's number by `merge_child` and are *not* re-walked.
   - Aggregates: totals, mean/median/p95 across traces, ask count, feedback count (2.3).
   - Output: one JSON document (stable shape, documented) + `--pretty` table rendering.
-- Docs: update the built-binary shape and CLI text in `docs/agents.md`, with a short accounting subsection consolidating what `AnswerMeta` and `huggr stats` each promise.
+- Docs: update the built-binary shape and CLI text in `docs/reference/agents.md`, with a short accounting subsection consolidating what `AnswerMeta` and `huggr stats` each promise.
 - Tests: golden stats over a fixture set of traces (crafted with fake adapter: multi-tier, tools, one child call, one error); `--stats` surfaced through conformance.
 - Depends on: 1.1; benefits from 2.3.
 
@@ -229,7 +229,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Compaction/hooks/config: `context={...}` maps to the `[context]` policy config (2.1); `ask_hooks`/`answer_hooks` as Python callables mutating typed `Ask`/`Answer` (host-side, mirrors `AskHook`/`AnswerHook`); storage defaults to `~/.huggr/<name>` via the same resolution (1.1), overridable, with `StorageOverrides` bridging (1.2) as a v2 item.
   - Replay: recorded runs verify without importing Python (capability results are recorded events); `huggr` CLI `verify` works on Python-produced traces.
   - Packaging: maturin, abi3 wheels, CI job (Linux/macOS to start); workspace membership optional-by-default so `cargo test` doesn't require Python.
-- Docs: `docs/agents.md` language surfaces rewritten ("language surfaces" → generated wrapper *and* runtime embedding, and why both exist), security note verbatim from the old plan (Python callables are trusted host code — Huggr jails what the *model* can invoke, not what your Python does); delete `PYTHON_RUNTIME_API_PLAN.md`; README section.
+- Docs: `docs/reference/agents.md` language surfaces rewritten ("language surfaces" → generated wrapper *and* runtime embedding, and why both exist), security note verbatim from the old plan (Python callables are trusted host code — Huggr jails what the *model* can invoke, not what your Python does); delete `PYTHON_RUNTIME_API_PLAN.md`; README section.
 - Tests: fake-adapter suite driving Python tools (sync + async), resume/fork from Python, errors-as-answers, event-stream ordering, trace parity (same session via Python API and via manifest produces equivalent logs), wheel smoke test in CI.
 - Depends on: 1.3, 1.4; benefits from 1.1, 2.1.
 
@@ -244,7 +244,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - Traces: same `Trace` JSON format (`format_version` checked); storage behind a TS `TraceStore` interface with node-fs and IndexedDB impls; **`verify` in TS** by exposing `huggr-replay`'s pure fold through the wasm bindings (enabled by the `fs` feature-gating in 1.2) — TS-recorded traces are replayable by the Rust CLI and vice versa (add a cross-verification fixture test in CI).
   - Types: generated `.d.ts` from wasm-bindgen for the core boundary + hand-written TS types for the contract (`Answer`, `AnswerMeta`, `BlobHandle`, events, config), kept in lockstep with the JSON contract by a fixture test.
   - Compaction: config passthrough to `BudgetPolicy` (2.1) — the policy runs inside the WASM brain, so TS gets it for free.
-- Docs: update language surfaces in `docs/agents.md`, the bindings layout in `docs/project-structure.md`, and README; the chrome-extension example (0.3) migrates onto this package when it lands.
+- Docs: update language surfaces in `docs/reference/agents.md`, the bindings layout in `docs/reference/project-layout.md`, and README; the chrome-extension example (0.3) migrates onto this package when it lands.
 - Tests: node test suite with a mock model server (ask, resume, fork, tool errors, events); browser smoke via the extension example; cross-language trace verification fixtures.
 - Depends on: 0.3, 1.3, 1.4, 2.1a (for config passthrough), 1.2 (`fs` feature gating in huggr-replay).
 
@@ -259,24 +259,24 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
   - New library tool `traces_read` first (framework piece, S/M): read-only capability family jailed to a traces root — `trace_list` (heads), `trace_ops(id)` (op sequence with names/durations/costs — *summaries*, not raw logs, to keep context small), `trace_transcript(id, range)` (paged), `feedback_list(id)`. Rationale: raw trace JSON via `fs_read` would blow any context budget; this is the same "domain tools beat generic ones" pitch Huggr makes. Threat note: trace content is attacker-influenced (it contains model/tool output), and feedback doubly so.
   - `examples/huglet-insights/`: agent crate granted `[tools.traces_read] root = "~/.huggr/huglet-docs"` (runtime arg, like `docs_path`) + typed response contract `InsightsResponse { patterns: [...], prompt_suggestions: [...], tool_suggestions: [...], feedback_themes: [...] }`; SYSTEM.md teaches the mining method. Runbook: `huggr run examples/huglet-insights ~/.huggr/huglet-docs "What should huglet-docs improve?"`.
   - Suggestions are a report for a human (or an orchestrator) — auto-applying them is explicitly out (W1 adjacency: no self-mutation loop).
-- Docs: update the tool library in `docs/agents.md` (+`traces_read`), the example README, and the threat note in `docs/security.md`.
+- Docs: update the tool library in `docs/reference/agents.md` (+`traces_read`), the example README, and the threat note in `docs/concepts/security.md`.
 - Tests: `traces_read` jail + pagination tests over fixtures; example smoke test with fake adapter.
 - Depends on: 2.3, 2.4 (fixtures/shape), 1.1.
 
 ### 4.2 `[x]` Tutorials (idea 15) — L
 
-- Why: didactic, narrative on-ramps per surface — the README and `docs/` are reference, not teaching.
-- Location: `docs/tutorials/` (the empty `docs/` dir finally earns its keep); each tutorial is standalone, tested-where-possible, single-line-markdown convention.
-  - `01-first-agent-cli.md` — `huggr new` (weather), manifest anatomy, run, resume/fork, `--describe`, build → one binary. (Available now.)
-  - `02-typed-responses-and-hooks.md` — `RESPONSE_RUST_TYPE`, `MODEL_RESPONSE_RUST_TYPE`, answer hooks, using huglet-docs as the worked example. (Available now.)
-  - `03-first-chrome-extension.md` — build a *different* extension than the shipped example from the browser package. (After 0.3.)
-  - `04-agent-binary-from-python.md` — `huggr build --surface python`, the typed wheel, subprocess/MCP alternatives. (Available now.)
-  - `05-agent-entirely-in-python.md` — the 3.1 runtime API end-to-end. (After 3.1.)
-  - `06-agent-entirely-in-typescript.md` — the 3.2 API, node + browser variants. (After 3.2.)
-  - `07-composition-and-cost.md` — agents-as-tools, blob passing, feedback, `huggr stats`. (After 1.5/2.3/2.4.)
-  - `08-traces-replay-debugging.md` — trace anatomy, `huggr replay --step`, `verify`, and the insights workflow. (Mostly available; finish after 4.1.)
-- Steps: write 01/02/04 immediately; others gated on their features; add a CI job that extracts and runs the shell blocks from 01 (doctest-style smoke) where secrets aren't needed.
-- Docs: README links the tutorial index; AGENTS.md "one doc" rule amended: `docs/` remains the reference; tutorials are teaching material and must not restate spec (link instead).
+- Why: didactic, narrative on-ramps per surface.
+- Location: `docs/tutorials/` for end-to-end lessons and `docs/guides/` for task-oriented procedures; each page is standalone, tested where possible, and follows the single-line Markdown convention.
+  - `tutorials/first-agent.md` — `huggr new` (weather), manifest anatomy, run, resume/fork, `--describe`, build → one binary. (Available now.)
+  - `guides/typed-responses.md` — `RESPONSE_RUST_TYPE`, `MODEL_RESPONSE_RUST_TYPE`, answer hooks, using huglet-docs as the worked example. (Available now.)
+  - `tutorials/chrome-extension.md` — build a *different* extension than the shipped example from the browser package. (After 0.3.)
+  - `guides/package-agent-for-python.md` — `huggr build --surface python`, the typed wheel, subprocess/MCP alternatives. (Available now.)
+  - `tutorials/python-agent.md` — the 3.1 runtime API end-to-end. (After 3.1.)
+  - `tutorials/typescript-agent.md` — the 3.2 API, node + browser variants. (After 3.2.)
+  - `guides/compose-agents.md` — agents-as-tools, blob passing, feedback, `huggr stats`. (After 1.5/2.3/2.4.)
+  - `guides/inspect-traces.md` — trace anatomy, `huggr replay --step`, `verify`, and the insights workflow. (Mostly available; finish after 4.1.)
+- Steps: write the first-agent, typed-response, and Python-packaging pages immediately; others are gated on their features; add a CI job that extracts and runs the shell blocks from the first-agent tutorial where secrets are not needed.
+- Docs: README links the documentation indexes; AGENTS.md defines the tutorial, guide, concept, and reference split.
 
 ### 4.3 `[x]` Skills for building Huggr agents (idea 16) — M
 
@@ -295,7 +295,7 @@ These change defaults and introduce the seams that Phase 2/3 build on. Order: 1.
 - `[ ]` **Anthropic-native provider adapter** — M: `huggr-providers::AnthropicAdapter` (Messages API streaming, tool use, same retry rules); proves the `ModelAdapter` seam with a second real implementation and unlocks non-OpenAI-compatible endpoints. Registered per tier via a `provider = "anthropic"` key on `[models.<tier>]` (open string, default `openai`).
 - `[ ]` **Release pipeline** — M: tag-driven GitHub workflow — crates.io publish order (core → replay → host → providers → agent → toolkit), `huggr` CLI binaries (linux/macos artifacts), Python wheels (3.1), npm package (3.2). (Distinct from Deferred D2, which is HF-Hub-specific distribution.)
 - `[ ]` **CI additions** — S: run the `#[ignore]`d conformance/build_cli suites in a nightly/weekly workflow (they're the real gates and currently never run in CI); add `cargo deny`/`audit`; extend the sans-IO canary with a `cargo tree -p huggr-core` allowlist check (catches non-wasm-visible deps too).
-- `[ ]` **`code_exec` sandboxed capability** — L (already designed in `docs/agents.md` tool library as the one future exec exception): pinned interpreter, cwd = scratchpad, no network, output caps; keep last in line — it's the highest-risk tool and nothing above depends on it.
+- `[ ]` **`code_exec` sandboxed capability** — L (already designed in `docs/reference/agents.md` tool library as the one future exec exception): pinned interpreter, cwd = scratchpad, no network, output caps; keep last in line — it's the highest-risk tool and nothing above depends on it.
 
 ---
 

@@ -1,6 +1,6 @@
 # Tool grants and jails
 
-This guide explains how a huglet gets its tools and why it cannot use anything else: how sandbox-by-registration works, what each grant in the tool library does, how to scope it, and where each jail's boundary actually is. The full option tables live in [built-in capabilities](../capabilities.md) and the per-capability threat notes in [security](../security.md); this guide shows how to use them together when authoring a manifest.
+This page explains how a huglet gets its tools and why it cannot use anything else: how sandbox-by-registration works, what each grant in the tool library does, how to scope it, and where each jail's boundary actually is. The full option tables live in [built-in capabilities](../reference/capabilities.md) and the per-capability threat notes in [security](security.md); this page shows how to use them together when authoring a manifest.
 
 ## The problem
 
@@ -81,13 +81,13 @@ An empty allowlist denies everything, only `http(s)` URLs are accepted, methods 
 - `[tools.memory]` opts into durable agent-wide notes; `readonly = true` makes write calls return semantic errors. Persistence is the feature and the risk: memory written under one ask influences future asks, which is exactly what stored prompt injection wants, so grant writes only when the agent's job needs them.
 - `[tools.traces_read]` exposes one agent home's stored traces and feedback as paged, size-capped summaries; granting it against another agent's home deliberately makes that agent's full history readable. Everything it returns is untrusted data to analyze, never instructions to follow.
 
-[Guide 12](12-blobs-scratchpad-memory.md) covers these three in depth.
+[Files and state](files-and-state.md) covers these three in depth.
 
 ## External-process grants
 
 Three grants cross the process boundary, and their jail is the manifest of what is on the other side, not a Huggr filesystem check:
 
-- `[tools.agent.<name>]` grants another built huglet. The child runs under its own manifest, jail, and limits; privileges compose downward only. See [composition and cost](07-composition-and-cost.md).
+- `[tools.agent.<name>]` grants another built huglet. The child runs under its own manifest, jail, and limits; privileges compose downward only. See [composition and cost](../guides/compose-agents.md).
 - `[tools.mcp.<name>]` starts an operator-declared stdio MCP server. Granting it is equivalent to trusting its command; Huggr does not sandbox what the server does.
 - `[tools.delegate]` restarts the same agent in a fresh subprocess context with the same privileges, depth-capped.
 

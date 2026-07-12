@@ -1,10 +1,10 @@
-# Your first Chrome extension
+# Build a Chrome extension
 
-This guide builds a browser-agent Chrome extension with custom tools and a custom UI. It uses the same three reusable pieces as the shipped example: the generic WASM brain bindings in `crates/huggr-wasm`, the generic JavaScript host modules in `bindings/typescript`, and a thin Chrome-specific layer.
+In this tutorial, you will build a browser-agent Chrome extension with custom tools and a custom UI. It uses the same three reusable pieces as the shipped example: the generic WASM brain bindings in `crates/huggr-wasm`, the generic JavaScript host modules in `bindings/typescript`, and a thin Chrome-specific layer.
 
 You will see what each layer provides, how `examples/chrome-extension` connects them, and which files to copy, keep, and replace.
 
-The [runtime documentation](../runtime.md) explains why the brain is sans-IO and every effect is injected. This guide covers assembly.
+The [runtime documentation](../concepts/runtime.md) explains why the brain is sans-IO and every effect is injected. This tutorial covers assembly.
 
 ## The three layers
 
@@ -26,7 +26,7 @@ A browser host is a stack, and only the top layer knows about Chrome:
   The driver never touches `chrome.*`; it only calls the supplied `host` object.
 - **Your extension folder** supplies everything Chrome-specific: the MV3 manifest, the service worker, the side-panel UI, the system prompt, and the **capability dispatcher** that maps tool names from the brain's `StartCapability` commands onto real `chrome.*` calls.
 
-## The host interface, the one shape to keep
+## The host interface
 
 The whole wiring hangs on a single object. `examples/chrome-extension/host.js` is 30 lines and this is its entire contract:
 
@@ -88,7 +88,7 @@ cp bindings/typescript/{agent_driver.js,openai_adapter.js,indexed_db.js} "$HERE/
 
 Run it from the repo root, then load the folder via `chrome://extensions` → Developer mode → Load unpacked, open the side panel, and enter an API key in Settings. If `wasm-bindgen` complains about a schema mismatch, `cargo install -f wasm-bindgen-cli --version 0.2.126`.
 
-## Now build a different one
+## Adapt the example
 
 Copy `examples/chrome-extension/` to a new folder and swap pieces. A minimal "tab janitor" extension has no content script or file store, uses only tab tools, and replaces the side panel with a popup:
 
@@ -115,4 +115,4 @@ Keep two boundaries when extending the example. Tool schemas live in `crates/hug
 
 ## Next
 
-Continue with [04: An agent binary from Python](04-agent-binary-from-python.md), or jump to [06: An agent entirely in TypeScript](06-agent-entirely-in-typescript.md) to see the same WASM brain driven by the typed `huggr-agents` package instead of the plain-JavaScript extension modules.
+Continue with [Package an agent for Python](../guides/package-agent-for-python.md), or jump to [Define an agent in TypeScript](typescript-agent.md) to see the same WASM brain driven by the typed `huggr-agents` package instead of the plain-JavaScript extension modules.

@@ -10,7 +10,7 @@ A huglet is a small Rust crate plus a system prompt and a set of tools with decl
 
 The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality.
 
-`docs/guides/` contains per-surface teaching material that links to the reference documentation instead of restating it; `docs/tutorials/` contains self-contained end-to-end walkthroughs whose command outputs come from real runs. A behavior change is not complete until the reference documentation matches reality and every tutorial or guide that shows the changed behavior still works.
+`docs/tutorials/` contains self-contained end-to-end lessons whose command outputs come from real runs; `docs/guides/` contains task-oriented procedures; `docs/concepts/` explains design and behavior; `docs/reference/` documents contracts, configuration, packages, and terminology. A behavior change is not complete until the relevant documentation matches reality and every tutorial or guide that shows the changed behavior still works.
 
 ## The one rule that matters most
 
@@ -97,7 +97,7 @@ The layers stack strictly: `huggr-agent` on `huggr-host` + `huggr-replay`, then 
 
 **Never add environmental dependencies to `huggr-core`** to make a host easier. Put them in the host crate.
 
-Huglet-layer conventions are documented in `docs/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
+Huglet-layer conventions are documented in `docs/reference/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
 
 Traces are immutable. A resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.huggr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.huggr/blobs`. Override these paths with `HUGGR_AGENT_HOME`, `HUGGR_HOME`, or `HUGGR_BLOB_STORE`. Custom `StorageOverrides` are trusted host code and must stay outside `huggr-core`.
 

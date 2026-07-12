@@ -1,6 +1,6 @@
 # Streaming and events
 
-This guide explains how a caller observes an ask while it runs: the shared `AgentEvent` vocabulary, `--stream` on a built binary, `Agent::ask_events` in Rust, and `agent.run(...)` in Python and TypeScript. It also explains what events deliberately are not: durable. The answer and the trace are the record; events are the live view.
+This page explains how a caller observes an ask while it runs: the shared `AgentEvent` vocabulary, `--stream` on a built binary, `Agent::ask_events` in Rust, and `agent.run(...)` in Python and TypeScript. It also explains what events deliberately are not: durable. The answer and the trace are the record; events are the live view.
 
 ## The problem
 
@@ -28,7 +28,7 @@ A successful stream starts with `ask_started` and ends with `answer_ready`; an i
 
 Events are host-layer observations. The brain already emits its command stream; the host's frontend hooks translate op lifecycle into `AgentEvent`s as they happen, and plain `ask()` uses a silent frontend that drops them all, producing an identical trace either way.
 
-That last clause is the design point: **events are never written to the trace.** The durable log records one consolidated entry per model output or tool result; per-token deltas are transport, discarded once consolidated. Watching a stream costs nothing in trace size, and replay does not replay deltas. If you need to reconstruct what happened after the fact, read the trace ([guide 8](08-traces-replay-debugging.md)); if you need to watch it live, subscribe to events. The two views never disagree about content, they differ in granularity and lifetime.
+That last clause is the design point: **events are never written to the trace.** The durable log records one consolidated entry per model output or tool result; per-token deltas are transport, discarded once consolidated. Watching a stream costs nothing in trace size, and replay does not replay deltas. If you need to reconstruct what happened after the fact, read the trace ([Inspect, replay, and verify traces](../guides/inspect-traces.md)); if you need to watch it live, subscribe to events. The two views never disagree about content, they differ in granularity and lifetime.
 
 ## CLI: `--stream`
 
@@ -72,7 +72,7 @@ for await (const event of agent.run("Explain compaction")) {
 }
 ```
 
-TypeScript's `AgentEvent` is a discriminated union on `type` with the identical wire shapes; `ask()` is `run()` with a collector that returns the `answer_ready` payload. Its model text deltas are currently buffered until each model call finishes, while the other events retain their order ([guide 6](06-agent-entirely-in-typescript.md)).
+TypeScript's `AgentEvent` is a discriminated union on `type` with the identical wire shapes; `ask()` is `run()` with a collector that returns the `answer_ready` payload. Its model text deltas are currently buffered until each model call finishes, while the other events retain their order ([Define an agent in TypeScript](../tutorials/typescript-agent.md)).
 
 ## Choosing the surface
 
@@ -86,5 +86,5 @@ TypeScript's `AgentEvent` is a discriminated union on `type` with the identical 
 - Events are ephemeral by design. Nothing stores them; a consumer that wants history must build it from the trace, which holds the consolidated records but not per-token timing.
 - The stream observes; it does not control. There is no event-level cancel or reply channel; aborting an ask is the caller's process-level concern.
 - `tool_ended` carries the full result payload, which can be large; a UI should truncate for display rather than assume small events.
-- MCP callers get no events: the MCP `ask` returns once, when the answer is ready ([guide 15](15-mcp.md)).
+- MCP callers get no events: the MCP `ask` returns once, when the answer is ready ([Serve and consume MCP](../guides/mcp.md)).
 - Delta granularity is whatever the provider streams; there is no flush cadence guarantee beyond event order.

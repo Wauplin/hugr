@@ -1,10 +1,10 @@
-# Composition and cost
+# Compose agents and account for cost
 
 ## What you'll build
 
-You'll grant one Huggr agent to another as a tool, hand a blob from parent to child without copying a byte, file feedback on the child's trace, and read the bill with `huggr stats`. This shows how agents compose and how their cost folds upward. Guide 08 builds on this workflow.
+You'll grant one Huggr agent to another as a tool, hand a blob from parent to child without copying a byte, file feedback on the child's trace, and read the bill with `huggr stats`. This shows how agents compose and how their cost folds upward. [Inspect, replay, and verify traces](inspect-traces.md) builds on this workflow.
 
-This assumes you've done [01](01-first-agent-cli.md) (you have a built binary) and [02](02-typed-responses-and-hooks.md) (you know the runtime-arg pattern). The composition model is specified in [the agents-as-tools documentation](../agents.md#agents-as-tools); this guide is the worked example.
+This assumes you have completed [Build your first agent](../tutorials/first-agent.md) and understand the runtime-argument pattern in [Define typed responses and answer hooks](typed-responses.md). The composition model is specified in [the agents-as-tools documentation](../reference/agents.md#agents-as-tools); this guide is the worked example.
 
 ## Build two agents
 
@@ -26,7 +26,7 @@ An agent grant is a manifest line under `[tools.agent.<name>]`. Add this to the 
 artifact = "../examples/huglet-weather/dist/huglet-weather-cli/target/release/huglet-weather"
 ```
 
-`<name>` is `weather`, so the parent gets a capability named `agent_weather`. The parent's model sees it as an ordinary tool whose args are an [`Ask`](../agents.md#the-ask-and-answer-contract): a `question`, an optional `trace_id` to resume the child, and optional `blobs`:
+`<name>` is `weather`, so the parent gets a capability named `agent_weather`. The parent's model sees it as an ordinary tool whose args are an [`Ask`](../reference/agents.md#the-ask-and-answer-contract): a `question`, an optional `trace_id` to resume the child, and optional `blobs`:
 
 ```json
 {
@@ -63,7 +63,7 @@ Hashes are capabilities, not secrets: anyone handed a hash can read that object 
 
 ## File feedback on the child's trace
 
-Feedback is the one asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask (see [the security documentation](../security.md)); it's for offline analysis (guide 08).
+Feedback is the one asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask (see [the security documentation](../concepts/security.md)); it is for offline analysis in [Inspect, replay, and verify traces](inspect-traces.md).
 
 A parent model can file feedback on the child right after a delegation through a sibling capability `agent_<name>_feedback`, registered automatically beside each `<name>` grant. Its args are `{ trace_id, payload }`:
 
@@ -104,4 +104,4 @@ The same fold provides per-tier, per-tool, and duration percentiles; see `crates
 
 ## Next
 
-You've composed agents and read their cost. The resulting traces are replayable bit-for-bit, providing the debugging surface and input for offline improvement analysis. Continue with [Traces, replay, and debugging](08-traces-replay-debugging.md).
+You have composed agents and read their cost. The resulting traces are replayable bit-for-bit, providing the debugging surface and input for offline improvement analysis. Continue with [Inspect, replay, and verify traces](inspect-traces.md).

@@ -1,4 +1,4 @@
-# Runtime arguments
+# Configure runtime arguments
 
 This guide explains `[runtime.args.<name>]`, the one mechanism for invocation-time configuration: what it can patch, how values flow from the CLI, environment, or MCP call into the manifest before the agent is assembled, and how each surface exposes the declared arguments. It is what lets a single built binary serve different data, endpoints, or scopes per invocation without recompiling.
 
@@ -36,7 +36,7 @@ Path-like values (tool roots, artifacts, `traces.store`, `scratchpad.root`) are 
 One declaration fans out to every surface the toolkit generates:
 
 - **CLI.** A positional argument placed before the question (in declaration order, sorted by name), or a `--docs-path` style flag derived from the name with underscores turned into hyphens. `help` becomes the help text. `huggr run <agent-dir>` accepts the same arguments during development, so the dev loop and the shipped binary parse identically.
-- **MCP.** Each argument becomes a string property on the `ask` tool's schema, listed as required when declared required, so an MCP client can re-scope each call (see [serving and consuming MCP](15-mcp.md)).
+- **MCP.** Each argument becomes a string property on the `ask` tool's schema, listed as required when declared required, so an MCP client can re-scope each call (see [serving and consuming MCP](mcp.md)).
 - **Generated Python wrapper.** Positional args become leading positional `str` parameters of `ask(...)`, before `question`; optional ones become keyword `Optional[str]` parameters; `help` lands in the docstring. A type checker enforces them like any other typed API.
 
 A missing required argument on the ask path produces the standard `status: "error"` answer at exit 0. Introspection surfaces (`--describe`, `--config`, `--traces`, `--stats`) and server startup (`--mcp-serve`) treat every argument as optional, because describing or starting the agent should not require ask-time values; MCP enforces required arguments per `ask` call instead.
@@ -45,7 +45,7 @@ Names must not collide with the built-in surface flags (`question`, `trace`, `js
 
 ## Patching happens before assembly
 
-The order of operations is the security property. Values are validated and written into the (in-memory) manifest first; then tools are registered from the patched manifest and jails canonicalize their roots. By the time a model turn starts, `docs_path` has become an ordinary `fs_read` jail like any hardcoded one, with the same traversal and symlink defenses ([tool grants and jails](10-tool-grants-and-jails.md)).
+The order of operations is the security property. Values are validated and written into the (in-memory) manifest first; then tools are registered from the patched manifest and jails canonicalize their roots. By the time a model turn starts, `docs_path` has become an ordinary `fs_read` jail like any hardcoded one, with the same traversal and symlink defenses ([tool grants and jails](../concepts/tool-security.md)).
 
 The flip side: whoever supplies runtime arguments is doing operator-level configuration. A caller who can pass `docs_path` can point the read jail anywhere their filesystem allows, and a caller who can patch `models.base_url` can redirect model traffic. That is the intended contract, arguments are the operator's knobs surfaced to the caller, but it means you should only declare targets you are willing to hand to every caller of the binary, including MCP clients.
 

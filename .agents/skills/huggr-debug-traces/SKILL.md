@@ -5,7 +5,7 @@ description: Inspect, replay, verify, compare, and analyze Huggr traces, lineage
 
 # Debug Huggr traces
 
-Treat trace files as immutable evidence and never repair a failure by editing a stored trace. Read [guide 08](../../../docs/guides/08-traces-replay-debugging.md) for trace anatomy and [the runtime documentation](../../../docs/runtime.md#determinism-replay-and-traces) for the determinism contract.
+Treat trace files as immutable evidence and never repair a failure by editing a stored trace. Read [Inspect, replay, and verify traces](../../../docs/guides/inspect-traces.md) for trace anatomy and [the runtime documentation](../../../docs/concepts/runtime.md#determinism-replay-and-traces) for the determinism contract.
 
 ## Locate the right store
 

@@ -4,7 +4,7 @@ This guide explains how a Huggr agent's response contract works. `RESPONSE_RUST_
 
 The worked example is the checked-in reference agent `examples/huglet-docs`. It enriches model-cited document paths into public Hugging Face documentation URLs.
 
-Prerequisite: [guide 1](01-first-agent-cli.md). For the design background, see [language surfaces](../agents.md#language-surfaces).
+Prerequisite: [Build your first agent](../tutorials/first-agent.md). For the design background, see [language surfaces](../reference/agents.md#language-surfaces).
 
 ## How the contract is discovered
 
@@ -106,7 +106,7 @@ huggr run examples/huglet-docs ./docs "What is the narrow-waist rule?"
 
 ## Growing your own contract
 
-Take the weather agent from guide 1 and evolve it the same way:
+Take the weather agent from [Build your first agent](../tutorials/first-agent.md) and evolve it the same way:
 
 1. Widen `Response` in `src/lib.rs` with the fields you want callers to rely on (say `temperature_c: f64`, `conditions: String`). That alone changes the provider schema on the next run; no manifest edit, no rebuild command beyond `huggr run`/`huggr build` as usual.
 2. If a field is mechanical (units conversion, formatting, canonical links), move it out of the model's schema: declare a leaner model type, point `MODEL_RESPONSE_RUST_TYPE` at it, and compute the field in a hook.
@@ -116,4 +116,4 @@ The rule of thumb: **the model fills in what only the model knows; hooks fill in
 
 ## Next
 
-Continue with [guide 3](03-first-chrome-extension.md), read `examples/huglet-docs/README.md` for runtime arguments and MCP serving, or see [agents as tools](../agents.md#agents-as-tools) to compose the binary into a larger agent.
+Continue with [Build a Chrome extension](../tutorials/chrome-extension.md), read `examples/huglet-docs/README.md` for runtime arguments and MCP serving, or see [agents as tools](../reference/agents.md#agents-as-tools) to compose the binary into a larger agent.

@@ -1,6 +1,6 @@
 # Limits
 
-This guide explains how to bound what a huglet can spend: the `[limits]` block, how each limit is enforced, and why an exceeded limit is an answer rather than an exception.
+This page explains how to bound what a huglet can spend: the `[limits]` block, how each limit is enforced, and why an exceeded limit is an answer rather than an exception.
 
 ## The problem
 
@@ -20,7 +20,7 @@ timeout_s = 120               # wall clock for the whole ask
 These are the only three keys. Enforcement is entirely host-side, wrapped around the model adapter and the ask, so `huggr-core` never learns about limits and replay determinism is untouched:
 
 - **`max_model_calls`** counts calls at the adapter boundary and refuses the call past the cap.
-- **`max_cost_micro_usd`** folds each completed call's cost (manifest pricing × returned usage, see [models, tiers, and pricing](13-models-tiers-pricing.md)) into a running total, and refuses the *next* model call once the total has crossed the cap. A call's cost is unknowable until its usage returns, so the cap is a threshold that stops further spending, not a hard ceiling on the final number: expect the total to overshoot by up to one call.
+- **`max_cost_micro_usd`** folds each completed call's cost (manifest pricing × returned usage, see [models, tiers, and pricing](models-and-pricing.md)) into a running total, and refuses the *next* model call once the total has crossed the cap. A call's cost is unknowable until its usage returns, so the cap is a threshold that stops further spending, not a hard ceiling on the final number: expect the total to overshoot by up to one call.
 - **`timeout_s`** races the whole turn against a deadline; on expiry the in-flight work is aborted and drained.
 
 Note that `max_agent_depth`, which stops runaway recursive delegation, is a separate guard on the delegation capability, not a `[limits]` key.

@@ -1,6 +1,6 @@
 # Models, tiers, and pricing
 
-This guide explains how a huglet talks to model providers: the `[models]` manifest block, what a tier is and how one is selected per call, how retries and errors are split between the adapter and the turn loop, and how per-tier pricing turns trace-recorded tokens into the mandatory cost line on every answer. The same configuration shape applies to the manifest, the Python and TypeScript runtime APIs, and the browser host.
+This page explains how a huglet talks to model providers: the `[models]` manifest block, what a tier is and how one is selected per call, how retries and errors are split between the adapter and the turn loop, and how per-tier pricing turns trace-recorded tokens into the mandatory cost line on every answer. The same configuration shape applies to the manifest, the Python and TypeScript runtime APIs, and the browser host.
 
 ## The problem
 
@@ -35,7 +35,7 @@ The same shape appears verbatim on the other surfaces: Python's `models={"base_u
 
 Inside the core, a model is only ever named by a `ModelSelector`, a plain string. Each manifest tier registers one adapter in the host's model registry under its tier name; the `TurnPolicy` chooses a selector per call; the host resolves it at dispatch time. The built-in policies use one fixed tier per turn (the default tier), so today multiple tiers earn their keep in two places:
 
-- `[context].summary_model` names the tier used for compaction summaries, so a long-lived agent can summarize with a cheap model and answer with a good one (see [context compaction](09-context-compaction.md)).
+- `[context].summary_model` names the tier used for compaction summaries, so a long-lived agent can summarize with a cheap model and answer with a good one (see [context compaction](context-management.md)).
 - A custom `TurnPolicy` can pick tiers dynamically; because the selector is an open string, adding a tier touches no core types.
 
 A selector that resolves to no registered adapter is not a crash: the host injects a `ModelError` (`no adapter for model <tier>`), which ends the turn as an ordinary error answer with a persisted trace.
@@ -50,7 +50,7 @@ The OpenAI-compatible adapter in `huggr-providers` retries 429 and 5xx responses
 
 Semantic errors, such as malformed tool arguments or a logical tool failure, take the other path: they return to the model as tool results so it can correct itself within the same turn.
 
-There is no per-request HTTP timeout in the adapter; wall-clock bounds belong to `[limits].timeout_s`, which caps the whole ask (see [limits](14-limits.md)).
+There is no per-request HTTP timeout in the adapter; wall-clock bounds belong to `[limits].timeout_s`, which caps the whole ask (see [limits](limits.md)).
 
 ## Cost accounting
 

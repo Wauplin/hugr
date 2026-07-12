@@ -1,10 +1,10 @@
-# Traces, replay, and debugging
+# Inspect, replay, and verify traces
 
 ## What you'll build
 
 Every Huggr ask writes an immutable trace to `~/.huggr/<agent>/traces`. This guide reads a trace, replays it event by event with `huggr replay --step`, verifies it bit-for-bit with `huggr verify`, and passes traces to an offline agent for improvement suggestions. It explains how the trace acts as the source of truth.
 
-This assumes [01](01-first-agent-cli.md) (you can run/build an agent) and [07](07-composition-and-cost.md) (you know where cost and feedback live). The trace format is specified in [the runtime documentation](../runtime.md#determinism-replay-and-traces). This guide provides the hands-on workflow.
+This assumes you can run and build an agent and know where cost and feedback live. See [Build your first agent](../tutorials/first-agent.md) and [Compose agents and account for cost](compose-agents.md). The trace format is specified in [the runtime documentation](../concepts/runtime.md#determinism-replay-and-traces). This guide provides the hands-on workflow.
 
 ## Where traces live
 
@@ -65,7 +65,7 @@ Anything that breaks this property is a bug. See the ground rule in `AGENTS.md`.
 
 ## Close the loop with the insights agent
 
-Traces and the feedback filed in guide 07 provide the input for offline improvement analysis. The `examples/huglet-insights` agent is granted the read-only `traces_read` tool family (`trace_list`, `trace_ops`, `trace_transcript`, `feedback_list`), jailed to a target agent's home. Point it at one:
+Traces and the feedback filed while [composing agents](compose-agents.md) provide the input for offline improvement analysis. The `examples/huglet-insights` agent is granted the read-only `traces_read` tool family (`trace_list`, `trace_ops`, `trace_transcript`, `feedback_list`), jailed to a target agent's home. Point it at one:
 
 ```bash
 huggr run ./examples/huglet-insights ~/.huggr/huglet-weather "What should huglet-weather improve?"
@@ -77,13 +77,13 @@ Results are **summaries and paged, size-capped excerpts**, never raw trace JSON.
 
 The tool family and its jailing live in `crates/huggr-toolkit/src/tools/traces_read.rs`.
 
-Two things to keep in mind about this kind of agent (full threat note in [the security documentation](../security.md)):
+Two things to keep in mind about this kind of agent (full threat note in [the security documentation](../concepts/security.md)):
 
 - **Trace content and feedback payloads are untrusted.** They contain attacker-controlled model output and caller-supplied text. The insights agent must treat everything it reads as data to analyze, never as instructions to follow. Its `SYSTEM.md` says so explicitly.
 - **It only ever reports.** Suggestions are for a human or an orchestrator to review; nothing is auto-applied. There is deliberately no self-mutation loop.
 
 The `InsightsResponse` it returns (`patterns` with evidence trace ids, `prompt_suggestions`, `tool_suggestions`, `feedback_themes`) is a structured report you can triage and promote into the agent crate or its manifest.
 
-## That's the tour
+## Next
 
-Guide 01 built an agent, and this guide completed the workflow: run → trace → replay/verify → analyze → improve. The [reference documentation](../README.md) and [AGENTS.md](../../AGENTS.md) cover the sans-IO contract, narrow-waist rule, storage, and policy details that the guides do not repeat. Back to the [guide index](README.md).
+Together with [Build your first agent](../tutorials/first-agent.md), this guide completes the workflow: run → trace → replay/verify → analyze → improve. The [reference documentation](../README.md) and [AGENTS.md](../../AGENTS.md) cover the sans-IO contract, narrow-waist rule, storage, and policy details that the guides do not repeat. Back to the [guide index](README.md).
