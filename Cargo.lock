@@ -551,15 +551,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
-name = "hugr-agent"
+name = "huggr-agent"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
- "hugr-core",
- "hugr-host",
- "hugr-replay",
+ "huggr-core",
+ "huggr-host",
+ "huggr-replay",
  "schemars",
  "serde",
  "serde_json",
@@ -570,7 +570,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-core"
+name = "huggr-core"
 version = "0.0.2"
 dependencies = [
  "serde",
@@ -578,33 +578,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-datasmith"
-version = "0.0.2"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "hugr-docs"
-version = "0.0.2"
-dependencies = [
- "hugr-agent",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "hugr-host"
+name = "huggr-host"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
- "hugr-core",
- "hugr-replay",
+ "huggr-core",
+ "huggr-replay",
  "reqwest",
  "serde",
  "serde_json",
@@ -613,22 +594,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-insights"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
-]
-
-[[package]]
-name = "hugr-providers"
+name = "huggr-providers"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
- "hugr-core",
- "hugr-host",
+ "huggr-core",
+ "huggr-host",
  "reqwest",
  "serde",
  "serde_json",
@@ -636,10 +609,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-replay"
+name = "huggr-replay"
 version = "0.0.2"
 dependencies = [
- "hugr-core",
+ "huggr-core",
  "serde",
  "serde_json",
  "sha2",
@@ -647,7 +620,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-toolkit"
+name = "huggr-toolkit"
 version = "0.0.2"
 dependencies = [
  "anyhow",
@@ -657,11 +630,11 @@ dependencies = [
  "croner",
  "globset",
  "html2md",
- "hugr-agent",
- "hugr-core",
- "hugr-host",
- "hugr-providers",
- "hugr-replay",
+ "huggr-agent",
+ "huggr-core",
+ "huggr-host",
+ "huggr-providers",
+ "huggr-replay",
  "regex",
  "reqwest",
  "schemars",
@@ -673,18 +646,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "hugr-wasm"
+name = "huggr-wasm"
 version = "0.0.2"
 dependencies = [
- "hugr-core",
- "hugr-replay",
+ "huggr-core",
+ "huggr-replay",
  "serde",
  "serde_json",
  "wasm-bindgen",
 ]
 
 [[package]]
-name = "hugr-weather"
+name = "huglet-datasmith"
+version = "0.0.2"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "huglet-docs"
+version = "0.0.2"
+dependencies = [
+ "huggr-agent",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "huglet-insights"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+]
+
+[[package]]
+name = "huglet-weather"
 version = "0.1.0"
 dependencies = [
  "schemars",

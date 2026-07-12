@@ -1,0 +1,11 @@
+[package]
+name = "huglet-insights"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "huglet_insights"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+schemars = "1"

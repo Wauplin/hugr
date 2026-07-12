@@ -30,16 +30,16 @@ jobs:
       fail-fast: false
       matrix:
         example:
-          - hugr-datasmith
-          - hugr-docs
-          - hugr-insights
-          - hugr-weather
+          - huglet-datasmith
+          - huglet-docs
+          - huglet-insights
+          - huglet-weather
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build ${{ matrix.example }} agent
-        run: cargo run -p hugr-toolkit --bin hugr -- build examples/${{ matrix.example }}
+        run: cargo run -p huggr-toolkit --bin huggr -- build examples/${{ matrix.example }}
 
   chrome-extension-example:
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
         run: ./examples/chrome-extension/build.sh
 
   # The Python runtime API: build the wheel with maturin and run the pytest
-  # suite against the mock provider (crates/hugr-python sits outside the
+  # suite against the mock provider (crates/huggr-python sits outside the
   # workspace, so the main test job never needs Python).
   python-bindings:
     runs-on: ubuntu-latest
@@ -65,13 +65,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/hugr-python
+          workspaces: crates/huggr-python
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Test hugr-python crate
-        run: cargo test --manifest-path crates/hugr-python/Cargo.toml --all-targets
-      - name: Build and test hugr-agents
+      - name: Test huggr-python crate
+        run: cargo test --manifest-path crates/huggr-python/Cargo.toml --all-targets
+      - name: Build and test huggr-agents
         working-directory: bindings/python
         run: |
           python -m venv .venv
@@ -96,14 +96,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Build and test hugr-agents (TS)
+      - name: Build and test huggr-agents (TS)
         working-directory: bindings/typescript
         run: |
           npm install
           npm run build:wasm
           npm test
 
-  # The sans-IO canary: hugr-core must build with no environmental deps
+  # The sans-IO canary: huggr-core must build with no environmental deps
   # (no tokio/reqwest/fs), which a wasm target enforces at compile time.
   sans-io-canary:
     runs-on: ubuntu-latest
@@ -113,5 +113,5 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Build hugr-core for wasm32
-        run: cargo build --target wasm32-unknown-unknown -p hugr-core
+      - name: Build huggr-core for wasm32
+        run: cargo build --target wasm32-unknown-unknown -p huggr-core

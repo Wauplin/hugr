@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huggr Chrome Extension"
+  short_description: "Build a Huggr Chrome extension"
+  default_prompt: "Use $huggr-chrome-extension to create and build a Chrome extension host for Huggr."

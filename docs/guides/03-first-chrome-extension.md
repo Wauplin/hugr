@@ -1,6 +1,6 @@
 # Your first Chrome extension
 
-This guide builds a browser-agent Chrome extension with custom tools and a custom UI. It uses the same three reusable pieces as the shipped example: the generic WASM brain bindings in `crates/hugr-wasm`, the generic JavaScript host modules in `bindings/typescript`, and a thin Chrome-specific layer.
+This guide builds a browser-agent Chrome extension with custom tools and a custom UI. It uses the same three reusable pieces as the shipped example: the generic WASM brain bindings in `crates/huggr-wasm`, the generic JavaScript host modules in `bindings/typescript`, and a thin Chrome-specific layer.
 
 You will see what each layer provides, how `examples/chrome-extension` connects them, and which files to copy, keep, and replace.
 
@@ -10,9 +10,9 @@ The [runtime documentation](../runtime.md) explains why the brain is sans-IO and
 
 A browser host is a stack, and only the top layer knows about Chrome:
 
-- **`crates/hugr-wasm`** compiles `hugr-core` to `wasm32-unknown-unknown` and exposes it through wasm-bindgen.
+- **`crates/huggr-wasm`** compiles `huggr-core` to `wasm32-unknown-unknown` and exposes it through wasm-bindgen.
 
-  The extension-facing class is `HugrWasm`. Construct it with a `BrowserAgentConfig` JSON object containing `base_url`, `model`, `api_key`, `system_prompt`, and `context`, plus optional `max_model_calls` / `max_cost_micro_usd` caps (unset means unbounded). The JavaScript driver enforces these caps between model calls; the cost cap uses provider-reported cost when the stream includes it.
+  The extension-facing class is `HuggrWasm`. Construct it with a `BrowserAgentConfig` JSON object containing `base_url`, `model`, `api_key`, `system_prompt`, and `context`, plus optional `max_model_calls` / `max_cost_micro_usd` caps (unset means unbounded). The JavaScript driver enforces these caps between model calls; the cost cap uses provider-reported cost when the stream includes it.
 
   Drive it with `submit_user_input`, `poll_commands_json`, `submit_model_done`/`submit_model_error`, `submit_capability_done`/`submit_capability_error`, `submit_permission_decision`, and `abort`. Read results with `final_text()`, `trace_json()`, and `log_json()`.
 
@@ -37,7 +37,7 @@ import { loadSettings, saveSession } from "./vendor/indexed_db.js";
 import { SYSTEM_PROMPT } from "./system_prompt.js";
 
 export const host = {
-  async loadWasm() { /* import ./pkg/hugr_wasm.js, await module.default(), return module.HugrWasm */ },
+  async loadWasm() { /* import ./pkg/huggr_wasm.js, await module.default(), return module.HuggrWasm */ },
   invokeCapability: invokeBrowserCapability,  // (name, args) => Promise<result>
   loadSettings,                               // () => Promise<{apiKey, baseUrl, model, ...limits}>
   saveSession,                                // (record) => Promise  — autosaved during the run
@@ -67,7 +67,7 @@ These five files define the Chrome layer:
   Set `"background": { "service_worker": "service_worker.js", "type": "module" }` and point `side_panel.default_path` at `sidepanel.html`. Include `'wasm-unsafe-eval'` in `content_security_policy.extension_pages` so the WASM brain can instantiate.
 
   The example requests `activeTab, sidePanel, scripting, storage, tabs, webNavigation`, plus broad host permissions. Its `content_scripts` entry injects `content_script.js` into pages.
-- **`service_worker.js`:** opens the side panel on icon click and handles `chrome.runtime.onMessage` requests (`hugr.tabs.list`, `hugr.tab.open`, `hugr.tab.close`, `hugr.tab.switch`) for privileged tab operations that must run in the background context.
+- **`service_worker.js`:** opens the side panel on icon click and handles `chrome.runtime.onMessage` requests (`huggr.tabs.list`, `huggr.tab.open`, `huggr.tab.close`, `huggr.tab.switch`) for privileged tab operations that must run in the background context.
 - **`chrome_api.js`:** the capability dispatcher. `invokeBrowserCapability(name, args)` is one large `switch` on the tool name.
 
   Tab tools message the service worker through `chromeCall`. Page tools (`page_snapshot`, `page_click`, `page_type`, waits, …) message the content script in the target tab through `contentCall(tabId, message)`. File tools read or write the IndexedDB-local file store.
@@ -81,8 +81,8 @@ These five files define the Chrome layer:
 `build.sh` does three things: compile the crate, generate the JS glue, and vendor the generic modules (extensions can only load modules from inside their own folder):
 
 ```bash
-cargo build -p hugr-wasm --target wasm32-unknown-unknown --release
-wasm-bindgen --target web --out-dir "$HERE/pkg" target/wasm32-unknown-unknown/release/hugr_wasm.wasm
+cargo build -p huggr-wasm --target wasm32-unknown-unknown --release
+wasm-bindgen --target web --out-dir "$HERE/pkg" target/wasm32-unknown-unknown/release/huggr_wasm.wasm
 cp bindings/typescript/{agent_driver.js,openai_adapter.js,indexed_db.js} "$HERE/vendor/"
 ```
 
@@ -111,8 +111,8 @@ export async function invokeCapability(name, args) {
 5. **Build your UI.** Any HTML that calls `runAgent(question, host, { onEvent })` works; `sidepanel.js` is a good crib for rendering `model`/`tool`/`done` events and wiring an AbortController-style interrupt.
 6. **Reuse `build.sh` as-is** (adjust `HERE` if you moved out of `examples/`), reload the unpacked extension, and ask it to tidy your tabs.
 
-Keep two boundaries when extending the example. Tool schemas live in `crates/hugr-wasm/src/capabilities.rs` (the model⇄browser contract), so a new tool needs both a schema there and an implementation in the dispatcher; Chrome APIs never belong in the crate. The dispatcher is trusted host code, so an implementation that exceeds its declared scope bypasses a boundary that Hugr cannot enforce.
+Keep two boundaries when extending the example. Tool schemas live in `crates/huggr-wasm/src/capabilities.rs` (the model⇄browser contract), so a new tool needs both a schema there and an implementation in the dispatcher; Chrome APIs never belong in the crate. The dispatcher is trusted host code, so an implementation that exceeds its declared scope bypasses a boundary that Huggr cannot enforce.
 
 ## Next
 
-Continue with [04: An agent binary from Python](04-agent-binary-from-python.md), or jump to [06: An agent entirely in TypeScript](06-agent-entirely-in-typescript.md) to see the same WASM brain driven by the typed `hugr-agents` package instead of the plain-JavaScript extension modules.
+Continue with [04: An agent binary from Python](04-agent-binary-from-python.md), or jump to [06: An agent entirely in TypeScript](06-agent-entirely-in-typescript.md) to see the same WASM brain driven by the typed `huggr-agents` package instead of the plain-JavaScript extension modules.

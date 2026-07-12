@@ -1,5 +1,5 @@
 // Node runtime pieces: wasm loader (from the package's pkg/ output),
-// fs-backed trace + feedback stores under the shared `~/.hugr/<agent>/` home.
+// fs-backed trace + feedback stores under the shared `~/.huggr/<agent>/` home.
 
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -16,8 +16,8 @@ let cachedWasm: Promise<WasmModule> | null = null;
 export function loadWasm(): Promise<WasmModule> {
   cachedWasm ??= (async () => {
     const pkgDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "pkg");
-    const jsPath = path.join(pkgDir, "hugr_wasm.js");
-    const wasmPath = path.join(pkgDir, "hugr_wasm_bg.wasm");
+    const jsPath = path.join(pkgDir, "huggr_wasm.js");
+    const wasmPath = path.join(pkgDir, "huggr_wasm_bg.wasm");
     const module = await import(pathToFileURL(jsPath).href);
     await module.default({ module_or_path: await fs.readFile(wasmPath) });
     return module as unknown as WasmModule;
@@ -25,15 +25,15 @@ export function loadWasm(): Promise<WasmModule> {
   return cachedWasm;
 }
 
-/// Per-agent home: `$HUGR_AGENT_HOME`, else `$HUGR_HOME/<name>`, else
-/// `~/.hugr/<name>` — the same resolution as the Rust runtime.
+/// Per-agent home: `$HUGGR_AGENT_HOME`, else `$HUGGR_HOME/<name>`, else
+/// `~/.huggr/<name>` — the same resolution as the Rust runtime.
 export function agentHome(agentName: string): string {
-  const explicit = process.env.HUGR_AGENT_HOME;
+  const explicit = process.env.HUGGR_AGENT_HOME;
   if (explicit) return explicit;
   const name = sanitizeAgentName(agentName);
-  const base = process.env.HUGR_HOME;
+  const base = process.env.HUGGR_HOME;
   if (base) return path.join(base, name);
-  return path.join(process.env.HOME ?? os.tmpdir(), ".hugr", name);
+  return path.join(process.env.HOME ?? os.tmpdir(), ".huggr", name);
 }
 
 export function sanitizeAgentName(name: string): string {
@@ -47,7 +47,7 @@ function validateTraceId(id: string): string {
 }
 
 /// Traces as `<root>/<id>.json` in the portable trace format — the same
-/// layout as the Rust `TraceStore`, so `hugr verify` reads them directly.
+/// layout as the Rust `TraceStore`, so `huggr verify` reads them directly.
 export class FsTraceStore implements TraceStore {
   constructor(readonly root: string) {}
 

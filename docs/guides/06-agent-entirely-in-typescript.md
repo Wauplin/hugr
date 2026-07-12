@@ -1,18 +1,18 @@
 # An agent entirely in TypeScript
 
-This guide defines a Hugr subagent entirely in TypeScript, with config as a plain object and tools as functions. It drives the same sans-IO brain as every other surface, compiled to WebAssembly and running in Node or the browser.
+This guide defines a huglet entirely in TypeScript, with config as a plain object and tools as functions. It drives the same sans-IO brain as every other surface, compiled to WebAssembly and running in Node or the browser.
 
 Topics include the `Agent` class, the `ToolSpec` shape, the `ask`/`run` pair and event stream, Node and browser entry points, and cross-compatible trace verification with the Rust CLI.
 
-The config keys mirror `hugr.toml`, and the `Answer` contract is identical to the Rust and Python surfaces. The [runtime documentation](../runtime.md) explains why the brain is sans-IO and every effect is injected. This guide covers assembly.
+The config keys mirror `huggr.toml`, and the `Answer` contract is identical to the Rust and Python surfaces. The [runtime documentation](../runtime.md) explains why the brain is sans-IO and every effect is injected. This guide covers assembly.
 
 ## What the package is
 
-The `hugr-agents` npm package in `bindings/typescript/` is a typed layer over the WASM brain in `crates/hugr-wasm`. It exports three entry points:
+The `huggr-agents` npm package in `bindings/typescript/` is a typed layer over the WASM brain in `crates/huggr-wasm`. It exports three entry points:
 
-- **`hugr-agents`** (root): the platform-neutral pieces: the `Agent` class, contract types (`Answer`, `AgentEvent`, `ToolSpec`, `AgentConfig`, …), the OpenAI-compatible fetch adapter `callOpenAiCompatible`, and in-memory reference stores `MemTraceStore` / `MemFeedbackStore`.
-- **`hugr-agents/node`:** the Node runtime: `createAgent(config)`, `loadWasm()` from `./pkg`, `FsTraceStore` / `FsFeedbackStore` under `~/.hugr/<name>/`, and `api_key_env` resolved from `process.env`.
-- **`hugr-agents/browser`:** the browser runtime: `createAgent(config)`, `loadWasm(pkgUrl?)` over `fetch`, `IndexedDbTraceStore` / `IndexedDbFeedbackStore`.
+- **`huggr-agents`** (root): the platform-neutral pieces: the `Agent` class, contract types (`Answer`, `AgentEvent`, `ToolSpec`, `AgentConfig`, …), the OpenAI-compatible fetch adapter `callOpenAiCompatible`, and in-memory reference stores `MemTraceStore` / `MemFeedbackStore`.
+- **`huggr-agents/node`:** the Node runtime: `createAgent(config)`, `loadWasm()` from `./pkg`, `FsTraceStore` / `FsFeedbackStore` under `~/.huggr/<name>/`, and `api_key_env` resolved from `process.env`.
+- **`huggr-agents/browser`:** the browser runtime: `createAgent(config)`, `loadWasm(pkgUrl?)` over `fetch`, `IndexedDbTraceStore` / `IndexedDbFeedbackStore`.
 
 The brain never touches IO. The TS `Agent` is the host: it loads the wasm, drives the submit/poll loop, fetches the model, invokes tools, and persists traces, following the documented runtime boundary.
 
@@ -28,12 +28,12 @@ npm run build        # tsc → ./dist
 
 You need a working Rust toolchain with `wasm32-unknown-unknown` for `build:wasm` (or copy a prebuilt `pkg/`). An OpenAI-compatible API key for the provider you point at. Use Node 18 or newer for the Node path and a modern browser for the browser path.
 
-## 1. Config: the same keys as hugr.toml
+## 1. Config: the same keys as huggr.toml
 
 The `AgentConfig` interface is the typed mirror of the manifest's `[agent]`, `[models]`, `[models.<tier>]`, `[limits]`, and `[context]` sections:
 
 ```ts
-import type { AgentConfig } from "hugr-agents";
+import type { AgentConfig } from "huggr-agents";
 
 const config: AgentConfig = {
   name: "policy-helper",
@@ -41,7 +41,7 @@ const config: AgentConfig = {
   system: "Answer from the policy tools. Return JSON.",
   models: {
     base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGR_API_KEY",
+    api_key_env: "HUGGR_API_KEY",
     default: "medium",
     medium: { model: "moonshotai/Kimi-K2-Instruct",
               input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
@@ -49,7 +49,7 @@ const config: AgentConfig = {
 };
 ```
 
-- `name` names the agent's state home (`~/.hugr/<name>/` by default), just like `[agent]` name.
+- `name` names the agent's state home (`~/.huggr/<name>/` by default), just like `[agent]` name.
 - `models` is `[models]`: provider knobs (`base_url`, `api_key`, `api_key_env`, `default`) plus one tier per other key. Each tier (`TierConfig`) carries `model` and optional `input_usd_per_m_tokens`/`output_usd_per_m_tokens`; the prices that make every answer carry a cost, identical to `[models.medium]`. Sampling knobs such as temperature are never set; the provider's defaults apply.
 - `limits` (`LimitsConfig`) is optional and caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`. An agent has no limits by default; each unset key is unbounded.
 - `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host.
@@ -62,7 +62,7 @@ The `default` tier is what the brain selects as the model selector when no tier 
 A `ToolSpec` contains an explicit name, description, a JSON Schema for model arguments, and the invoke function:
 
 ```ts
-import type { ToolSpec } from "hugr-agents";
+import type { ToolSpec } from "huggr-agents";
 
 const lookupPolicy: ToolSpec = {
   name: "lookup_policy",
@@ -92,7 +92,7 @@ Registration *is* the sandbox: tools you list in `config.tools` are the only one
 In Node, `createAgent` wires the default runtime for you:
 
 ```ts
-import { createAgent } from "hugr-agents/node";
+import { createAgent } from "huggr-agents/node";
 
 const agent = createAgent({
   ...config,
@@ -186,31 +186,31 @@ interface AgentRuntime {
 }
 ```
 
-The Node entry (`hugr-agents/node`) provides defaults via `nodeRuntime(name)`:
+The Node entry (`huggr-agents/node`) provides defaults via `nodeRuntime(name)`:
 
 ```ts
-import { createAgent, FsTraceStore, FsFeedbackStore, nodeRuntime } from "hugr-agents/node";
+import { createAgent, FsTraceStore, FsFeedbackStore, nodeRuntime } from "huggr-agents/node";
 
 const agent = createAgent(config, { traces: new FsTraceStore("/custom/traces") });
 ```
 
 This wires `loadWasm()` (which reads `./pkg` bytes without fetch), `FsTraceStore` under `<home>/traces/`, `FsFeedbackStore` under `<home>/feedback/`, and `env: process.env[name]`.
 
-The home resolves in the same order as the Rust runtime: `$HUGR_AGENT_HOME`, then `$HUGR_HOME/<name>`, then `~/.hugr/<name>`.
+The home resolves in the same order as the Rust runtime: `$HUGGR_AGENT_HOME`, then `$HUGGR_HOME/<name>`, then `~/.huggr/<name>`.
 
-Traces land as `<home>/traces/<id>.json` in the portable `hugr-replay` format. The Rust runtime writes the same layout, so `hugr verify` and `hugr traces` can read TypeScript-recorded traces directly.
+Traces land as `<home>/traces/<id>.json` in the portable `huggr-replay` format. The Rust runtime writes the same layout, so `huggr verify` and `huggr traces` can read TypeScript-recorded traces directly.
 
 `FsTraceStore.put` stamps a content-derived id (sha256 of the headed trace JSON, first 16 hex chars) and writes atomically (`flag: "wx"` claims the name, a collision bumps a `-N` suffix; the body goes to a `.tmp` and renames into place); so a put never overwrites, preserving trace immutability.
 
-The browser entry (`hugr-agents/browser`) provides `browserRuntime(name, pkgUrl?)`:
+The browser entry (`huggr-agents/browser`) provides `browserRuntime(name, pkgUrl?)`:
 
 ```ts
-import { createAgent, IndexedDbTraceStore } from "hugr-agents/browser";
+import { createAgent, IndexedDbTraceStore } from "huggr-agents/browser";
 
 const agent = createAgent(config, { traces: new IndexedDbTraceStore("my-agent") });
 ```
 
-This wires `loadWasm(pkgUrl?)` (imports `hugr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so point at `models.api_key` directly.
+This wires `loadWasm(pkgUrl?)` (imports `huggr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so point at `models.api_key` directly.
 
 The root export's in-memory stores (`MemTraceStore`, `MemFeedbackStore`) are the reference implementation of the storage seam and double as the "how to write a backend" example; if you want to store traces somewhere neither fs nor IndexedDB covers (a remote service, your app's database), implement `TraceStore`:
 
@@ -239,34 +239,34 @@ const feedback = await agent.feedbackFor(answer.trace_id);
 // → [{ trace_id, payload: { score: 5, note: "good" }, created_at_ms }]
 ```
 
-`agent.feedback(traceId, payload): Promise<Feedback>` throws if the trace doesn't exist. The storage layout matches the Rust side (`<home>/feedback/<trace_id>.jsonl` on Node, one JSON line per event), so `hugr stats` aggregates it across surfaces. Listing traces is `agent.traces(): Promise<TraceHead[]>`.
+`agent.feedback(traceId, payload): Promise<Feedback>` throws if the trace doesn't exist. The storage layout matches the Rust side (`<home>/feedback/<trace_id>.jsonl` on Node, one JSON line per event), so `huggr stats` aggregates it across surfaces. Listing traces is `agent.traces(): Promise<TraceHead[]>`.
 
 ## 8. The trace and verify story
 
-Every ask is recorded as an immutable trace in the portable `hugr-replay` format (meta, events, log, commands, policy). The wasm brain's `trace_json()` returns it; the TS runtime's `TraceStore.put` stamps the header and persists it. Because Node writes the same `.json` layout the Rust runtime does, the cross-language story works in both directions:
+Every ask is recorded as an immutable trace in the portable `huggr-replay` format (meta, events, log, commands, policy). The wasm brain's `trace_json()` returns it; the TS runtime's `TraceStore.put` stamps the header and persists it. Because Node writes the same `.json` layout the Rust runtime does, the cross-language story works in both directions:
 
 ```bash
-hugr verify <agent-dir> <trace-id>   # reads the TS-recorded trace directly
-hugr traces <agent-dir>             # lists TS-recorded traces
+huggr verify <agent-dir> <trace-id>   # reads the TS-recorded trace directly
+huggr traces <agent-dir>             # lists TS-recorded traces
 ```
 
-And from TS, you can re-verify a trace through the exact same wasm fold `hugr verify` uses:
+And from TS, you can re-verify a trace through the exact same wasm fold `huggr verify` uses:
 
 ```ts
 await agent.verify(traceId);   // replays bit-for-bit; throws on drift
 ```
 
-`agent.verify(traceId): Promise<void>` loads the stored trace and calls `verify_trace_json`, the wasm export of `hugr-replay::verify` and the same gate as the CLI. A trace recorded by any surface (Rust, Python, TS) verifies on any other; this is the release gate on new control-flow paths and your check after a change.
+`agent.verify(traceId): Promise<void>` loads the stored trace and calls `verify_trace_json`, the wasm export of `huggr-replay::verify` and the same gate as the CLI. A trace recorded by any surface (Rust, Python, TS) verifies on any other; this is the release gate on new control-flow paths and your check after a change.
 
 ## 9. In the browser: the chrome-extension example
 
-`examples/chrome-extension/` is one concrete browser host. It currently vendors the *plain-JS* extension host modules (`agent_driver.js`, `openai_adapter.js`, `indexed_db.js`) rather than the typed `hugr-agents` package; the typed package is the same driver factored into typed TS, and the example is migrating onto it. The wiring is still instructive for the platform pieces:
+`examples/chrome-extension/` is one concrete browser host. It currently vendors the *plain-JS* extension host modules (`agent_driver.js`, `openai_adapter.js`, `indexed_db.js`) rather than the typed `huggr-agents` package; the typed package is the same driver factored into typed TS, and the example is migrating onto it. The wiring is still instructive for the platform pieces:
 
 - `host.js` assembles a host object (`loadWasm`, `invokeCapability`, settings, system prompt); the same five-key shape the typed `AgentRuntime` formalizes.
 - `chrome_api.js` is the capability dispatcher: one `switch` on tool name mapping `tabs_list`, `page_snapshot`, `page_click`, `file_download_url`, … onto `chrome.*` calls. Unknown names throw, routing back to the model as a tool error.
 - The manifest needs `content_security_policy.extension_pages` with `'wasm-unsafe-eval'` (required to instantiate the WASM brain), and the build vendors the generic modules because extensions can only load modules from inside their own folder.
 
-To run a typed browser agent, use `createAgent` and `IndexedDbTraceStore` from `hugr-agents/browser`.
+To run a typed browser agent, use `createAgent` and `IndexedDbTraceStore` from `huggr-agents/browser`.
 
 Chrome-specific capabilities still need a dispatcher, equivalent to `invokeCapability`, and registration in `config.tools`. The typed `Agent` is platform-neutral; only its runtime knows about Chrome.
 
@@ -277,14 +277,14 @@ See [guide 3](03-first-chrome-extension.md) for the full extension build.
 A complete, runnable Node script:
 
 ```ts
-import { createAgent } from "hugr-agents/node";
+import { createAgent } from "huggr-agents/node";
 
 const agent = createAgent({
   name: "policy-helper",
   system: "Answer from the lookup_policy tool. Return { answer: string } as JSON.",
   models: {
     base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGR_API_KEY",
+    api_key_env: "HUGGR_API_KEY",
     default: "medium",
     medium: { model: "moonshotai/Kimi-K2-Instruct",
               input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
@@ -311,8 +311,8 @@ const followUp = await agent.ask("Up to what amount?", { traceId: answer.trace_i
 console.log("forked trace:", followUp.trace_id, "depends on", answer.trace_id);
 ```
 
-Run it with `node --experimental-vm-modules` (or a `.mjs` extension) after `npm run build` in `bindings/typescript/`. The same config, tools, and `ask`/`run` code works unchanged in the browser if you swap the import to `hugr-agents/browser` and point storage at `IndexedDbTraceStore`.
+Run it with `node --experimental-vm-modules` (or a `.mjs` extension) after `npm run build` in `bindings/typescript/`. The same config, tools, and `ask`/`run` code works unchanged in the browser if you swap the import to `huggr-agents/browser` and point storage at `IndexedDbTraceStore`.
 
 ## Next
 
-You can define and run agents in TS. Next, compose them using agents as tools, zero-copy blob passing, and feedback aggregation with `hugr stats`: [07-composition-and-cost.md](07-composition-and-cost.md).
+You can define and run agents in TS. Next, compose them using agents as tools, zero-copy blob passing, and feedback aggregation with `huggr stats`: [07-composition-and-cost.md](07-composition-and-cost.md).

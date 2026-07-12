@@ -2,7 +2,7 @@
 
 ## Security model
 
-**Sandbox-by-registration.** A subagent can invoke only capabilities granted by its manifest. An ungranted tool is never registered, so there is no code path to it. The manifest is the audit surface for human review.
+**Sandbox-by-registration.** A huglet can invoke only capabilities granted by its manifest. An ungranted tool is never registered, so there is no code path to it. The manifest is the audit surface for human review.
 
 The threat actor is the **model** and any content it reads. Every tool argument is attacker-controlled, and each jail must hold against adversarial arguments.
 
@@ -31,11 +31,11 @@ The operator is responsible for the process and OS boundary when running an untr
 **`shell`** (process execution):
 
 - **Restricted mode.** The capability invokes an exact allowlisted executable with an argument vector. No shell parses `&&`, pipes, redirection, substitutions, expansions, or glob syntax. Arguments can still activate dangerous behavior in an allowed program, so the operator must choose both programs and their OS environment carefully.
-- **Full mode.** The capability invokes `<shell> -lc` and provides no Hugr-level sandbox. The model can access every process, file, credential, and network destination allowed to the agent's OS identity.
+- **Full mode.** The capability invokes `<shell> -lc` and provides no Huggr-level sandbox. The model can access every process, file, credential, and network destination allowed to the agent's OS identity.
 
 **`scratchpad`** (per-lineage scratch subtree, ungated, the jail is the boundary):
 
-- **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/hugr-agent/tests/scratchpad.rs`.
+- **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/huggr-agent/tests/scratchpad.rs`.
 - **Cross-ask / sibling leakage.** Each ask gets its own working copy, seeded through copy-on-fork from the parent's finalized subtree. A fork sees ancestor notes but never a sibling's writes.
 - **Blob links and copies.** Filesystem-backed `Sha256` inbound blobs may be hardlinked into scratch. Outbound files are copied into a temporary store object, synced, and installed without overwriting an existing content address.
 
@@ -46,7 +46,7 @@ The operator is responsible for the process and OS boundary when running an untr
 **`memory`** (agent-wide durable memory, opt-in, persistence is the feature and the risk):
 
 - **Persistence channel.** Content written by one ask can influence unrelated future asks for the same agent. This is useful for notes and equally useful for stored prompt injection, so the grant is opt-in, supports `readonly = true`, and is wipeable by deleting `<agent-home>/memory`.
-- **Jail and writes.** Memory uses the same relative-path rejection and post-canonicalization root check as scratch. Filesystem writes are last-write-wins with a process mutex plus an advisory lock file; memory is not a coordination database. Tests: `crates/hugr-agent/tests/memory.rs`.
+- **Jail and writes.** Memory uses the same relative-path rejection and post-canonicalization root check as scratch. Filesystem writes are last-write-wins with a process mutex plus an advisory lock file; memory is not a coordination database. Tests: `crates/huggr-agent/tests/memory.rs`.
 
 **`web_fetch`** (network; host allowlist + GET-only default + byte cap; empty allowlist ⇒ fail-closed):
 
@@ -65,13 +65,13 @@ The operator is responsible for the process and OS boundary when running an untr
 
 - **Path traversal via trace ids.** Trace ids key file paths (`<id>.json`); ids are validated against a closed character set (ASCII alphanumeric, `-`, `_`) before any filesystem touch, so a crafted id (`../…`, absolute, separators) cannot leave the jail. The root itself is canonicalized at construction. Test: `crafted_trace_id_is_rejected_before_io`.
 - **Attacker-influenced content.** Trace transcripts contain model and tool output, while feedback payloads are caller-supplied. Both are untrusted. Any agent granted `traces_read` (e.g. an insights agent) must treat everything it reads as data to analyze, never as instructions to follow; its system prompt should say so explicitly.
-- **Cross-agent reading.** The grant's root selects *which* agent's home is readable; granting `~/.hugr/<other-agent>` deliberately exposes that agent's full conversation history to the reader. The manifest line is the audit surface.
+- **Cross-agent reading.** The grant's root selects *which* agent's home is readable; granting `~/.huggr/<other-agent>` deliberately exposes that agent's full conversation history to the reader. The manifest line is the audit surface.
 
-**External grants (`mcp`, `agent`).** `[tools.mcp.*]` runs an operator-declared external process. Its jail is the process boundary plus whatever the server enforces. Hugr does not sandbox its filesystem or network.
+**External grants (`mcp`, `agent`).** `[tools.mcp.*]` runs an operator-declared external process. Its jail is the process boundary plus whatever the server enforces. Huggr does not sandbox its filesystem or network.
 
 Granting an MCP server is equivalent to trusting its command. `--config` exposes the command and args for audit.
 
-`[tools.agent.*]` starts a built Hugr agent whose own manifest is its jail. Privileges compose downward only.
+`[tools.agent.*]` starts a built Huggr agent whose own manifest is its jail. Privileges compose downward only.
 
 `[tools.delegate]` starts the same agent in a fresh subprocess context. It does not attenuate privileges because the child has the same manifest. A cross-process depth budget terminates recursive self-delegation.
 
@@ -81,4 +81,4 @@ Granting an MCP server is equivalent to trusting its command. `--config` exposes
 
 **Cron jobs.** Recurring asks are host-side automation, not core behavior: the clock lives in the scheduler, each fire is an ordinary `Ask`, and overlap for the same job is skipped. Unattended model calls can spend money without a human watching, so cron serving refuses jobs with no effective `max_cost_micro_usd` unless `--allow-uncapped` is explicit.
 
-**Custom storage backends.** A backend is trusted host code, the same class as a custom capability or model adapter. It sees trace contents, blob bytes, and scratch data for the agent that registers it; Hugr enforces the model-facing jail before calls reach the backend, but it does not sandbox a backend implementation.
+**Custom storage backends.** A backend is trusted host code, the same class as a custom capability or model adapter. It sees trace contents, blob bytes, and scratch data for the agent that registers it; Huggr enforces the model-facing jail before calls reach the backend, but it does not sandbox a backend implementation.

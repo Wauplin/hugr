@@ -1,0 +1,43 @@
+[package]
+name = "huggr-agent"
+description = "The common huglet runtime API: the Ask/Answer contract, trace store, scratchpad, blob exchange, and cost accounting."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+# The trace store persists immutable traces via huggr-replay. huggr-agent is a
+# host-layer crate, so std::fs is fine here; huggr-core stays sans-IO.
+huggr-replay = { workspace = true }
+# The ask path assembles a fresh engine per ask on the native host.
+huggr-core = { workspace = true }
+huggr-host = { workspace = true }
+thiserror = { workspace = true }
+# The scratchpad capabilities implement the host `Capability` trait, which is
+# `#[async_trait]`.
+async-trait = { workspace = true }
+# trace_id generation: content hash of the serialized trace — deterministic,
+# no RNG and no clock (see store.rs).
+sha2 = { workspace = true }
+# Inbound `Bytes` blobs arrive base64-encoded on the Ask; decoded and
+# materialized into the scratchpad before the turn.
+base64 = { workspace = true }
+# Limits enforcement wraps turns in `tokio::time::timeout` and model adapters
+# in a `ModelAdapter` whose `call` returns `anyhow::Result`.
+tokio = { workspace = true }
+anyhow = { workspace = true }
+# Typed response contracts generate provider JSON Schema at the host boundary;
+# huggr-core only sees the opaque request extra.
+schemars = { workspace = true }
+
+[dev-dependencies]
+# The resume/fork tests drive the real tokio engine with a scripted mock model
+# adapter and verify persisted traces replay bit-for-bit.
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }

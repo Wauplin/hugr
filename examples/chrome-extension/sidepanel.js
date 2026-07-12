@@ -88,16 +88,16 @@ interruptButton.addEventListener("click", () => {
 document.querySelector("#download-session").addEventListener("click", async () => {
   if (!activeSessionId) return;
   const session = await getSession(activeSessionId);
-  if (session) downloadJson(`hugr-wasm-session-${activeSessionId}.json`, session);
+  if (session) downloadJson(`huggr-wasm-session-${activeSessionId}.json`, session);
 });
 
 document.querySelector("#download-sessions").addEventListener("click", async () => {
-  downloadJson(`hugr-wasm-sessions-${new Date().toISOString().replace(/[:.]/g, "-")}.json`, await listSessions());
+  downloadJson(`huggr-wasm-sessions-${new Date().toISOString().replace(/[:.]/g, "-")}.json`, await listSessions());
 });
 
 document.querySelector("#download-files-metadata").addEventListener("click", async () => {
   const files = await listFiles();
-  downloadJson(`hugr-wasm-files-${new Date().toISOString().replace(/[:.]/g, "-")}.json`, files.map(withoutBlob));
+  downloadJson(`huggr-wasm-files-${new Date().toISOString().replace(/[:.]/g, "-")}.json`, files.map(withoutBlob));
 });
 
 await hydrate();
@@ -274,7 +274,7 @@ function fileItem(file) {
   button.addEventListener("click", async () => {
     const stored = await getLocalFile(file.fileId);
     if (!stored?.blob) return;
-    downloadBlob(stored.filename || stored.fileId || "hugr-wasm-file", stored.blob);
+    downloadBlob(stored.filename || stored.fileId || "huggr-wasm-file", stored.blob);
   });
   const remove = document.createElement("button");
   remove.className = "danger-button";

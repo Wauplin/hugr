@@ -1,0 +1,20 @@
+[package]
+name = "huggr-replay"
+description = "Versioned, portable trace format for persisting and reconstructing Huggr sessions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# huggr-core is pure data here: we serialize its Event/LogEntry types. This crate
+# is a *host-side persistence* crate — it MAY touch the filesystem (std::fs). That
+# does NOT make huggr-core impure; the IO lives only here (see docs/project-structure.md).
+huggr-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# Content-addressed digest for the disk-backed blob store (P3-2). Host-side IO
+# crate, so this stays well clear of huggr-core's sans-IO invariant.
+sha2 = { workspace = true }

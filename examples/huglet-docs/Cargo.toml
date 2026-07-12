@@ -1,0 +1,17 @@
+[package]
+name = "huglet-docs"
+description = "Typed response contract for the reference Huggr documentation agent."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "huglet_docs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+huggr-agent = { workspace = true }

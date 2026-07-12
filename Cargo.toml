@@ -1,46 +1,46 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/hugr-core",
-    "crates/hugr-host",
-    "crates/hugr-providers",
-    "crates/hugr-replay",
-    "crates/hugr-agent",
-    "crates/hugr-toolkit",
-    "crates/hugr-wasm",
-    "examples/hugr-datasmith",
-    "examples/hugr-docs",
-    "examples/hugr-insights",
-    "examples/hugr-weather",
+    "crates/huggr-core",
+    "crates/huggr-host",
+    "crates/huggr-providers",
+    "crates/huggr-replay",
+    "crates/huggr-agent",
+    "crates/huggr-toolkit",
+    "crates/huggr-wasm",
+    "examples/huglet-datasmith",
+    "examples/huglet-docs",
+    "examples/huglet-insights",
+    "examples/huglet-weather",
 ]
 # The PyO3 embedding crate needs a Python toolchain; it builds via maturin
 # (bindings/python), never via `cargo test --workspace`.
-exclude = ["crates/hugr-python"]
+exclude = ["crates/huggr-python"]
 
-# Crate layout (see docs/project-structure.md): `hugr-core` is the pure, sans-IO
-# brain; every other crate is a host layer and may touch IO — never `hugr-core`.
+# Crate layout (see docs/project-structure.md): `huggr-core` is the pure, sans-IO
+# brain; every other crate is a host layer and may touch IO — never `huggr-core`.
 
 [workspace.package]
 version = "0.0.2"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/hugr-rs/hugr"
+repository = "https://github.com/huggr-rs/huggr"
 rust-version = "1.85"
 
 [workspace.dependencies]
-# Pure data (used by hugr-core too).
+# Pure data (used by huggr-core too).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 schemars = "1"
 
-# Host-side (IO/runtime) deps — never used by hugr-core.
-hugr-core = { path = "crates/hugr-core" }
-hugr-host = { path = "crates/hugr-host" }
-hugr-providers = { path = "crates/hugr-providers" }
-hugr-replay = { path = "crates/hugr-replay" }
-hugr-agent = { path = "crates/hugr-agent" }
-hugr-toolkit = { path = "crates/hugr-toolkit" }
+# Host-side (IO/runtime) deps — never used by huggr-core.
+huggr-core = { path = "crates/huggr-core" }
+huggr-host = { path = "crates/huggr-host" }
+huggr-providers = { path = "crates/huggr-providers" }
+huggr-replay = { path = "crates/huggr-replay" }
+huggr-agent = { path = "crates/huggr-agent" }
+huggr-toolkit = { path = "crates/huggr-toolkit" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
@@ -48,7 +48,7 @@ async-trait = "0.1"
 anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
-# Content-addressed blob hashing (host-side persistence; never in hugr-core).
+# Content-addressed blob hashing (host-side persistence; never in huggr-core).
 sha2 = "0.10"
 # base64 for inline blob transport on the host-side Ask/Answer contract.
 base64 = "0.22"

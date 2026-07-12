@@ -4,7 +4,7 @@ from dataclasses import is_dataclass
 
 import pytest
 
-import hugr_agents as hugr
+import huggr_agents as huggr
 from mock_server import MockOpenAi
 
 
@@ -16,14 +16,14 @@ def server():
 
 
 @pytest.fixture(autouse=True)
-def hugr_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HUGR_HOME", str(tmp_path / "hugr-home"))
-    monkeypatch.delenv("HUGR_AGENT_HOME", raising=False)
+def huggr_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUGGR_HOME", str(tmp_path / "huggr-home"))
+    monkeypatch.delenv("HUGGR_AGENT_HOME", raising=False)
     return tmp_path
 
 
 def make_agent(server, tools=(), **kwargs):
-    return hugr.Agent(
+    return huggr.Agent(
         name="py-test-agent",
         system="Answer as JSON.",
         models={
@@ -41,7 +41,7 @@ def make_agent(server, tools=(), **kwargs):
 
 
 def lookup_tool(calls):
-    @hugr.tool(
+    @huggr.tool(
         name="lookup",
         description="Look a word up.",
         schema={
@@ -57,32 +57,32 @@ def lookup_tool(calls):
     return lookup
 
 
-def test_sync_tool_round_trip(server, hugr_home):
+def test_sync_tool_round_trip(server, huggr_home):
     calls = []
     agent = make_agent(server, tools=[lookup_tool(calls)])
-    server.script_tool_call("lookup", {"word": "hugr"})
-    server.script_text(json.dumps({"answer": "hugr is a toolkit"}))
+    server.script_tool_call("lookup", {"word": "huggr"})
+    server.script_text(json.dumps({"answer": "huggr is a toolkit"}))
 
-    answer = agent.ask("What is hugr?")
+    answer = agent.ask("What is huggr?")
 
     assert answer.ok
-    assert answer.response == {"answer": "hugr is a toolkit"}
-    assert calls == [{"word": "hugr"}]
+    assert answer.response == {"answer": "huggr is a toolkit"}
+    assert calls == [{"word": "huggr"}]
     assert answer.metadata.model_calls == 2
     assert answer.metadata.tool_calls == 1
     assert answer.metadata.cost_micro_usd > 0
     # The tool result was sent back to the model on the second request.
     second = server.requests[1]
     assert any(m.get("role") == "tool" for m in second["messages"])
-    # Traces land under HUGR_HOME/<agent>/traces (idea 17 layout).
-    traces_dir = hugr_home / "hugr-home" / "py-test-agent" / "traces"
+    # Traces land under HUGGR_HOME/<agent>/traces (idea 17 layout).
+    traces_dir = huggr_home / "huggr-home" / "py-test-agent" / "traces"
     assert any(traces_dir.glob("*.json"))
 
 
 def test_async_tool(server):
     calls = []
 
-    @hugr.tool(name="lookup", description="d", schema={"type": "object"})
+    @huggr.tool(name="lookup", description="d", schema={"type": "object"})
     async def lookup(args):
         await asyncio.sleep(0)
         calls.append(args)
@@ -97,7 +97,7 @@ def test_async_tool(server):
 
 
 def test_tool_exception_is_semantic_error(server):
-    @hugr.tool(name="boom", description="d", schema={"type": "object"})
+    @huggr.tool(name="boom", description="d", schema={"type": "object"})
     def boom(args):
         raise RuntimeError("kaput")
 
@@ -116,7 +116,7 @@ def test_errors_are_answers(server):
     agent = make_agent(server)
     # No scripted output → the mock returns HTTP 500 → error answer, not an exception.
     answer = agent.ask("q")
-    assert answer.status == hugr.STATUS_ERROR
+    assert answer.status == huggr.STATUS_ERROR
     assert "error" in answer.response
     assert answer.trace_id
 
@@ -143,7 +143,7 @@ def test_resume_and_fork(server):
 def test_event_stream_ordering(server):
     calls = []
     agent = make_agent(server, tools=[lookup_tool(calls)])
-    server.script_tool_call("lookup", {"word": "hugr"})
+    server.script_tool_call("lookup", {"word": "huggr"})
     server.script_text('{"answer": "ok"}')
 
     async def collect():
@@ -158,14 +158,14 @@ def test_event_stream_ordering(server):
     assert types.index("tool_started") < types.index("tool_ended")
     assert "model_started" in types and "text_delta" in types
     model_ended = next(
-        event for event in events if isinstance(event, hugr.ModelEndedEvent)
+        event for event in events if isinstance(event, huggr.ModelEndedEvent)
     )
     assert is_dataclass(model_ended.usage)
-    done = next(event for event in events if isinstance(event, hugr.DoneEvent))
+    done = next(event for event in events if isinstance(event, huggr.DoneEvent))
     assert is_dataclass(done.reason)
     assert done.reason.kind == "end_turn"
     ready = events[-1]
-    assert isinstance(ready, hugr.AnswerReadyEvent)
+    assert isinstance(ready, huggr.AnswerReadyEvent)
     assert is_dataclass(ready.answer)
     assert ready.answer.ok
 
@@ -208,10 +208,10 @@ def test_response_contract_casts_final_json(server):
 
 
 def test_blob_input_uses_typed_ref_dataclass():
-    blob = hugr.BlobHandle.from_path("./report.pdf", media_type="application/pdf")
+    blob = huggr.BlobHandle.from_path("./report.pdf", media_type="application/pdf")
 
     assert is_dataclass(blob)
-    assert isinstance(blob.ref, hugr.PathBlobRef)
+    assert isinstance(blob.ref, huggr.PathBlobRef)
     assert blob.ref.path == "./report.pdf"
     assert blob.to_dict() == {
         "ref": {"kind": "path", "path": "./report.pdf"},
@@ -220,7 +220,7 @@ def test_blob_input_uses_typed_ref_dataclass():
 
 
 def test_inferred_schema_from_annotations():
-    @hugr.tool
+    @huggr.tool
     def lookup(word: str, limit: int = 3) -> dict:
         """Look a word up."""
         return {"word": word, "limit": limit}
@@ -237,13 +237,13 @@ def test_inferred_schema_from_annotations():
         "required": ["word"],
     }
     # The runtime's arguments dict is splatted into the named parameters.
-    assert lookup({"word": "hugr"}) == {"word": "hugr", "limit": 3}
+    assert lookup({"word": "huggr"}) == {"word": "huggr", "limit": 3}
 
 
 def test_inferred_schema_optional_list_and_dict():
     from typing import Optional
 
-    @hugr.tool
+    @huggr.tool
     def report(tags: list[str], meta: dict, note: Optional[str] = None):
         return {"tags": tags, "meta": meta, "note": note}
 
@@ -257,7 +257,7 @@ def test_inferred_schema_optional_list_and_dict():
 def test_inferred_schema_rejects_unannotated_params():
     with pytest.raises(TypeError, match="no type annotation"):
 
-        @hugr.tool
+        @huggr.tool
         def bad(word):
             return word
 
@@ -265,24 +265,24 @@ def test_inferred_schema_rejects_unannotated_params():
 def test_inferred_tool_round_trip(server):
     calls = []
 
-    @hugr.tool
+    @huggr.tool
     def lookup(word: str):
         """Look a word up."""
         calls.append(word)
         return {"definition": f"meaning of {word}"}
 
     agent = make_agent(server, tools=[lookup])
-    server.script_tool_call("lookup", {"word": "hugr"})
+    server.script_tool_call("lookup", {"word": "huggr"})
     server.script_text('{"answer": "ok"}')
-    answer = agent.ask("What is hugr?")
+    answer = agent.ask("What is huggr?")
     assert answer.ok
-    assert calls == ["hugr"]
+    assert calls == ["huggr"]
 
 
 def test_inferred_async_tool_round_trip(server):
     calls = []
 
-    @hugr.tool
+    @huggr.tool
     async def lookup(word: str):
         """Look a word up."""
         await asyncio.sleep(0)

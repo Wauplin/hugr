@@ -21,7 +21,7 @@ import type {
 import { STATUS_ERROR, STATUS_SUCCESS } from "./contract.js";
 import { callOpenAiCompatible } from "./openai.js";
 
-/// The wasm-bindgen surface the Agent drives (crates/hugr-wasm `AgentSession`).
+/// The wasm-bindgen surface the Agent drives (crates/huggr-wasm `AgentSession`).
 export interface WasmSessionClass {
   new (configJson: string): WasmSession;
 }
@@ -48,8 +48,8 @@ export interface WasmModule {
   verify_trace_json(traceJson: string): void;
 }
 
-/// Host runtime pieces injected per platform (`hugr-agents/node`,
-/// `hugr-agents/browser` provide defaults).
+/// Host runtime pieces injected per platform (`huggr-agents/node`,
+/// `huggr-agents/browser` provide defaults).
 export interface AgentRuntime {
   loadWasm(): Promise<WasmModule>;
   traces: TraceStore;
@@ -210,7 +210,7 @@ export class Agent {
           break;
         }
         default:
-          throw new Error(`unknown Hugr command: ${kind}`);
+          throw new Error(`unknown Huggr command: ${kind}`);
       }
     }
 
@@ -254,7 +254,7 @@ export class Agent {
     return this.runtime.traces.list();
   }
 
-  /// Verify a stored trace replays bit-for-bit — the same gate as `hugr verify`.
+  /// Verify a stored trace replays bit-for-bit — the same gate as `huggr verify`.
   async verify(traceId: string): Promise<void> {
     const wasm = await this.runtime.loadWasm();
     const trace = await this.runtime.traces.get(traceId);

@@ -1,0 +1,14 @@
+[package]
+name = "huggr-core"
+description = "The sans-IO, pure-reducer brain of the Huggr agent harness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# serde/serde_json are pure data — no IO, no runtime. They carry the opaque
+# `Value` payloads and make the log/trace serializable.
+serde = { workspace = true }
+serde_json = { workspace = true }

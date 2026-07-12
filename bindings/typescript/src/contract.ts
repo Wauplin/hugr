@@ -1,4 +1,4 @@
-// Typed mirrors of the Hugr JSON contract. Field names are identical to the
+// Typed mirrors of the Huggr JSON contract. Field names are identical to the
 // wire form; validation stays on the Rust side — these are deserialization
 // shapes, never a second validator.
 
@@ -72,7 +72,7 @@ export type AgentEvent =
   | { type: "answer_ready"; answer: Answer };
 
 /// One model-invocable tool: explicit name/description/JSON-schema plus the
-/// invoke function. The function is trusted host code — Hugr jails what the
+/// invoke function. The function is trusted host code — Huggr jails what the
 /// model can invoke, not what your TS does once invoked.
 export interface ToolSpec {
   name: string;

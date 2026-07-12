@@ -25,7 +25,7 @@ The brain never performs IO. It consumes one ordered event stream and produces c
 
 Most harness pain traces back to conflating four things that should be separate:
 
-| Concern           | The trap (what harnesses do)              | What Hugr does                                              |
+| Concern           | The trap (what harnesses do)              | What Huggr does                                              |
 | ----------------- | ----------------------------------------- | ----------------------------------------------------------- |
 | **Durable state** | The flat `messages[]` list *is* the state | Append-only **event log** is the source of truth            |
 | **Model context** | Same `messages[]` is sent to the model    | Context is a **projection** rendered from the log per turn  |
@@ -125,7 +125,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
   Replay remains deterministic because the summary text is another recorded model result.
 - **Large payloads are content-addressed blobs.** Tool outputs and file exchange are stored by SHA-256 through the host-layer `BlobBackend`.
 
-  The default `FsBlobStore` wraps `hugr-replay::BlobStore`, shards objects under the shared `~/.hugr/blobs/` store (or `HUGR_BLOB_STORE`), and copies filesystem inputs into atomically installed objects. Existing and loaded objects are checked against their content address. `MemBlobStore` is the in-memory reference backend.
+  The default `FsBlobStore` wraps `huggr-replay::BlobStore`, shards objects under the shared `~/.huggr/blobs/` store (or `HUGGR_BLOB_STORE`), and copies filesystem inputs into atomically installed objects. Existing and loaded objects are checked against their content address. `MemBlobStore` is the in-memory reference backend.
 
   The log holds the reference. Identical content deduplicates to one object.
 - **Token counts come from the host, at ingestion.** The brain cannot tokenize (provider-specific, not sans-IO-friendly); the host annotates records with estimates and the brain's projection just sums them. Authoritative accounting comes from the returned `Usage` per call.
@@ -175,18 +175,18 @@ pub struct Trace {
 
   The default filesystem implementation is `FsTraceStore`/`TraceStore`, rooted at `<agent-home>/traces`. It uses atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
 - **The `FeedbackBackend`** is a sidecar store keyed to existing trace ids. The default filesystem implementation appends JSON lines under `<agent-home>/feedback/<trace_id>.jsonl`; `MemFeedbackStore` is the in-memory reference implementation. Feedback is intentionally outside replay/verify.
-- **Agent home** resolves the same for development and built surfaces. Resolution uses `HUGR_AGENT_HOME` as a full override, then `HUGR_HOME/<agent-name>`, then `$HOME/.hugr/<agent-name>`, and finally a temporary-directory fallback.
+- **Agent home** resolves the same for development and built surfaces. Resolution uses `HUGGR_AGENT_HOME` as a full override, then `HUGGR_HOME/<agent-name>`, then `$HOME/.huggr/<agent-name>`, and finally a temporary-directory fallback.
 
   Built artifacts install their embedded definition into a content-addressed `.definitions/<agent>/<hash>/` cache beside the agent homes. The cache is never unpacked over mutable traces, scratch, memory, or feedback state. Manifest-relative state roots resolve under the agent home, while definition resources and tool grants resolve against the cached definition.
 
   The default scratch root is `<agent-home>/scratch`, the default memory root is `<agent-home>/memory`, and the default feedback root is `<agent-home>/feedback`. `[traces].store` and `[scratchpad].root` remain explicit manifest overrides.
 
-  The default blob store is shared across agents. Resolution uses `HUGR_BLOB_STORE`, then `HUGR_HOME/blobs`, then `$HOME/.hugr/blobs`, and finally a temporary-directory fallback.
-- **Storage is pluggable at the host layer.** `hugr-agent` defines `TraceBackend`, `BlobBackend`, `ScratchBackend`, and `FeedbackBackend`.
+  The default blob store is shared across agents. Resolution uses `HUGGR_BLOB_STORE`, then `HUGGR_HOME/blobs`, then `$HOME/.huggr/blobs`, and finally a temporary-directory fallback.
+- **Storage is pluggable at the host layer.** `huggr-agent` defines `TraceBackend`, `BlobBackend`, `ScratchBackend`, and `FeedbackBackend`.
 
   `Agent::new` is the convenience filesystem constructor. `Agent::with_storage` / `StorageOverrides` accepts custom `Arc<dyn ...>` implementations.
 
-  A generated agent crate can opt in by exporting `pub fn storage() -> hugr_agent::StorageOverrides`. This needs no core type changes or manifest enum.
+  A generated agent crate can opt in by exporting `pub fn storage() -> huggr_agent::StorageOverrides`. This needs no core type changes or manifest enum.
 - **Resume after crash** is the same machinery: fold the persisted log, append `OpCancelled` for ops that were in flight, continue live.
 
 ## Risks and mitigations
@@ -195,6 +195,6 @@ pub struct Trace {
 | --------------------------------------------------- | --------------------------------------------------------------------- |
 | Interface over-/under-engineered                    | Narrow waist: type only what the brain branches on              |
 | Traces balloon from per-token deltas                | Deltas are transport-only; persist consolidated records + blobs |
-| Sans-IO makes the simple case painful               | `hugr run` on an agent crate folder is the ten-second loop            |
+| Sans-IO makes the simple case painful               | `huggr run` on an agent crate folder is the ten-second loop            |
 | Canonical model type too thin to use providers well | First-class streaming/tool-call fields + opaque `extra`               |
 | Feature creep back toward a platform                | One artifact, one escape hatch (MCP), no enum without a branch        |

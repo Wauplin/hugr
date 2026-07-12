@@ -1,0 +1,99 @@
+# Reference `huggr.toml` — the complete, documented Huggr agent manifest.
+#
+# A huglet is an auditable Rust crate folder:
+#
+#   my-agent/
+#     Cargo.toml    # the agent crate; typed contracts and hooks live here
+#     huggr.toml    # this file
+#     SYSTEM.md    # the system prompt (markdown; template vars: name, tool list, date)
+#     src/lib.rs   # optional typed response / hooks / compile-in capabilities
+#
+# Reviewing a huglet's blast radius = reading this file. A tool that is not
+# granted is not registered, and an unregistered capability cannot be invoked
+# (sandbox-by-registration). Unknown keys are hard parse errors.
+
+# [agent] — identity (required). `name` must be non-empty.
+[agent]
+name = "policy-docs"
+version = "0.1.0"
+description = "Answers questions about the company travel policy."
+
+# [models] — provider settings + one nested table per logical tier
+# (small / medium / big). At least one tier is required. The secret is never in
+# the manifest: `api_key_env` names the environment variable to read. `default`
+# picks the tier the turn policy calls.
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGGR_API_KEY"
+default = "medium"
+
+[models.medium]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0     # optional: feeds AnswerMeta.cost_micro_usd
+output_usd_per_m_tokens = 1.5
+
+# [tools.<name>] — grants from the predefined tool library. The scope keys are
+# tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard
+# errors. A tool is jailed to the scope declared here.
+[tools.fs_read]
+root = "./policies"              # read/list/search/grep/glob jailed to this folder
+
+# [tools.fs_write]
+# root = "./generated"             # use "/" only for an explicit full-disk grant
+
+# [tools.shell]
+# allow_commands = ["git", "cargo"] # direct execution; no shell operators
+# full_access = true                 # mutually exclusive; runs /bin/sh -lc
+
+# [tools.web_fetch]
+# allow_hosts = ["api.example.com"]   # GET-only, host-allowlisted
+# markdown = true
+
+# [tools.web_search]
+# api_key_env = "EXA_API_KEY"
+# max_results = 10
+
+# [tools.delegate]                    # call this CLI agent in an isolated context
+
+# External tools, in order of weight.
+
+# A stdio MCP server; its tools appear namespaced.
+# [tools.mcp.docs]
+# command = "docs-mcp"
+# args = ["--stdio"]
+
+# Another Huggr agent granted as a tool: delegation attenuates privileges and the
+# child's cost folds into this agent's AnswerMeta.
+# [tools.agent.receipts]
+# artifact = "./receipts"          # path to a built agent binary (subprocess)
+
+# [limits] — declared runtime limits, enforced host-side per ask. Every limit
+# is opt-in: an unset key (and an absent block) means unbounded.
+# [limits]
+# max_model_calls = 20
+# max_cost_micro_usd = 50000       # accounting is in micro-USD; 50000 = $0.05
+# timeout_s = 120
+
+# [context] — context projection and deterministic compaction. Optional;
+# without it the full log is projected every turn. See
+# docs/guides/09-context-compaction.md.
+# [context]
+# compaction = "summarize"          # "none" (default) | "truncate" | "summarize"
+# budget_tokens = 64000             # target size of the projected context
+# trigger_tokens = 56000            # start compacting once the projection crosses this
+# keep_recent_tokens = 8000         # never compact the most recent blocks
+# max_block_tokens = 2000           # truncate any single block above this
+# summary_model = "medium"          # tier used for summarize; defaults to `default`
+# [context.forget]
+# tool_ttl = { web_fetch = 2 }      # drop a tool's results N user turns later
+# keep_last_per_tool = { fs_read = 1 } # keep only the newest N results per tool
+
+# [scratchpad] — per-lineage scratch directory. Optional; defaults to
+# ~/.huggr/<agent>/scratch.
+[scratchpad]
+# root = "./scratch"
+
+# [traces] — immutable trace store location. Optional; defaults to
+# ~/.huggr/<agent>/traces.
+[traces]
+# store = "./.traces"
