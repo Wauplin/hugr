@@ -128,8 +128,10 @@ fn run_cargo(crate_dir: &Path, opts: &BuildOptions, args: &[&str]) -> Result<(),
     Ok(())
 }
 
-/// Top-level dir names to keep out of the embedded bundle: the trace store, the
-/// scratchpad, and common build/VCS junk.
+/// Relative paths to keep out of the embedded bundle: the runtime-state roots
+/// (traces, scratch, memory, feedback) and common build/VCS junk. Configured
+/// roots are excluded by their exact relative path, so `store = "data/traces"`
+/// keeps `data/traces` out without dropping the rest of `data`.
 fn bundle_excludes(def: &AgentDefinition) -> Vec<String> {
     let mut ex = vec![
         DEFAULT_TRACE_DIRNAME.to_string(),
@@ -140,16 +142,14 @@ fn bundle_excludes(def: &AgentDefinition) -> Vec<String> {
         "dist".to_string(),
         ".git".to_string(),
     ];
-    // Honour a manifest-configured trace/scratch root (only its first path
-    // component matters — `pack` excludes by top-level name).
     if let Some(store) = &def.traces.store {
-        if let Some(first) = first_component(store) {
-            ex.push(first);
+        if let Some(rel) = normalized_rel(store) {
+            ex.push(rel);
         }
     }
     if let Some(root) = &def.scratchpad.root {
-        if let Some(first) = first_component(root) {
-            ex.push(first);
+        if let Some(rel) = normalized_rel(root) {
+            ex.push(rel);
         }
     }
     if let Some(root) = def
@@ -158,20 +158,32 @@ fn bundle_excludes(def: &AgentDefinition) -> Vec<String> {
         .find(|grant| grant.name == "memory")
         .and_then(|grant| grant.config.get("root"))
         .and_then(serde_json::Value::as_str)
-        && let Some(first) = first_component(root)
+        && let Some(rel) = normalized_rel(root)
     {
-        ex.push(first);
+        ex.push(rel);
     }
     ex.sort();
     ex.dedup();
     ex
 }
 
-fn first_component(path: &str) -> Option<String> {
-    Path::new(path).components().find_map(|c| match c {
-        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-        _ => None,
-    })
+/// A configured state root as a crate-relative exclusion path. Absolute or
+/// parent-relative roots live outside the crate dir and need no exclusion;
+/// `.` cannot be excluded without emptying the bundle.
+fn normalized_rel(path: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
 }
 
 /// A cargo-legal package/binary name derived from the agent name. Shared by the
@@ -461,9 +473,23 @@ root = "work"
         let ex = bundle_excludes(&def);
         assert!(ex.contains(&"traces".to_string()));
         assert!(ex.contains(&"scratch".to_string()));
-        assert!(ex.contains(&"state".to_string()));
+        assert!(ex.contains(&"memory".to_string()));
+        assert!(ex.contains(&"feedback".to_string()));
+        // Nested roots are excluded by exact relative path, not by their
+        // first component: `state/traces` must not shadow all of `state`.
+        assert!(ex.contains(&"state/traces".to_string()));
+        assert!(!ex.contains(&"state".to_string()));
         assert!(ex.contains(&"work".to_string()));
         assert!(ex.contains(&"target".to_string()));
+    }
+
+    #[test]
+    fn dot_and_absolute_roots_produce_no_exclusion() {
+        assert_eq!(normalized_rel("."), None);
+        assert_eq!(normalized_rel("./"), None);
+        assert_eq!(normalized_rel("/var/traces"), None);
+        assert_eq!(normalized_rel("../shared"), None);
+        assert_eq!(normalized_rel("./data/traces"), Some("data/traces".into()));
     }
 
     #[test]

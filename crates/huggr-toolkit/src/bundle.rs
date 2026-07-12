@@ -26,11 +26,12 @@ struct Entry {
 }
 
 /// Pack every regular file under `dir` into a single deterministic blob,
-/// skipping any entry whose first path component is listed in `exclude_top`
-/// (e.g. the trace/scratch dirs, `target`, `.git`). Symlinks are skipped.
-pub fn pack(dir: &Path, exclude_top: &[&str]) -> io::Result<Vec<u8>> {
+/// skipping any entry whose root-relative path starts with an entry of
+/// `exclude` (component-wise, so `data/traces` excludes exactly that subtree
+/// and `target` still excludes the whole top-level dir). Symlinks are skipped.
+pub fn pack(dir: &Path, exclude: &[&str]) -> io::Result<Vec<u8>> {
     let mut entries = Vec::new();
-    collect(dir, dir, exclude_top, &mut entries)?;
+    collect(dir, dir, exclude, &mut entries)?;
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut out = Vec::new();
@@ -46,18 +47,13 @@ pub fn pack(dir: &Path, exclude_top: &[&str]) -> io::Result<Vec<u8>> {
     Ok(out)
 }
 
-fn collect(root: &Path, dir: &Path, exclude_top: &[&str], out: &mut Vec<Entry>) -> io::Result<()> {
+fn collect(root: &Path, dir: &Path, exclude: &[&str], out: &mut Vec<Entry>) -> io::Result<()> {
     let mut children: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     children.sort_by_key(|e| e.file_name());
     for child in children {
         let path = child.path();
-        // Skip anything whose top-level (relative to root) name is excluded.
         let rel = path.strip_prefix(root).unwrap_or(&path);
-        if let Some(Component::Normal(first)) = rel.components().next()
-            && exclude_top
-                .iter()
-                .any(|ex| first == std::ffi::OsStr::new(ex))
-        {
+        if exclude.iter().any(|ex| rel.starts_with(Path::new(ex))) {
             continue;
         }
         let meta = fs::symlink_metadata(&path)?;
@@ -65,7 +61,7 @@ fn collect(root: &Path, dir: &Path, exclude_top: &[&str], out: &mut Vec<Entry>) 
             continue; // never bundle symlinks (portability + escape safety)
         }
         if meta.is_dir() {
-            collect(root, &path, exclude_top, out)?;
+            collect(root, &path, exclude, out)?;
         } else if meta.is_file() {
             let rel_str = rel_to_forward_slash(rel);
             let data = fs::read(&path)?;
@@ -226,10 +222,14 @@ mod tests {
         // Runtime dirs that must be excluded.
         write(&src, "traces/t.json", b"{}");
         write(&src, "target/junk", b"x");
+        // A nested state root: exclude exactly it, not its parent.
+        write(&src, "data/traces/t.json", b"{}");
+        write(&src, "data/input.csv", b"kept");
 
-        let bytes = pack(&src, &["traces", "target"]).unwrap();
+        let excludes = ["traces", "target", "data/traces"];
+        let bytes = pack(&src, &excludes).unwrap();
         // Determinism: a second pack of the same tree is byte-identical.
-        assert_eq!(bytes, pack(&src, &["traces", "target"]).unwrap());
+        assert_eq!(bytes, pack(&src, &excludes).unwrap());
 
         let dest = std::env::temp_dir().join(format!("huggr-bundle-dst-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dest);
@@ -243,6 +243,8 @@ mod tests {
         assert_eq!(fs::read(dest.join("docs/sub/b.md")).unwrap(), b"beta");
         assert!(!dest.join("traces").exists(), "excluded dir not packed");
         assert!(!dest.join("target").exists(), "excluded dir not packed");
+        assert!(!dest.join("data/traces").exists(), "nested root excluded");
+        assert_eq!(fs::read(dest.join("data/input.csv")).unwrap(), b"kept");
 
         // `get` pulls one file in memory.
         assert_eq!(
