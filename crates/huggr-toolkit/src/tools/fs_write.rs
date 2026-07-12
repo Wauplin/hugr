@@ -188,6 +188,9 @@ impl Capability for FsRemove {
                 .context("fs_remove requires string `path`")?;
             anyhow::ensure!(!rel.trim().is_empty(), "cannot remove the tool root");
             let path = self.0.resolve_existing(rel)?;
+            // `resolve_existing` canonicalizes, so `.`/`a/..`-style paths that
+            // name the jail itself compare equal to the root here.
+            anyhow::ensure!(path != *self.0.root, "cannot remove the tool root");
             if path.is_dir() {
                 fs::remove_dir(path)?;
             } else {
@@ -210,6 +213,28 @@ mod tests {
         fs::write(root.resolve_parent("x.txt").unwrap(), "ok").unwrap();
         assert_eq!(fs::read_to_string(dir.join("x.txt")).unwrap(), "ok");
         assert!(root.resolve_parent("../x").is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn fs_remove_refuses_to_delete_the_jail_root() {
+        let dir = std::env::temp_dir().join(format!("huggr-fs-remove-root-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let remove = FsRemove(FsWriteRoot::new(&dir).unwrap());
+        let sink = ChunkSink::noop();
+        for path in [".", "./", "sub/.."] {
+            let err = remove
+                .invoke(json!({ "path": path }), &sink)
+                .await
+                .unwrap_err();
+            assert!(
+                err["error"].as_str().unwrap().contains("root")
+                    || err["error"].as_str().unwrap().contains("exist"),
+                "{path}: {err}"
+            );
+            assert!(dir.is_dir(), "jail root survived `{path}`");
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

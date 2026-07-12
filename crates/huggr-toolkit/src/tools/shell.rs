@@ -5,8 +5,10 @@ use async_trait::async_trait;
 use huggr_core::{ToolSchema, Value};
 use huggr_host::{Capability, ChunkSink};
 use serde_json::json;
+use tokio::io::AsyncReadExt;
 
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1_000_000;
+const DEFAULT_TIMEOUT_S: u64 = 300;
 
 /// An operator-configured full shell or direct allowlisted command runner.
 pub struct Shell {
@@ -15,6 +17,7 @@ pub struct Shell {
     allow_commands: BTreeSet<String>,
     cwd: Option<String>,
     max_output_bytes: usize,
+    timeout: std::time::Duration,
 }
 
 impl Shell {
@@ -60,6 +63,13 @@ impl Shell {
                 .and_then(Value::as_u64)
                 .map(|n| n as usize)
                 .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES),
+            timeout: std::time::Duration::from_secs(
+                config
+                    .get("timeout_s")
+                    .and_then(Value::as_u64)
+                    .filter(|s| *s > 0)
+                    .unwrap_or(DEFAULT_TIMEOUT_S),
+            ),
         })
     }
 
@@ -95,27 +105,62 @@ impl Shell {
         if let Some(cwd) = &self.cwd {
             process.current_dir(cwd);
         }
-        let output = process
-            .output()
-            .await
+        process
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = process
+            .spawn()
             .with_context(|| format!("executing `{command}`"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let truncate = |text: &str| -> (String, bool) {
-            if text.len() <= self.max_output_bytes {
-                return (text.to_string(), false);
-            }
-            let mut end = self.max_output_bytes;
-            while end > 0 && !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            (text[..end].to_string(), true)
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+        let run = async {
+            let (status, stdout, stderr) = tokio::join!(
+                child.wait(),
+                read_capped(stdout, self.max_output_bytes),
+                read_capped(stderr, self.max_output_bytes)
+            );
+            anyhow::Ok((status?, stdout?, stderr?))
         };
-        let (stdout, stdout_truncated) = truncate(&stdout);
-        let (stderr, stderr_truncated) = truncate(&stderr);
+        // On timeout the future is dropped, which drops the child; kill_on_drop
+        // terminates the process so a hung command cannot outlive the ask.
+        let (status, stdout, stderr) =
+            tokio::time::timeout(self.timeout, run)
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "command `{command}` timed out after {}s (process killed)",
+                        self.timeout.as_secs()
+                    )
+                })??;
+        let (stdout, stdout_truncated) = stdout;
+        let (stderr, stderr_truncated) = stderr;
         Ok(
-            json!({"success": output.status.success(), "exit_code": output.status.code(), "stdout": stdout, "stderr": stderr, "truncated": stdout_truncated || stderr_truncated}),
+            json!({"success": status.success(), "exit_code": status.code(), "stdout": String::from_utf8_lossy(&stdout), "stderr": String::from_utf8_lossy(&stderr), "truncated": stdout_truncated || stderr_truncated}),
         )
+    }
+}
+
+/// Capture at most `cap` bytes and keep draining so the child never blocks on
+/// a full pipe; returns the captured prefix and whether output was truncated.
+async fn read_capped(
+    mut reader: impl tokio::io::AsyncRead + Unpin,
+    cap: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut captured = Vec::with_capacity(cap.min(64 * 1024));
+    let mut chunk = [0u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        let count = reader.read(&mut chunk).await?;
+        if count == 0 {
+            return Ok((captured, truncated));
+        }
+        let remaining = cap.saturating_sub(captured.len());
+        if count > remaining {
+            truncated = true;
+        }
+        captured.extend_from_slice(&chunk[..count.min(remaining)]);
     }
 }
 
@@ -164,5 +209,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out["stdout"], "a&&b");
+    }
+
+    #[tokio::test]
+    async fn a_hung_command_is_killed_at_the_timeout() {
+        let tool = Shell::from_config(&json!({"allow_commands":["sleep"],"timeout_s":1})).unwrap();
+        let start = std::time::Instant::now();
+        let err = tool
+            .run(json!({"command":"sleep","args":["30"]}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn output_is_capped_without_blocking_the_child() {
+        let tool = Shell::from_config(
+            &json!({"allow_commands":["head"],"max_output_bytes":1024,"timeout_s":30}),
+        )
+        .unwrap();
+        // 4 MiB of zeros through the pipe; capture must cap at 1 KiB and the
+        // child must still run to completion (the reader keeps draining).
+        let out = tool
+            .run(json!({"command":"head","args":["-c","4194304","/dev/zero"]}))
+            .await
+            .unwrap();
+        assert_eq!(out["truncated"], true);
+        assert_eq!(out["success"], true);
+        assert!(out["stdout"].as_str().unwrap().len() <= 1024);
     }
 }
