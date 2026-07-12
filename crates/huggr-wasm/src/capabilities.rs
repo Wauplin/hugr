@@ -29,7 +29,7 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Open a URL in a new or existing tab.",
             object(&[
                 string("url", "The absolute http(s) URL to open."),
-                boolean("active", "Whether the tab should become active."),
+                optional(boolean("active", "Whether the tab should become active.")),
             ]),
         ),
         mutating(
@@ -62,11 +62,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Wait until a tab finishes navigation and the page is briefly settled.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                integer("timeout_ms", "Maximum time to wait in milliseconds."),
-                integer(
+                optional(integer(
+                    "timeout_ms",
+                    "Maximum time to wait in milliseconds.",
+                )),
+                optional(integer(
                     "settle_ms",
                     "How long the DOM should be quiet before returning.",
-                ),
+                )),
             ]),
         ),
         read_only(
@@ -74,20 +77,23 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Wait until the current page DOM has been quiet briefly.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                integer(
+                optional(integer(
                     "settle_ms",
                     "How long the DOM should be quiet before returning.",
-                ),
-                integer("timeout_ms", "Maximum time to wait in milliseconds."),
+                )),
+                optional(integer(
+                    "timeout_ms",
+                    "Maximum time to wait in milliseconds.",
+                )),
             ]),
         ),
         read_only(
             "wait_for_tab_opened",
             "Wait until a new tab is opened.",
-            object(&[integer(
+            object(&[optional(integer(
                 "timeout_ms",
                 "Maximum time to wait in milliseconds.",
-            )]),
+            ))]),
         ),
         read_only(
             "wait_for_url",
@@ -95,7 +101,10 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             object(&[
                 integer("tab_id", "The Chrome tab id."),
                 string("contains", "Text that must appear in the URL."),
-                integer("timeout_ms", "Maximum time to wait in milliseconds."),
+                optional(integer(
+                    "timeout_ms",
+                    "Maximum time to wait in milliseconds.",
+                )),
             ]),
         ),
         read_only(
@@ -104,7 +113,10 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             object(&[
                 integer("tab_id", "The Chrome tab id."),
                 string("selector", "The CSS selector to wait for."),
-                integer("timeout_ms", "Maximum time to wait in milliseconds."),
+                optional(integer(
+                    "timeout_ms",
+                    "Maximum time to wait in milliseconds.",
+                )),
             ]),
         ),
         read_only(
@@ -113,7 +125,10 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             object(&[
                 integer("tab_id", "The Chrome tab id."),
                 string("text", "Visible text to wait for."),
-                integer("timeout_ms", "Maximum time to wait in milliseconds."),
+                optional(integer(
+                    "timeout_ms",
+                    "Maximum time to wait in milliseconds.",
+                )),
             ]),
         ),
         read_only(
@@ -136,14 +151,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Click an element by snapshot node id or CSS selector.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
             ]),
         ),
         mutating(
@@ -151,16 +166,16 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Type text into an input-like element.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
                 string("text", "Text to type."),
-                boolean("clear", "Whether to clear existing text first."),
+                optional(boolean("clear", "Whether to clear existing text first.")),
             ]),
         ),
         mutating(
@@ -168,14 +183,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Select an option in a select element.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
                 string("value", "Option value to select."),
             ]),
         ),
@@ -184,8 +199,8 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Scroll a page by a pixel delta.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                integer("delta_x", "Horizontal scroll delta in pixels."),
-                integer("delta_y", "Vertical scroll delta in pixels."),
+                optional(integer("delta_x", "Horizontal scroll delta in pixels.")),
+                optional(integer("delta_y", "Vertical scroll delta in pixels.")),
             ]),
         ),
         mutating(
@@ -193,14 +208,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Submit a form element.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
             ]),
         ),
         mutating(
@@ -208,14 +223,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Focus an element.",
             object(&[
                 integer("tab_id", "The Chrome tab id."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
             ]),
         ),
         mutating(
@@ -223,7 +238,7 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             "Download a URL into Huggr's extension-local file store.",
             object(&[
                 string("url", "The absolute http(s) URL to download."),
-                string("filename", "Optional preferred filename."),
+                optional(string("filename", "Optional preferred filename.")),
             ]),
         ),
         read_only(
@@ -242,14 +257,14 @@ pub fn browser_capabilities() -> Vec<BrowserCapability> {
             object(&[
                 integer("tab_id", "The Chrome tab id."),
                 string("file_id", "The local Huggr file id to upload."),
-                string(
+                optional(string(
                     "node_id",
                     "Preferred snapshot node id. Leave empty when using selector.",
-                ),
-                string(
+                )),
+                optional(string(
                     "selector",
                     "Fallback CSS selector. Leave empty when using node_id.",
-                ),
+                )),
             ]),
         ),
         mutating(
@@ -289,14 +304,19 @@ fn object(fields: &[Value]) -> Value {
         let name = field
             .get("name")
             .and_then(Value::as_str)
-            .expect("schema field has a name");
+            .expect("schema field has a name")
+            .to_string();
         let mut schema = field.clone();
-        schema
-            .as_object_mut()
-            .expect("schema field is an object")
-            .remove("name");
-        required.push(Value::String(name.to_string()));
-        properties.insert(name.to_string(), schema);
+        let schema_object = schema.as_object_mut().expect("schema field is an object");
+        schema_object.remove("name");
+        let is_required = schema_object
+            .remove("required")
+            .and_then(|value| value.as_bool())
+            .expect("schema field declares requiredness");
+        if is_required {
+            required.push(Value::String(name.clone()));
+        }
+        properties.insert(name, schema);
     }
     json!({
         "type": "object",
@@ -306,14 +326,137 @@ fn object(fields: &[Value]) -> Value {
     })
 }
 
+fn optional(mut field: Value) -> Value {
+    field
+        .as_object_mut()
+        .expect("schema field is an object")
+        .insert("required".to_string(), Value::Bool(false));
+    field
+}
+
 fn string(name: &str, description: &str) -> Value {
-    json!({ "name": name, "type": "string", "description": description })
+    json!({ "name": name, "type": "string", "description": description, "required": true })
 }
 
 fn integer(name: &str, description: &str) -> Value {
-    json!({ "name": name, "type": "integer", "description": description })
+    json!({ "name": name, "type": "integer", "description": description, "required": true })
 }
 
 fn boolean(name: &str, description: &str) -> Value {
-    json!({ "name": name, "type": "boolean", "description": description })
+    json!({ "name": name, "type": "boolean", "description": description, "required": true })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn required_fields(tool: &str) -> Vec<String> {
+        let capabilities = browser_capabilities();
+        let capability = capabilities
+            .iter()
+            .find(|capability| capability.name == tool)
+            .unwrap_or_else(|| panic!("unknown tool: {tool}"));
+        capability.schema.parameters["required"]
+            .as_array()
+            .expect("required is an array")
+            .iter()
+            .map(|name| {
+                name.as_str()
+                    .expect("required entry is a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn required_matches_what_the_dispatcher_needs() {
+        let expected: &[(&str, &[&str])] = &[
+            ("tabs_list", &[]),
+            ("tab_open_url", &["url"]),
+            ("tab_close", &["tab_id"]),
+            ("tab_switch", &["tab_id"]),
+            ("tab_reload", &["tab_id"]),
+            ("tab_back", &["tab_id"]),
+            ("tab_forward", &["tab_id"]),
+            ("wait_for_navigation", &["tab_id"]),
+            ("wait_for_page_settled", &["tab_id"]),
+            ("wait_for_tab_opened", &[]),
+            ("wait_for_url", &["tab_id", "contains"]),
+            ("wait_for_selector", &["tab_id", "selector"]),
+            ("wait_for_text", &["tab_id", "text"]),
+            ("page_read_html", &["tab_id"]),
+            ("page_read_text", &["tab_id"]),
+            ("page_snapshot", &["tab_id"]),
+            ("page_click", &["tab_id"]),
+            ("page_type", &["tab_id", "text"]),
+            ("page_select", &["tab_id", "value"]),
+            ("page_scroll", &["tab_id"]),
+            ("page_submit", &["tab_id"]),
+            ("page_focus", &["tab_id"]),
+            ("file_download_url", &["url"]),
+            ("file_list_downloads", &[]),
+            ("file_read_metadata", &["file_id"]),
+            ("file_upload_to_input", &["tab_id", "file_id"]),
+            ("file_delete", &["file_id"]),
+        ];
+        assert_eq!(expected.len(), browser_capabilities().len());
+        for (tool, required) in expected {
+            assert_eq!(
+                required_fields(tool),
+                *required,
+                "required mismatch for {tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn fields_with_defaults_or_alternatives_are_optional_but_still_declared() {
+        let optional: &[(&str, &[&str])] = &[
+            ("tab_open_url", &["active"]),
+            ("wait_for_navigation", &["timeout_ms", "settle_ms"]),
+            ("wait_for_page_settled", &["settle_ms", "timeout_ms"]),
+            ("wait_for_tab_opened", &["timeout_ms"]),
+            ("page_click", &["node_id", "selector"]),
+            ("page_type", &["node_id", "selector", "clear"]),
+            ("page_scroll", &["delta_x", "delta_y"]),
+            ("file_download_url", &["filename"]),
+            ("file_upload_to_input", &["node_id", "selector"]),
+        ];
+        let capabilities = browser_capabilities();
+        for (tool, fields) in optional {
+            let capability = capabilities
+                .iter()
+                .find(|capability| capability.name == *tool)
+                .unwrap_or_else(|| panic!("unknown tool: {tool}"));
+            let required = required_fields(tool);
+            for field in *fields {
+                assert!(
+                    capability.schema.parameters["properties"]
+                        .get(*field)
+                        .is_some(),
+                    "{tool} should declare property {field}"
+                );
+                assert!(
+                    !required.contains(&field.to_string()),
+                    "{tool} should not require {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn field_helper_markers_never_leak_into_schemas() {
+        for capability in browser_capabilities() {
+            let properties = capability.schema.parameters["properties"]
+                .as_object()
+                .expect("properties is an object");
+            for (field, schema) in properties {
+                assert!(
+                    schema.get("name").is_none() && schema.get("required").is_none(),
+                    "{}.{field} leaks a builder marker",
+                    capability.name
+                );
+            }
+        }
+    }
 }
