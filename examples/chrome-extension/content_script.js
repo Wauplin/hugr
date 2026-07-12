@@ -10,9 +10,9 @@ function handleContentMessage(message) {
   const args = message?.args || {};
   switch (message?.type) {
     case "page_read_html":
-      return { html: document.documentElement.outerHTML };
+      return cappedText("html", document.documentElement.outerHTML);
     case "page_read_text":
-      return { text: document.body?.innerText || "" };
+      return cappedText("text", document.body?.innerText || "");
     case "page_snapshot":
       return { url: location.href, title: document.title, nodes: snapshotNodes() };
     case "wait_for_page_settled":
@@ -75,6 +75,10 @@ function handleContentMessage(message) {
     default:
       throw new Error(`unknown content script message: ${message?.type}`);
   }
+}
+
+function cappedText(key, value, maxChars = 1_000_000) {
+  return { [key]: value.slice(0, maxChars), truncated: value.length > maxChars };
 }
 
 function snapshotNodes() {

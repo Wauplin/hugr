@@ -21,8 +21,9 @@
 //! root; absolute paths and any `..`/root/prefix component are rejected, so a
 //! symlink cannot escape (the canonical target is re-checked against the root).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
+use std::io::{BufRead, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -148,7 +149,10 @@ fn looks_textual(path: &Path) -> bool {
 }
 
 fn read_utf8_prefix(path: &Path, limit: usize) -> Result<(String, bool)> {
-    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let file = fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut bytes = Vec::with_capacity(limit.saturating_add(1));
+    file.take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
     let truncated = bytes.len() > limit;
     let slice = if truncated { &bytes[..limit] } else { &bytes };
     Ok((String::from_utf8_lossy(slice).into_owned(), truncated))
@@ -168,9 +172,18 @@ fn truncate_utf8_prefix(text: &str, limit: usize) -> (String, bool) {
 fn walk_files(root: &FsRoot, start: &Path, limit: usize) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut queue = VecDeque::from([start.to_path_buf()]);
+    let mut visited = HashSet::new();
     while let Some(dir) = queue.pop_front() {
-        let mut entries = fs::read_dir(&dir)
-            .with_context(|| format!("listing {}", dir.display()))?
+        let canonical_dir = dir.canonicalize()?;
+        if !visited.insert(canonical_dir.clone()) {
+            continue;
+        }
+        anyhow::ensure!(
+            visited.len() <= limit.saturating_mul(4).max(64),
+            "directory visit limit exceeded"
+        );
+        let mut entries = fs::read_dir(&canonical_dir)
+            .with_context(|| format!("listing {}", canonical_dir.display()))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .with_context(|| format!("reading directory entries for {}", dir.display()))?;
         entries.sort_by_key(|entry| entry.file_name());
@@ -429,18 +442,23 @@ fn read_range_document(
     let path = root.resolve_existing(Some(rel))?;
     anyhow::ensure!(path.is_file(), "fs_read_range path must be a file");
     let rel = root.rel_path(&path)?;
-    let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let content = String::from_utf8_lossy(&bytes);
-    let lines = content.lines().collect::<Vec<_>>();
     let requested_end = end_line.unwrap_or_else(|| start_line.saturating_add(max_lines - 1));
     let capped_end = requested_end.min(start_line.saturating_add(max_lines - 1));
-    let selected = if start_line > lines.len() {
-        Vec::new()
-    } else {
-        lines[(start_line - 1)..lines.len().min(capped_end)].to_vec()
-    };
-    let line_truncated =
-        requested_end > capped_end || (end_line.is_none() && capped_end < lines.len());
+    let reader = std::io::BufReader::new(fs::File::open(&path)?);
+    let mut selected = Vec::new();
+    let mut saw_more = false;
+    for (index, line) in reader.lines().enumerate() {
+        let line_no = index + 1;
+        if line_no < start_line {
+            continue;
+        }
+        if line_no > capped_end {
+            saw_more = true;
+            break;
+        }
+        selected.push(line?);
+    }
+    let line_truncated = requested_end > capped_end || saw_more;
     let end_line_returned = if selected.is_empty() {
         start_line.saturating_sub(1)
     } else {
@@ -451,7 +469,7 @@ fn read_range_document(
         "path": rel,
         "start_line": start_line,
         "end_line": end_line_returned,
-        "total_lines": lines.len(),
+        "total_lines": Value::Null,
         "bytes_returned": content.len(),
         "truncated": line_truncated || byte_truncated,
         "content": content,

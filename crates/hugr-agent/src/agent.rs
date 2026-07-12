@@ -508,6 +508,11 @@ impl Agent {
             .unwrap_or(1)
             .max(1);
         let mut response_result = None;
+        let deadline = self
+            .limits
+            .timeout_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| tokio::time::Instant::now() + std::time::Duration::from_millis(ms));
         for attempt in 1..=max_response_attempts {
             let question = if attempt == 1 {
                 ask.question.clone()
@@ -515,15 +520,17 @@ impl Agent {
                 response_retry_prompt(response_result.as_ref().unwrap())
             };
             // On timeout the turn future is dropped mid-flight; the recorded event prefix is self-consistent, so the persisted (partial) trace still replays. `session_end` later flushes the final checkpoint.
-            match self.limits.timeout_ms {
-                Some(ms) if ms > 0 => {
-                    if tokio::time::timeout(
-                        std::time::Duration::from_millis(ms),
-                        engine.user_turn(question),
-                    )
-                    .await
-                    .is_err()
+            match deadline {
+                Some(deadline) => {
+                    if tokio::time::timeout_at(deadline, engine.user_turn(question))
+                        .await
+                        .is_err()
                     {
+                        engine.abort_and_drain().await;
+                        let ms = self
+                            .limits
+                            .timeout_ms
+                            .expect("deadline has a configured timeout");
                         limit_state.record_timeout(ms);
                     }
                 }
@@ -533,7 +540,7 @@ impl Agent {
                 break;
             }
             let parsed = final_response(
-                engine.brain().state().log(),
+                &engine.brain().state().log()[baseline..],
                 self.response_contract.as_ref(),
             );
             let should_retry = parsed.retryable && attempt < max_response_attempts;
@@ -555,7 +562,7 @@ impl Agent {
             None => {
                 let response = response_result.unwrap_or_else(|| {
                     final_response(
-                        engine.brain().state().log(),
+                        &engine.brain().state().log()[baseline..],
                         self.response_contract.as_ref(),
                     )
                 });

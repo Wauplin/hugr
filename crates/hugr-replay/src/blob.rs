@@ -10,8 +10,9 @@
 //! Storing identical content twice lands on the same path and is a no-op the
 //! second time — natural deduplication.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -45,13 +46,10 @@ impl BlobStore {
     }
 
     /// The on-disk path a given content hash maps to.
-    fn path_for(&self, hash: &str) -> PathBuf {
+    fn path_for(&self, hash: &str) -> Result<PathBuf, TraceError> {
+        validate_hash(hash)?;
         let file_name = hash.replace(':', "-");
-        let shard = file_name
-            .get(..9)
-            .filter(|prefix| prefix.starts_with("sha256-"))
-            .unwrap_or("sha256-unknown");
-        self.root.join(shard).join(file_name)
+        Ok(self.root.join(&file_name[..9]).join(file_name))
     }
 
     /// Store `bytes` by content hash and return a [`BlobRef`] describing it.
@@ -61,23 +59,14 @@ impl BlobStore {
     /// into the ref.
     pub fn put(&self, bytes: &[u8], media: impl Into<String>) -> Result<BlobRef, TraceError> {
         let hash = Self::hash(bytes);
-        let path = self.path_for(&hash);
-
-        // Dedup: identical content addresses the same file, so only write if it
-        // is not already present (the bytes are immutable for a given hash).
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&path, bytes)?;
-            set_readonly(&path)?;
-        }
+        let path = self.path_for(&hash)?;
+        install_bytes(&path, bytes)?;
 
         Ok(BlobRef::new(hash, bytes.len() as u64, media))
     }
 
-    /// Store an existing file by content hash. The filesystem backend hardlinks
-    /// into the store when possible and falls back to copying across devices.
+    /// Store an existing file by content hash without sharing the caller's
+    /// mutable inode with the store object.
     pub fn put_file(
         &self,
         source: impl AsRef<Path>,
@@ -85,28 +74,21 @@ impl BlobStore {
     ) -> Result<BlobRef, TraceError> {
         let source = source.as_ref();
         let (hash, len) = hash_file(source)?;
-        let path = self.path_for(&hash);
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            match std::fs::hard_link(source, &path) {
-                Ok(()) => {}
-                Err(_) => {
-                    std::fs::copy(source, &path)?;
-                }
-            }
-            set_readonly(&path)?;
-        }
+        let path = self.path_for(&hash)?;
+        let bytes = std::fs::read(source)?;
+        install_bytes(&path, &bytes)?;
         Ok(BlobRef::new(hash, len, media))
     }
 
     /// Fetch the bytes for a content hash, or [`TraceError::BlobNotFound`] if the
     /// store has no such blob.
     pub fn get(&self, hash: &str) -> Result<Vec<u8>, TraceError> {
-        let path = self.path_for(hash);
+        let path = self.path_for(hash)?;
         match std::fs::read(&path) {
-            Ok(bytes) => Ok(bytes),
+            Ok(bytes) if Self::hash(&bytes) == hash => Ok(bytes),
+            Ok(_) => Err(TraceError::InvalidBlobHash {
+                hash: hash.to_string(),
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(TraceError::BlobNotFound {
                 hash: hash.to_string(),
             }),
@@ -116,12 +98,73 @@ impl BlobStore {
 
     /// Whether a blob with this content hash is present in the store.
     pub fn contains(&self, hash: &str) -> bool {
-        self.path_for(hash).exists()
+        self.path_for(hash).is_ok_and(|path| path.exists())
     }
 
     pub fn path_of(&self, hash: &str) -> PathBuf {
         self.path_for(hash)
+            .unwrap_or_else(|_| self.root.join(".invalid-content-address"))
     }
+}
+
+fn validate_hash(hash: &str) -> Result<(), TraceError> {
+    let Some(hex) = hash.strip_prefix("sha256:") else {
+        return Err(TraceError::InvalidBlobHash {
+            hash: hash.to_string(),
+        });
+    };
+    if hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(TraceError::InvalidBlobHash {
+            hash: hash.to_string(),
+        })
+    }
+}
+
+fn install_bytes(path: &Path, bytes: &[u8]) -> Result<(), TraceError> {
+    if path.exists() {
+        let existing = std::fs::read(path)?;
+        if existing == bytes {
+            return Ok(());
+        }
+        return Err(TraceError::InvalidBlobHash {
+            hash: BlobStore::hash(bytes),
+        });
+    }
+    let parent = path.parent().expect("blob path has a shard directory");
+    std::fs::create_dir_all(parent)?;
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let temp = parent.join(format!(
+        ".blob-{}-{}.tmp",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    set_readonly(&temp)?;
+    match std::fs::hard_link(&temp, path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::read(path)? != bytes {
+                let _ = std::fs::remove_file(&temp);
+                return Err(TraceError::InvalidBlobHash {
+                    hash: BlobStore::hash(bytes),
+                });
+            }
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error.into());
+        }
+    }
+    std::fs::remove_file(temp)?;
+    Ok(())
 }
 
 fn hash_file(path: &Path) -> Result<(String, u64), TraceError> {
@@ -199,8 +242,21 @@ mod tests {
     fn get_missing_blob_is_an_error() {
         let root = TempDir::new("blobstore-missing");
         let store = BlobStore::new(root.path());
-        let err = store.get("sha256:deadbeef").unwrap_err();
+        let hash = format!("sha256:{}", "0".repeat(64));
+        let err = store.get(&hash).unwrap_err();
         assert!(matches!(err, TraceError::BlobNotFound { .. }));
-        assert!(!store.contains("sha256:deadbeef"));
+        assert!(!store.contains(&hash));
+    }
+
+    #[test]
+    fn invalid_hashes_never_map_outside_the_store() {
+        let root = TempDir::new("blobstore-invalid-key");
+        let store = BlobStore::new(root.path());
+        assert!(matches!(
+            store.get("sha256:../../outside"),
+            Err(TraceError::InvalidBlobHash { .. })
+        ));
+        assert!(!store.contains("../../outside"));
+        assert!(store.path_of("../../outside").starts_with(root.path()));
     }
 }

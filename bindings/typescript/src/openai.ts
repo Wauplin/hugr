@@ -42,6 +42,8 @@ export async function callOpenAiCompatible(
       signal: hooks.signal,
     });
     if (response.ok) {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.startsWith("text/event-stream")) throw new Error(`unexpected model content type: ${contentType}`);
       return await parseStream(response, hooks);
     }
     const detail = await response.text();
@@ -70,7 +72,7 @@ function buildBody(request: Record<string, Json>, tier: TierConfig): Record<stri
   const extra = request.extra;
   if (extra && typeof extra === "object" && !Array.isArray(extra)) {
     for (const [key, value] of Object.entries(extra)) {
-      if (value !== null) body[key] = value;
+      if (value !== null && !["model", "messages", "stream", "stream_options", "tools"].includes(key)) body[key] = value;
     }
   }
   return body;
@@ -128,7 +130,9 @@ async function parseStream(response: Response, hooks: ModelCallHooks): Promise<M
   let stop = "end_turn";
   let usage: Usage = { input_tokens: 0, output_tokens: 0, extra: null };
   const tools = new Map<number, { id: string; name: string; args: string }>();
-  for (;;) {
+  let sawEvent = false;
+  let sawDone = false;
+  stream: for (;;) {
     if (hooks.signal?.aborted) throw new DOMException("aborted", "AbortError");
     const { value, done } = await reader.read();
     if (done) break;
@@ -138,8 +142,14 @@ async function parseStream(response: Response, hooks: ModelCallHooks): Promise<M
     for (const line of lines) {
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
+      if (!data) continue;
+      if (data === "[DONE]") {
+        sawDone = true;
+        await reader.cancel();
+        break stream;
+      }
       const chunk = JSON.parse(data) as Record<string, Json>;
+      sawEvent = true;
       if (chunk.usage) usage = normalizeUsage(chunk.usage as Record<string, Json>);
       for (const rawChoice of (chunk.choices as Json[]) ?? []) {
         const choice = rawChoice as Record<string, Json>;
@@ -164,6 +174,8 @@ async function parseStream(response: Response, hooks: ModelCallHooks): Promise<M
       }
     }
   }
+  if (!sawEvent) throw new Error("model stream contained no valid SSE data event");
+  if (!sawDone) throw new Error("model stream ended before [DONE]");
   const toolCalls = [...tools.values()]
     .filter((tool) => tool.name)
     .map((tool, index) => ({ id: tool.id || `call_${index + 1}`, name: tool.name, args: parseArgs(tool.args) }));

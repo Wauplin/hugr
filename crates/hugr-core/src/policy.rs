@@ -830,16 +830,32 @@ fn recent_indices(entries: &[ContextPlanEntry], keep_recent_tokens: u32) -> Hash
 }
 
 fn truncate_block(mut block: ContextBlock, max_tokens: u32) -> ContextBlock {
-    let max_chars = (max_tokens as usize).saturating_mul(4).max(1);
+    let mut remaining = (max_tokens as usize).saturating_mul(4).max(1);
     for part in &mut block.content {
-        if let ContentPart::Text(text) = part {
-            *text = truncate_string(text, max_chars);
-            return block;
+        match part {
+            ContentPart::Text(text) => {
+                *text = truncate_string(text, remaining);
+                remaining = remaining.saturating_sub(text.chars().count());
+            }
+            ContentPart::ToolUse { args, .. } => {
+                let serialized = args.to_string();
+                if serialized.chars().count() > remaining {
+                    *args = serde_json::json!({ "truncated": true });
+                }
+                remaining = remaining.saturating_sub(args.to_string().chars().count());
+            }
+            ContentPart::ToolResult { result, .. } => {
+                let serialized = result.to_string();
+                if serialized.chars().count() > remaining {
+                    *result = Value::String(truncate_string(&serialized, remaining));
+                }
+                remaining = remaining.saturating_sub(result.to_string().chars().count());
+            }
+        }
+        if remaining == 0 {
+            break;
         }
     }
-    block.content.push(ContentPart::Text(format!(
-        "[content truncated to approximately {max_tokens} token(s)]"
-    )));
     block
 }
 
@@ -847,9 +863,12 @@ fn truncate_string(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
-    let mut out: String = text.chars().take(max_chars).collect();
-    out.push_str("\n[...truncated...]");
-    out
+    const MARKER: &str = "[...truncated...]";
+    if max_chars <= MARKER.len() {
+        return MARKER.chars().take(max_chars).collect();
+    }
+    let keep = max_chars - MARKER.len() - 1;
+    format!("{}\n{MARKER}", text.chars().take(keep).collect::<String>())
 }
 
 fn totals_for(entries: &[ContextPlanEntry]) -> ContextBudgetTotals {
@@ -875,4 +894,25 @@ fn find_tool_result_for_call<'a>(
                 } if result_call_id == call_id
             )
     })
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::*;
+
+    #[test]
+    fn truncation_reduces_non_text_tool_payloads() {
+        let block = ContextBlock::new(
+            Role::Tool,
+            vec![ContentPart::ToolResult {
+                id: "call-1".to_string(),
+                result: Value::String("x".repeat(50_000)),
+            }],
+        );
+        let truncated = truncate_block(block, 100);
+        let ContentPart::ToolResult { result, .. } = &truncated.content[0] else {
+            panic!("tool result shape must be preserved");
+        };
+        assert!(result.as_str().unwrap().chars().count() <= 400);
+    }
 }

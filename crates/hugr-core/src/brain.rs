@@ -114,15 +114,14 @@ impl Brain {
     }
 
     fn on_user_input(&mut self, content: Value, est_tokens: u32) {
+        if self.state.is_busy() {
+            return;
+        }
         self.append(Record::UserMessage {
             text: stringify(&content),
             est_tokens,
         });
-        // Idle: start a turn immediately. Mid-turn input just queues: the next
-        // turn boundary's projection sees the new message.
-        if !self.state.is_busy() {
-            self.start_model_turn();
-        }
+        self.start_model_turn();
     }
 
     /// While ops are in flight this latches `abort_requested`: the `Cancel`
@@ -137,6 +136,13 @@ impl Brain {
     }
 
     fn on_model_delta(&mut self, op: OpId, delta: ModelDelta) {
+        if !self
+            .state
+            .get_op(op)
+            .is_some_and(|entry| entry.kind.is_model_call())
+        {
+            return;
+        }
         match delta {
             ModelDelta::Text(t) => {
                 self.state.buffer_model_text(op, &t);
@@ -148,6 +154,13 @@ impl Brain {
     }
 
     fn on_model_done(&mut self, op: OpId, output: ModelOutput, usage: Usage, est_tokens: u32) {
+        if !self
+            .state
+            .get_op(op)
+            .is_some_and(|entry| entry.kind.is_model_call())
+        {
+            return;
+        }
         if let Some(replaces_up_to) = self
             .state
             .get_op(op)
@@ -212,6 +225,13 @@ impl Brain {
     }
 
     fn on_model_error(&mut self, op: OpId, error: Value) {
+        if !self
+            .state
+            .get_op(op)
+            .is_some_and(|entry| entry.kind.is_model_call())
+        {
+            return;
+        }
         // A transport error the host already gave up on (retries live in the
         // adapter).
         self.end_op(op, OpOutcome::Error(error.clone()), None);
@@ -251,10 +271,22 @@ impl Brain {
     }
 
     fn on_capability_done(&mut self, op: OpId, result: Value, est_tokens: u32) {
+        if !matches!(
+            self.state.get_op(op).map(|entry| &entry.kind),
+            Some(OpKind::Capability { .. })
+        ) {
+            return;
+        }
         self.finish_tool_result(op, result, OpOutcome::Ok, est_tokens);
     }
 
     fn on_capability_error(&mut self, op: OpId, error: Value, est_tokens: u32) {
+        if !matches!(
+            self.state.get_op(op).map(|entry| &entry.kind),
+            Some(OpKind::Capability { .. })
+        ) {
+            return;
+        }
         // A semantic tool failure is an ordinary error result fed back to the
         // model.
         self.finish_tool_result(op, error.clone(), OpOutcome::Error(error), est_tokens);

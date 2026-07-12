@@ -38,7 +38,12 @@ export function agentHome(agentName: string): string {
 
 export function sanitizeAgentName(name: string): string {
   const cleaned = [...name].map((c) => (/[a-zA-Z0-9._-]/.test(c) ? c : "_")).join("");
-  return cleaned || "agent";
+  return !cleaned || cleaned === "." || cleaned === ".." ? "agent" : cleaned;
+}
+
+function validateTraceId(id: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("invalid trace id");
+  return id;
 }
 
 /// Traces as `<root>/<id>.json` in the portable trace format — the same
@@ -47,7 +52,7 @@ export class FsTraceStore implements TraceStore {
   constructor(readonly root: string) {}
 
   pathOf(id: string): string {
-    return path.join(this.root, `${id}.json`);
+    return path.join(this.root, `${validateTraceId(id)}.json`);
   }
 
   async put(trace: Json, header: TraceHeader): Promise<string> {
@@ -107,12 +112,12 @@ export class FsFeedbackStore implements FeedbackStore {
 
   async append(feedback: Feedback): Promise<void> {
     await fs.mkdir(this.root, { recursive: true });
-    await fs.appendFile(path.join(this.root, `${feedback.trace_id}.jsonl`), `${JSON.stringify(feedback)}\n`);
+    await fs.appendFile(path.join(this.root, `${validateTraceId(feedback.trace_id)}.jsonl`), `${JSON.stringify(feedback)}\n`);
   }
 
   async list(traceId: string): Promise<Feedback[]> {
     try {
-      const raw = await fs.readFile(path.join(this.root, `${traceId}.jsonl`), "utf8");
+      const raw = await fs.readFile(path.join(this.root, `${validateTraceId(traceId)}.jsonl`), "utf8");
       return raw
         .split("\n")
         .filter(Boolean)

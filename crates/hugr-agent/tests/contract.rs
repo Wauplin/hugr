@@ -93,6 +93,16 @@ fn minimal_ask_wire_form_is_question_only() {
 }
 
 #[test]
+fn trace_ids_reject_path_components_on_deserialization() {
+    let error = serde_json::from_value::<Ask>(json!({
+        "question": "q",
+        "trace_id": "../outside"
+    }))
+    .unwrap_err();
+    assert!(error.to_string().contains("trace id"));
+}
+
+#[test]
 fn full_wire_snapshots_are_pinned() {
     // Field names and status strings ARE the contract. If this test fails, you
     // changed the wire format: bump/version the committed schemas instead.

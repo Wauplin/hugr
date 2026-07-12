@@ -719,17 +719,16 @@ pub async fn load_agent_with_options(
     bundle_bytes: &[u8],
     options: &RuntimeOptions,
 ) -> Result<LoadedAgent, LoadError> {
-    let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
-    let def = AgentDefinition::load(&home)?;
-    let (agent, warnings) = build_agent_with_options(&def, options).await?;
+    let definition = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
+    let def = AgentDefinition::load(&definition)?;
+    let state_root = agent_home_dir(&def.agent.name);
+    let options = options.clone().with_state_root(state_root);
+    let (agent, warnings) = build_agent_with_options(&def, &options).await?;
     Ok(LoadedAgent { agent, warnings })
 }
 
-/// Resolve the per-agent home directory and unpack the embedded agent bundle into
-/// it. The definition source files are (re-)written every run — they are
-/// immutable by design — while the runtime dirs (traces, scratch) are never in
-/// the bundle, so persisted traces survive across runs and `--trace` resume
-/// works on a machine with no repo checkout.
+/// Install an embedded definition into an immutable, content-addressed cache
+/// beside the mutable per-agent home and return the cached definition root.
 pub fn prepare_home(bundle_bytes: &[u8]) -> std::io::Result<PathBuf> {
     let manifest = bundle::get(bundle_bytes, MANIFEST_NAME)?.ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "bundle has no hugr.toml")
@@ -737,8 +736,39 @@ pub fn prepare_home(bundle_bytes: &[u8]) -> std::io::Result<PathBuf> {
     let name = manifest_identity(&manifest);
     let home = agent_home_dir(&name);
     std::fs::create_dir_all(&home)?;
-    bundle::unpack(bundle_bytes, &home)?;
-    Ok(home)
+    let hash = hugr_replay::BlobStore::hash(bundle_bytes).replace(':', "-");
+    let cache_base = home
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".definitions")
+        .join(&name);
+    let definition = cache_base.join(hash);
+    if definition.exists() {
+        if definition.is_symlink() {
+            return Err(std::io::Error::other("definition cache entry is a symlink"));
+        }
+        return Ok(definition);
+    }
+    std::fs::create_dir_all(&cache_base)?;
+    static NEXT_INSTALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temp = cache_base.join(format!(
+        ".install-{}-{}",
+        std::process::id(),
+        NEXT_INSTALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&temp)?;
+    bundle::unpack(bundle_bytes, &temp)?;
+    match std::fs::rename(&temp, &definition) {
+        Ok(()) => {}
+        Err(_) if definition.is_dir() && !definition.is_symlink() => {
+            std::fs::remove_dir_all(&temp)?;
+        }
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&temp);
+            return Err(error);
+        }
+    }
+    Ok(definition)
 }
 
 /// Pull `name` out of the manifest bytes with a forgiving parse — we only need
@@ -912,10 +942,11 @@ required = true
         // Point the home dir at a temp location via the runtime resolver.
         unsafe { std::env::set_var("HUGR_AGENT_HOME", &home) };
         let prepared = prepare_home(&bytes).unwrap();
-        assert_eq!(prepared, home);
-        assert!(home.join("hugr.toml").exists());
+        assert_ne!(prepared, home);
+        assert!(prepared.join("hugr.toml").exists());
+        assert!(!home.join("hugr.toml").exists());
 
-        let def = AgentDefinition::load(&home).unwrap();
+        let def = AgentDefinition::load(&prepared).unwrap();
         let (agent, _) = crate::runtime::build_agent(&def).await.unwrap();
         let card = agent.describe();
         assert_eq!(card.name, "surfacedesc");

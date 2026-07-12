@@ -53,7 +53,7 @@ From the parent binary, attach a local file as an inbound blob with `--blob`:
 my-orchestrator "summarize this dataset" --blob ./data.csv
 ```
 
-The file is hashed and hardlinked into the shared store. A same-filesystem hardlink avoids copying bytes; the implementation is in `crates/hugr-agent/src/blobs.rs`. The parent's model receives a `sha256:<hash>` handle.
+The file is hashed and copied into an atomically installed shared-store object; the caller's mutable inode is never used as the content-addressed object. The implementation is in `crates/hugr-agent/src/blobs.rs`. The parent's model receives a `sha256:<hash>` handle.
 
 When the parent calls `agent_weather` with `blobs: [{"type":"sha256","hash":"…"}]`, the resolver passes the reference to the child as `--blob sha256:<hash>`. It also sets `HUGR_BLOB_STORE` to the same shared root.
 

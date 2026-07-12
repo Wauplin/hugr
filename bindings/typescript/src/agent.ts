@@ -34,6 +34,7 @@ export interface WasmSession {
   submit_model_error(op: number, errorJson: string, nowMs: number): string;
   submit_capability_done(op: number, resultJson: string, nowMs: number): string;
   submit_capability_error(op: number, errorJson: string, nowMs: number): string;
+  submit_op_cancelled(op: number, nowMs: number): string;
   submit_permission_decision(op: number, allow: boolean, reason: string | null, nowMs: number): string;
   abort(nowMs: number): string;
   poll_commands_json(): string;
@@ -95,6 +96,10 @@ export class Agent {
     const meta: AnswerMeta = { duration_ms: 0, cost_micro_usd: 0, tokens_in: 0, tokens_out: 0, model_calls: 0, tool_calls: 0 };
     const limits = this.config.limits ?? {};
     const deadline = limits.timeout_s ? startedAt + limits.timeout_s * 1000 : null;
+    const effectController = new AbortController();
+    const abortEffect = () => effectController.abort();
+    options.signal?.addEventListener("abort", abortEffect, { once: true });
+    const deadlineTimer = deadline === null ? undefined : setTimeout(abortEffect, Math.max(0, deadline - Date.now()));
     let trip: string | null = null;
     let doneReason: Json = null;
 
@@ -135,7 +140,7 @@ export class Agent {
           try {
             const result = await callOpenAiCompatible(payload.request as Json, this.settingsFor(selector), {
               onText: (text) => deltas.push({ type: "text_delta", op, text }),
-              signal: options.signal,
+              signal: effectController.signal,
             });
             yield* deltas;
             meta.model_calls += 1;
@@ -170,7 +175,7 @@ export class Agent {
           const tool = this.tools.get(name);
           try {
             if (!tool) throw new Error(`unknown tool: ${name}`);
-            const result = (await tool.invoke(args)) ?? null;
+            const result = (await abortable(tool.invoke(args, effectController.signal), effectController.signal)) ?? null;
             meta.tool_calls += 1;
             yield { type: "tool_ended", op, name, is_error: false, result };
             queue.push(...(JSON.parse(session.submit_capability_done(op, JSON.stringify(result), Date.now())) as Json[]));
@@ -193,9 +198,7 @@ export class Agent {
         }
         case "Cancel": {
           const op = payload.op as number;
-          queue.push(
-            ...(JSON.parse(session.submit_capability_error(op, JSON.stringify({ cancelled: true }), Date.now())) as Json[]),
-          );
+          queue.push(...(JSON.parse(session.submit_op_cancelled(op, Date.now())) as Json[]));
           break;
         }
         case "Emit":
@@ -227,6 +230,8 @@ export class Agent {
     const traceId = await this.runtime.traces.put(JSON.parse(session.trace_json()) as Json, header);
 
     const answer: Answer = { status, response, trace_id: traceId, metadata: meta };
+    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+    options.signal?.removeEventListener("abort", abortEffect);
     yield { type: "answer_ready", answer };
   }
 
@@ -290,6 +295,15 @@ export class Agent {
     const cost = tokensIn * (tier.input_usd_per_m_tokens ?? 0) + tokensOut * (tier.output_usd_per_m_tokens ?? 0);
     return Math.round(cost);
   }
+}
+
+function abortable<T>(effect: Promise<T> | T, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException("aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(effect).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function defaultTier(models: ModelsConfig): string {

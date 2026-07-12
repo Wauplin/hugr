@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hugr_agent::{
-    Agent, AnswerHook, Ask, AskHook, Pricing, ResponseContract, STATUS_SUCCESS, TraceId, TraceStore,
+    Agent, AnswerHook, Ask, AskHook, Pricing, ResponseContract, STATUS_ERROR, STATUS_SUCCESS,
+    TraceId, TraceStore,
 };
 use hugr_core::{ModelOutput, ModelRequest, ModelSelector, Record, Usage};
 use hugr_host::{Clock, ModelAdapter, ModelSink};
@@ -385,6 +386,25 @@ async fn missing_parent_is_an_infrastructure_error() {
         .unwrap_err();
 
     assert!(err.missing_trace().is_some(), "unknown parent → AskError");
+}
+
+#[tokio::test]
+async fn failed_resume_does_not_return_the_parent_answer() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let agent = agent(store.clone(), vec!["parent answer"]);
+    let parent = agent.ask(Ask::new("first")).await.unwrap();
+
+    let resumed = agent
+        .ask(Ask {
+            trace_id: Some(parent.trace_id),
+            ..Ask::new("follow-up")
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(resumed.status, STATUS_ERROR);
+    assert!(resumed.response["error"].as_str().is_some());
 }
 
 struct TempDir {

@@ -154,7 +154,21 @@ async function downloadToLocalStore(url, filename) {
   if (!response.ok) {
     throw new Error(`download failed with ${response.status}`);
   }
-  const blob = await response.blob();
+  const maxBytes = 5 * 1024 * 1024;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let byteLength = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (byteLength + value.byteLength > maxBytes) {
+      await reader.cancel();
+      throw new Error(`download exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+    byteLength += value.byteLength;
+  }
+  const blob = new Blob(chunks, { type: response.headers.get("content-type") || "application/octet-stream" });
   const fileId = crypto.randomUUID();
   const stored = {
     fileId,

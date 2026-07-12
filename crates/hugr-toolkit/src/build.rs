@@ -134,6 +134,8 @@ fn bundle_excludes(def: &AgentDefinition) -> Vec<String> {
     let mut ex = vec![
         DEFAULT_TRACE_DIRNAME.to_string(),
         DEFAULT_SCRATCH_DIRNAME.to_string(),
+        crate::runtime::DEFAULT_MEMORY_DIRNAME.to_string(),
+        crate::runtime::DEFAULT_FEEDBACK_DIRNAME.to_string(),
         "target".to_string(),
         "dist".to_string(),
         ".git".to_string(),
@@ -149,6 +151,16 @@ fn bundle_excludes(def: &AgentDefinition) -> Vec<String> {
         if let Some(first) = first_component(root) {
             ex.push(first);
         }
+    }
+    if let Some(root) = def
+        .tools
+        .iter()
+        .find(|grant| grant.name == "memory")
+        .and_then(|grant| grant.config.get("root"))
+        .and_then(serde_json::Value::as_str)
+        && let Some(first) = first_component(root)
+    {
+        ex.push(first);
     }
     ex.sort();
     ex.dedup();

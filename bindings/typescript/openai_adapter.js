@@ -3,18 +3,23 @@ export async function callOpenAiCompatible(request, settings, hooks = {}) {
   const apiKey = settings.apiKey || "";
   if (!apiKey) throw new Error("missing API key in settings");
   const body = buildBody(request, settings);
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(body),
-    signal: hooks.signal
-  });
-  if (!response.ok) {
-    throw new Error(`model request failed with ${response.status}: ${await response.text()}`);
+  let response;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+      signal: hooks.signal
+    });
+    if (response.ok) break;
+    const detail = await response.text();
+    if (!(response.status === 429 || response.status >= 500) || attempt === 3) {
+      throw new Error(`model request failed with ${response.status}: ${detail}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** (attempt - 1)));
   }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith("text/event-stream")) throw new Error(`unexpected model content type: ${contentType}`);
   return await parseStream(response, hooks);
 }
 
@@ -36,7 +41,8 @@ function buildBody(request, settings) {
   }));
   if (tools.length) body.tools = tools;
   if (request.extra && typeof request.extra === "object" && !Array.isArray(request.extra)) {
-    Object.assign(body, Object.fromEntries(Object.entries(request.extra).filter(([, value]) => value !== null)));
+    const reserved = new Set(["model", "messages", "stream", "stream_options", "tools"]);
+    Object.assign(body, Object.fromEntries(Object.entries(request.extra).filter(([key, value]) => value !== null && !reserved.has(key))));
   }
   return body;
 }
@@ -92,7 +98,9 @@ async function parseStream(response, hooks) {
   let stop = "end_turn";
   let usage = { input_tokens: 0, output_tokens: 0, extra: null };
   const tools = new Map();
-  while (true) {
+  let sawEvent = false;
+  let sawDone = false;
+  stream: while (true) {
     if (hooks.signal?.aborted) throw abortError();
     const { value, done } = await reader.read();
     if (done) break;
@@ -102,8 +110,14 @@ async function parseStream(response, hooks) {
     for (const line of lines) {
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
+      if (!data) continue;
+      if (data === "[DONE]") {
+        sawDone = true;
+        await reader.cancel();
+        break stream;
+      }
       const chunk = JSON.parse(data);
+      sawEvent = true;
       if (chunk.usage) usage = normalizeUsage(chunk.usage);
       for (const choice of chunk.choices || []) {
         if (choice.finish_reason) stop = normalizeStop(choice.finish_reason);
@@ -125,6 +139,8 @@ async function parseStream(response, hooks) {
       }
     }
   }
+  if (!sawEvent) throw new Error("model stream contained no valid SSE data event");
+  if (!sawDone) throw new Error("model stream ended before [DONE]");
   const tool_calls = [...tools.values()].filter((tool) => tool.name).map((tool, index) => ({
     id: tool.id || `call_${index + 1}`,
     name: tool.name,

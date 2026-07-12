@@ -99,6 +99,11 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
   const queue = [...initialCommands];
   let done = null;
   let steps = 0;
+  let modelCalls = 0;
+  let costMicroUsd = 0;
+  const defaults = host.defaults || {};
+  const maxModelCalls = settings.maxModelCalls ?? defaults.maxModelCalls ?? null;
+  const maxCostMicroUsd = settings.maxCostMicroUsd ?? defaults.maxCostMicroUsd ?? null;
   while (queue.length > 0) {
     throwIfAborted(hooks.signal);
     steps += 1;
@@ -110,6 +115,12 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
     hooks.onCommand?.(kind, payload);
     switch (kind) {
       case "StartModelCall": {
+        if (maxModelCalls !== null && modelCalls >= maxModelCalls) {
+          throw new Error(`limit: max_model_calls (${maxModelCalls}) reached`);
+        }
+        if (maxCostMicroUsd !== null && costMicroUsd >= maxCostMicroUsd) {
+          throw new Error(`limit: max_cost_micro_usd (${maxCostMicroUsd}) reached`);
+        }
         const modelSettings = settingsForModel(settings, payload.model);
         push?.({ type: "model", label: "Model call", detail: { op: payload.op, model: payload.model } });
         try {
@@ -120,6 +131,8 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
             },
             signal: hooks.signal
           });
+          modelCalls += 1;
+          costMicroUsd += reportedCostMicroUsd(result.usage);
           push?.({
             type: result.output.tool_calls?.length ? "model_tools" : "model_answer",
             label: result.output.tool_calls?.length
@@ -209,7 +222,7 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
       }
       case "Cancel":
         push?.({ type: "cancel", label: "Cancelled", detail: { op: payload.op } });
-        queue.push(...JSON.parse(session.submit_capability_error(payload.op, JSON.stringify({ cancelled: true }), Date.now())));
+        queue.push(...JSON.parse(session.submit_op_cancelled(payload.op, Date.now())));
         await persistence?.autosave?.();
         break;
       case "Emit":
@@ -232,6 +245,12 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
     return { reason: "No terminal Done command; command queue drained unexpectedly" };
   }
   return done;
+}
+
+function reportedCostMicroUsd(usage) {
+  const raw = usage?.extra || {};
+  const usd = Number(raw.cost ?? raw.cost_usd ?? raw.total_cost ?? 0);
+  return Number.isFinite(usd) && usd > 0 ? Math.round(usd * 1_000_000) : 0;
 }
 
 function tagged(value) {

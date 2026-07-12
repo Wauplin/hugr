@@ -23,6 +23,7 @@ use hugr_host::{
 use hugr_providers::OpenAiAdapter;
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
+use tokio::io::AsyncReadExt;
 
 use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
 use crate::tools::{self, ToolError};
@@ -134,7 +135,7 @@ pub fn sanitize_agent_name(name: &str) -> String {
             }
         })
         .collect();
-    if cleaned.is_empty() {
+    if cleaned.is_empty() || matches!(cleaned.as_str(), "." | "..") {
         "agent".to_string()
     } else {
         cleaned
@@ -192,6 +193,7 @@ pub struct RuntimeOptions {
     ask_hooks: Vec<AskHook>,
     answer_hooks: Vec<AnswerHook>,
     storage: Option<StorageOverrides>,
+    state_root: Option<PathBuf>,
 }
 
 impl RuntimeOptions {
@@ -244,6 +246,11 @@ impl RuntimeOptions {
         self
     }
 
+    pub(crate) fn with_state_root(mut self, root: PathBuf) -> Self {
+        self.state_root = Some(root);
+        self
+    }
+
     pub fn response_contract(&self, rust_type: &str) -> Option<ResponseContract> {
         self.response_contracts.get(rust_type).cloned()
     }
@@ -288,8 +295,15 @@ pub async fn build_agent_with_options(
         return Err(RuntimeError::NoModel);
     }
 
-    let store = trace_store_for(def);
     let home = agent_home_for_def(def);
+    let state_root = options.state_root.as_ref().unwrap_or(&base_dir);
+    let store = TraceStore::new(
+        def.traces
+            .store
+            .as_deref()
+            .map(|path| resolve(state_root, path))
+            .unwrap_or_else(|| home.join(DEFAULT_TRACE_DIRNAME)),
+    );
 
     let version = if def.agent.version.trim().is_empty() {
         "0.0.0"
@@ -404,7 +418,7 @@ pub async fn build_agent_with_options(
             .config
             .get("root")
             .and_then(|value| value.as_str())
-            .map(|root| resolve(&base_dir, root))
+            .map(|root| resolve(state_root, root))
             .unwrap_or_else(|| home.join(DEFAULT_MEMORY_DIRNAME));
         agent
             .capabilities
@@ -429,7 +443,7 @@ pub async fn build_agent_with_options(
             .scratchpad
             .root
             .as_deref()
-            .map(|root| resolve(&base_dir, root))
+            .map(|root| resolve(state_root, root))
             .unwrap_or_else(|| home.join(DEFAULT_SCRATCH_DIRNAME));
         agent.scratch = Arc::new(FsScratch::new(&scratch_root));
         agent.scratch_scope = serde_json::json!({ "root": scratch_root.display().to_string() });
@@ -617,6 +631,7 @@ fn resolve_agent_artifact(grant: &ToolGrant, base_dir: &Path) -> Result<PathBuf,
 /// delegation cycle terminates. Blob forwarding is a later refinement.
 async fn run_subprocess_agent(bin: &Path, ask: Ask, depth: u32) -> Result<Answer, String> {
     let mut cmd = tokio::process::Command::new(bin);
+    cmd.kill_on_drop(true);
     cmd.arg(&ask.question).arg("--json");
     cmd.env(AGENT_DEPTH_ENV, depth.to_string());
     cmd.env(BLOB_STORE_ENV, global_blob_store_dir());
@@ -639,8 +654,7 @@ async fn run_subprocess_agent(bin: &Path, ask: Ask, depth: u32) -> Result<Answer
             }
         }
     }
-    let output = cmd
-        .output()
+    let output = run_bounded_command(&mut cmd)
         .await
         .map_err(|e| format!("spawning subagent `{}`: {e}", bin.display()))?;
     if !output.status.success() {
@@ -655,6 +669,51 @@ async fn run_subprocess_agent(bin: &Path, ask: Ask, depth: u32) -> Result<Answer
     }
     serde_json::from_slice::<Answer>(&output.stdout)
         .map_err(|e| format!("parsing subagent answer: {e}"))
+}
+
+struct BoundedOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn run_bounded_command(
+    command: &mut tokio::process::Command,
+) -> std::io::Result<BoundedOutput> {
+    const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let (status, stdout, stderr) = tokio::join!(
+        child.wait(),
+        read_bounded(stdout, MAX_CAPTURE_BYTES),
+        read_bounded(stderr, MAX_CAPTURE_BYTES)
+    );
+    Ok(BoundedOutput {
+        status: status?,
+        stdout: stdout?,
+        stderr: stderr?,
+    })
+}
+
+async fn read_bounded(
+    mut reader: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut captured = Vec::with_capacity(limit.min(64 * 1024));
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        let count = reader.read(&mut chunk).await?;
+        if count == 0 {
+            return Ok(captured);
+        }
+        let remaining = limit.saturating_sub(captured.len());
+        captured.extend_from_slice(&chunk[..count.min(remaining)]);
+    }
 }
 
 struct SubprocessFeedbackTool {
@@ -720,14 +779,15 @@ async fn run_subprocess_feedback(
 ) -> Result<Value, String> {
     let payload = serde_json::to_string(&args.payload)
         .map_err(|e| format!("encoding feedback payload: {e}"))?;
-    let output = tokio::process::Command::new(bin)
+    let mut command = tokio::process::Command::new(bin);
+    command
         .arg("--feedback")
         .arg(&args.trace_id)
         .arg("--feedback-payload")
         .arg(payload)
         .arg("--json")
-        .env(BLOB_STORE_ENV, global_blob_store_dir())
-        .output()
+        .env(BLOB_STORE_ENV, global_blob_store_dir());
+    let output = run_bounded_command(&mut command)
         .await
         .map_err(|e| format!("spawning subagent `{}` for feedback: {e}", bin.display()))?;
     if !output.status.success() {

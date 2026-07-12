@@ -158,6 +158,28 @@ test("feedback round-trip", async () => {
   await assert.rejects(() => agent.feedback("no-such-trace", { score: 0 }));
 });
 
+test("fs stores reject trace path traversal", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hugr-ts-keys-"));
+  const traces = new FsTraceStore(path.join(home, "traces"));
+  const feedback = new FsFeedbackStore(path.join(home, "feedback"));
+  await assert.rejects(() => traces.get("../outside"), /invalid trace id/);
+  await assert.rejects(() => feedback.list("../outside"), /invalid trace id/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("timeout interrupts a running tool and records cancellation", async () => {
+  const agent = makeAgent({
+    limits: { timeout_s: 0.05 },
+    tools: [{ name: "slow", description: "d", schema: { type: "object" }, invoke: () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 300)) }],
+  });
+  server.scriptToolCall("slow", {});
+  const started = Date.now();
+  const answer = await agent.ask("q");
+  assert.equal(answer.status, "error");
+  assert.ok(Date.now() - started < 250);
+  await agent.verify(answer.trace_id);
+});
+
 test("createAgent defaults to the agent home layout", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hugr-ts-home-"));
   process.env.HUGR_HOME = home;

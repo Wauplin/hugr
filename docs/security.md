@@ -37,9 +37,9 @@ The operator is responsible for the process and OS boundary when running an untr
 
 - **Traversal & symlink escape.** Same discipline as `fs_read`; **writes canonicalize the (created) parent directory too**, so a symlinked parent can't redirect a write outside the jail. Tool results carry only relative paths, so scratch contents never enter the log. Tests: `crates/hugr-agent/tests/scratchpad.rs`.
 - **Cross-ask / sibling leakage.** Each ask gets its own working copy, seeded through copy-on-fork from the parent's finalized subtree. A fork sees ancestor notes but never a sibling's writes.
-- **Blob hardlinks.** Filesystem-backed `Sha256` inbound blobs may be hardlinked into scratch. Outbound files may be hardlinked into the shared blob store.
+- **Blob links and copies.** Filesystem-backed `Sha256` inbound blobs may be hardlinked into scratch. Outbound files are copied into a temporary store object, synced, and installed without overwriting an existing content address.
 
-  Store objects are read-only. `scratch_write` removes an existing file before replacing it, so overwriting a hardlinked inbound path does not mutate the store object.
+  Store objects are read-only and verified when loaded. `scratch_write` removes an existing file before replacing it, so overwriting a hardlinked inbound path does not mutate the store object.
 
   Hashes are capabilities, not secrets. Any agent handed a `sha256:<hash>` can read that object from the shared store.
 

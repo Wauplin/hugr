@@ -79,7 +79,7 @@ export interface ToolSpec {
   description: string;
   schema: Json;
   requiresPermission?: boolean;
-  invoke(args: Json): Promise<Json> | Json;
+  invoke(args: Json, signal?: AbortSignal): Promise<Json> | Json;
 }
 
 /// One `[models.<tier>]`-shaped entry (same keys as the manifest).

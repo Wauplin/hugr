@@ -166,7 +166,12 @@ impl OpenAiAdapter {
         }
         if let Some(extra) = request.extra.as_object() {
             for (key, value) in extra {
-                if !value.is_null() {
+                if !value.is_null()
+                    && !matches!(
+                        key.as_str(),
+                        "model" | "messages" | "stream" | "stream_options" | "tools"
+                    )
+                {
                     body[key] = value.clone();
                 }
             }
@@ -244,6 +249,14 @@ impl ModelAdapter for OpenAiAdapter {
     ) -> anyhow::Result<(ModelOutput, Usage)> {
         let body = self.build_body(&request);
         let resp = self.send_with_retry(&body).await?;
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        if !content_type.starts_with("text/event-stream") {
+            anyhow::bail!("OpenAI returned unexpected content type: {content_type}");
+        }
 
         let mut acc = Accumulator {
             model: self.model.clone(),
@@ -270,8 +283,10 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     let mut buf: Vec<u8> = Vec::new();
+    let mut saw_event = false;
+    let mut saw_done = false;
 
-    while let Some(chunk) = stream.next().await {
+    'stream: while let Some(chunk) = stream.next().await {
         let bytes = chunk.context("error while streaming response")?;
         buf.extend_from_slice(bytes.as_ref());
 
@@ -284,8 +299,13 @@ where
             // Borrows for valid UTF-8; allocates only for a rare invalid line.
             let line = String::from_utf8_lossy(&buf[start..pos]);
             start = pos + 1;
-            if ingest_sse_line(&line, acc, sink) {
-                break; // [DONE]
+            match ingest_sse_line(&line, acc, sink)? {
+                Some(true) => {
+                    saw_done = true;
+                    break 'stream;
+                }
+                Some(false) => saw_event = true,
+                None => {}
             }
         }
         buf.drain(..start);
@@ -294,28 +314,42 @@ where
     // Some servers close the stream without a trailing newline on the final
     // line — often the one carrying `usage` or the last `finish_reason`.
     // Parse the residual bytes through the same path so they aren't dropped.
-    if !buf.is_empty() {
+    if !saw_done && !buf.is_empty() {
         let line = String::from_utf8_lossy(&buf);
-        ingest_sse_line(&line, acc, sink);
+        match ingest_sse_line(&line, acc, sink)? {
+            Some(true) => saw_done = true,
+            Some(false) => saw_event = true,
+            None => {}
+        }
     }
-
+    if !saw_event {
+        anyhow::bail!("OpenAI stream contained no valid SSE data event");
+    }
+    if !saw_done {
+        anyhow::bail!("OpenAI stream ended before [DONE]");
+    }
     Ok(())
 }
 
 /// Parse one SSE line, folding any `data:` payload into the accumulator.
 /// Returns `true` for the `[DONE]` sentinel.
-fn ingest_sse_line(line: &str, acc: &mut Accumulator, sink: &ModelSink) -> bool {
+fn ingest_sse_line(
+    line: &str,
+    acc: &mut Accumulator,
+    sink: &ModelSink,
+) -> anyhow::Result<Option<bool>> {
     let line = line.trim_end_matches(['\r', '\n']);
     if let Some(data) = line.strip_prefix("data:") {
         let data = data.trim();
         if data == "[DONE]" {
-            return true;
+            return Ok(Some(true));
         }
-        if let Ok(value) = serde_json::from_str::<Value>(data) {
-            acc.ingest(&value, sink);
-        }
+        let value = serde_json::from_str::<Value>(data)
+            .with_context(|| "malformed JSON in OpenAI SSE data event")?;
+        acc.ingest(&value, sink);
+        return Ok(Some(false));
     }
-    false
+    Ok(None)
 }
 
 /// Accumulates a streamed chat-completions response into a consolidated result.
@@ -848,7 +882,7 @@ mod tests {
     // and the `usage` chunk) must not have that line silently dropped — that
     // would fold Usage to 0/0, lose the cost, and degrade the stop reason.
     #[tokio::test]
-    async fn final_unterminated_sse_line_is_parsed() {
+    async fn final_unterminated_sse_line_is_rejected_without_done() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = ModelSink::new(hugr_core::OpId(0), tx);
 
@@ -867,17 +901,8 @@ mod tests {
             ),
         ];
         let stream = futures_util::stream::iter(chunks);
-        consume_sse(stream, &mut acc, &sink).await.unwrap();
-
-        let (output, usage) = acc.finish();
-        assert_eq!(output.text, "hi");
-        // `length` must survive as max_tokens, not degrade to the end_turn default.
-        assert_eq!(output.stop, "max_tokens");
-        // The usage chunk on the unterminated line must not fold to 0/0.
-        assert_eq!(usage.input_tokens, 7);
-        assert_eq!(usage.output_tokens, 3);
-        assert_eq!(usage.extra["cost"], json!(0.000123));
-        assert_eq!(usage.extra["cost_source"], json!("router"));
+        let error = consume_sse(stream, &mut acc, &sink).await.unwrap_err();
+        assert!(error.to_string().contains("before [DONE]"));
     }
 
     // Regression: a (non-conforming) OpenAI-compatible server that streams a tool

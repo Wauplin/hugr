@@ -80,6 +80,35 @@ fn user_model_tool_model_done() {
 }
 
 #[test]
+fn wrong_kind_and_mid_turn_events_are_ignored() {
+    let mut brain = Brain::with_default_policy();
+    brain.submit(user("first"));
+    let start = brain.poll();
+    assert!(matches!(
+        start.as_slice(),
+        [Command::StartModelCall { op: OpId(0), .. }]
+    ));
+    let baseline = brain.state().log().len();
+
+    brain.submit(Event::CapabilityDone {
+        op: OpId(0),
+        result: json!({ "wrong": true }),
+        est_tokens: 1,
+    });
+    brain.submit(user("must not be stranded"));
+    brain.submit(Event::ModelDone {
+        op: OpId(99),
+        output: text_output("stale"),
+        usage: usage(),
+        est_tokens: 1,
+    });
+
+    assert_eq!(brain.state().log().len(), baseline);
+    assert_eq!(brain.state().inflight_len(), 1);
+    assert!(brain.poll().is_empty());
+}
+
+#[test]
 fn tool_results_are_projected_adjacent_to_tool_calls_even_with_records_between() {
     let mut brain = Brain::with_default_policy();
 

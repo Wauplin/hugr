@@ -147,6 +147,13 @@ impl Engine {
         self.drive_to_idle().await;
     }
 
+    /// Abort all live effects and drive their cancellation acknowledgements to
+    /// an idle boundary before the engine or its trace is finalized.
+    pub async fn abort_and_drain(&mut self) {
+        self.submit(Event::UserAbort);
+        self.drive_to_idle().await;
+    }
+
     /// Read-only access to the underlying brain (log, op table, …).
     pub fn brain(&self) -> &Brain {
         &self.brain
@@ -345,6 +352,14 @@ impl Engine {
             other => self
                 .frontend
                 .on_notice(&format!("(unhandled command: {other:?})")),
+        }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        for (_, handle) in self.tasks.drain() {
+            handle.abort();
         }
     }
 }

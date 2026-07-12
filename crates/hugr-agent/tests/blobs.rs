@@ -136,7 +136,7 @@ async fn file_handed_in_as_bytes_is_read_then_produced_out_as_a_sha256_blob() {
     };
     let bytes = agent.blob_store().get(sha256).unwrap();
     assert_eq!(bytes, b"# derived from input");
-    assert_same_inode(
+    assert_different_inode(
         &agent.blob_store().path_of(sha256),
         &dir.path()
             .join("scratch")
@@ -268,8 +268,19 @@ fn assert_same_inode(a: &std::path::Path, b: &std::path::Path) {
     assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
 }
 
+#[cfg(unix)]
+fn assert_different_inode(a: &std::path::Path, b: &std::path::Path) {
+    use std::os::unix::fs::MetadataExt;
+    let a = std::fs::metadata(a).unwrap();
+    let b = std::fs::metadata(b).unwrap();
+    assert_ne!((a.dev(), a.ino()), (b.dev(), b.ino()));
+}
+
 #[cfg(not(unix))]
 fn assert_same_inode(_a: &std::path::Path, _b: &std::path::Path) {}
+
+#[cfg(not(unix))]
+fn assert_different_inode(_a: &std::path::Path, _b: &std::path::Path) {}
 
 fn count_files(root: &std::path::Path) -> usize {
     let mut count = 0;

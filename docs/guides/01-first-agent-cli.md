@@ -132,7 +132,7 @@ hugr build my-agent --release
 
 This generates a shim crate under `my-agent/dist/` (override with `--out <dir>`). The shim embeds the agent bundle, including the manifest, prompt, and response contract, then compiles it with cargo.
 
-The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repository checkout. On startup, it unpacks its bundle into `~/.hugr/<name>/`, so traces persist across runs and `--trace` resume works anywhere you copy it.
+The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repository checkout. On startup, it installs its bundle into a content-addressed `.definitions/<name>/<hash>/` cache beside `~/.hugr/<name>/`; traces and other mutable state remain in the agent home, so `--trace` resume works anywhere you copy the binary.
 
 `--surface python` also generates a pip-installable Python module.
 

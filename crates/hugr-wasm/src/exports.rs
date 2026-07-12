@@ -166,6 +166,14 @@ impl HugrWasm {
         self.poll_commands_json()
     }
 
+    pub fn submit_op_cancelled(&mut self, op: f64, now_ms: f64) -> Result<String, JsValue> {
+        self.submit(Event::Tick {
+            now: timestamp(now_ms),
+        });
+        self.submit(Event::OpCancelled { op: op_id(op) });
+        self.poll_commands_json()
+    }
+
     pub fn submit_permission_decision(
         &mut self,
         op: f64,

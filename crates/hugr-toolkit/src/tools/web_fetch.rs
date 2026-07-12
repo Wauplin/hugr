@@ -173,14 +173,21 @@ impl WebFetch {
 
         let req_method = reqwest::Method::from_bytes(method.as_bytes())
             .with_context(|| format!("invalid method {method}"))?;
-        let resp = self
+        let mut resp = self
             .client
             .request(req_method, parsed)
             .send()
             .await
             .context("request failed")?;
         let status = resp.status().as_u16();
-        let bytes = resp.bytes().await.context("failed to read body")?;
+        let mut bytes = Vec::with_capacity(self.max_bytes.saturating_add(1));
+        while let Some(chunk) = resp.chunk().await.context("failed to read body")? {
+            let remaining = self.max_bytes.saturating_add(1).saturating_sub(bytes.len());
+            bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            if bytes.len() > self.max_bytes {
+                break;
+            }
+        }
         let truncated = bytes.len() > self.max_bytes;
         let slice = if truncated {
             &bytes[..self.max_bytes]

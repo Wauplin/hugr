@@ -140,7 +140,7 @@ A typed response contract is a Rust `serde` + `schemars` type. Hugr derives JSON
 
 A Rust-only final answer hook may then rewrite the `Answer` deterministically at the last host-layer boundary before returning it to the caller. This hook is not a core event and does not enter the trace. `extra` is reserved for non-answer extras and is never load-bearing for the contract.
 
-For `BlobHandle { ref: Bytes | Path | Sha256, media_type }`, inbound blobs are materialized into the scratchpad before the turn starts. Filesystem-backed `Sha256` refs hardlink from the shared blob store when possible and copy otherwise. Outbound files under `out/` are moved into the shared content-addressed blob store and returned by `Sha256` ref, with deduplication by hash.
+For `BlobHandle { ref: Bytes | Path | Sha256, media_type }`, inbound blobs are materialized into the scratchpad before the turn starts. Filesystem-backed `Sha256` refs hardlink from the shared blob store when possible and copy otherwise. Outbound files under `out/` are copied into atomically installed shared content-addressed objects and returned by `Sha256` ref, with deduplication by hash.
 
 The orchestration model:
 

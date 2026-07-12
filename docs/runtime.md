@@ -125,7 +125,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
   Replay remains deterministic because the summary text is another recorded model result.
 - **Large payloads are content-addressed blobs.** Tool outputs and file exchange are stored by SHA-256 through the host-layer `BlobBackend`.
 
-  The default `FsBlobStore` wraps `hugr-replay::BlobStore`, shards objects under the shared `~/.hugr/blobs/` store (or `HUGR_BLOB_STORE`), and hardlinks filesystem paths when possible. `MemBlobStore` is the in-memory reference backend.
+  The default `FsBlobStore` wraps `hugr-replay::BlobStore`, shards objects under the shared `~/.hugr/blobs/` store (or `HUGR_BLOB_STORE`), and copies filesystem inputs into atomically installed objects. Existing and loaded objects are checked against their content address. `MemBlobStore` is the in-memory reference backend.
 
   The log holds the reference. Identical content deduplicates to one object.
 - **Token counts come from the host, at ingestion.** The brain cannot tokenize (provider-specific, not sans-IO-friendly); the host annotates records with estimates and the brain's projection just sums them. Authoritative accounting comes from the returned `Usage` per call.
@@ -136,6 +136,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
 - **Atomicity is automatic.** The brain processes one event at a time. The host provides concurrency by merging many sources into one ordered stream. The brain contains no locks.
 - **Foreground vs background** is a policy answer (`is_background(capability)`): a foreground op blocks the turn, while a background op lets the model resume immediately and folds its result in at the next turn boundary. This distinction is invisible to the host.
 - **Cancellation is first-class:** `Command::Cancel` → host aborts → `Event::OpCancelled` → the op is removed and its partial output logged explicitly (`OpOutcome::Cancelled { partial }`). Never an implicit gap.
+- **User turns start only at idle boundaries.** A host that receives user input while an operation is live must buffer it outside the brain and submit it after the current turn. The reducer ignores mid-turn `UserInput` events so a message cannot be recorded and then stranded behind a terminal answer.
 - **Deltas are transport, never durable.** A thousand-token response arrives as many `ModelDelta`s that update the live buffer and are then discarded.
 
   Exactly **one** consolidated `Record::ModelOutput` is appended per model call. Tool chunks follow the same rule and produce one `Record::ToolResult`.
@@ -175,6 +176,8 @@ pub struct Trace {
   The default filesystem implementation is `FsTraceStore`/`TraceStore`, rooted at `<agent-home>/traces`. It uses atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
 - **The `FeedbackBackend`** is a sidecar store keyed to existing trace ids. The default filesystem implementation appends JSON lines under `<agent-home>/feedback/<trace_id>.jsonl`; `MemFeedbackStore` is the in-memory reference implementation. Feedback is intentionally outside replay/verify.
 - **Agent home** resolves the same for development and built surfaces. Resolution uses `HUGR_AGENT_HOME` as a full override, then `HUGR_HOME/<agent-name>`, then `$HOME/.hugr/<agent-name>`, and finally a temporary-directory fallback.
+
+  Built artifacts install their embedded definition into a content-addressed `.definitions/<agent>/<hash>/` cache beside the agent homes. The cache is never unpacked over mutable traces, scratch, memory, or feedback state. Manifest-relative state roots resolve under the agent home, while definition resources and tool grants resolve against the cached definition.
 
   The default scratch root is `<agent-home>/scratch`, the default memory root is `<agent-home>/memory`, and the default feedback root is `<agent-home>/feedback`. `[traces].store` and `[scratchpad].root` remain explicit manifest overrides.
 

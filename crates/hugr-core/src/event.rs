@@ -13,9 +13,8 @@ use crate::primitives::{OpId, Timestamp, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Event {
-    /// New conversational input. May arrive **at any time**, including
-    /// mid-turn: the message is appended to the log and picked up at the next
-    /// turn boundary. `content` is opaque/rich.
+    /// New conversational input. Hosts submit it only while the brain is idle;
+    /// input received during an active turn is ignored. `content` is opaque/rich.
     UserInput {
         content: Value,
         /// Host-provided approximate token count for the durable user message.

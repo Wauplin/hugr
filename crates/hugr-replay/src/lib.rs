@@ -332,6 +332,10 @@ pub enum TraceError {
     #[error("blob not found in store: {hash}")]
     BlobNotFound { hash: String },
 
+    /// A content address was not `sha256:` followed by 64 hexadecimal digits.
+    #[error("invalid blob content address: {hash}")]
+    InvalidBlobHash { hash: String },
+
     /// Replaying the trace's events through a fresh brain produced a log that
     /// differs from the recorded log — the fold is no longer deterministic for
     /// this trace (the regression [`verify`] exists to catch).
