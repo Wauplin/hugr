@@ -1,5 +1,5 @@
 /target
-crates/hugr-python/target
+crates/huggr-python/target
 **/*.rs.bk
 
 # Python (bindings/python)

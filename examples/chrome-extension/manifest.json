@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "hugr-wasm",
+  "name": "huggr-wasm",
   "version": "0.0.2",
-  "description": "AI-powered browser agent powered by Hugr.",
+  "description": "AI-powered browser agent powered by Huggr.",
   "action": {
-    "default_title": "hugr-wasm"
+    "default_title": "huggr-wasm"
   },
   "background": {
     "service_worker": "service_worker.js",

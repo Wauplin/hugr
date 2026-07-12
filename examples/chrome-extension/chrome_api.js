@@ -9,14 +9,14 @@ export async function chromeCall(message) {
 export async function invokeBrowserCapability(name, args) {
   switch (name) {
     case "tabs_list":
-      return (await chromeCall({ type: "hugr.tabs.list" })).tabs.map(normalizeTab);
+      return (await chromeCall({ type: "huggr.tabs.list" })).tabs.map(normalizeTab);
     case "tab_open_url":
-      return normalizeTab((await chromeCall({ type: "hugr.tab.open", url: args.url, active: args.active })).tab);
+      return normalizeTab((await chromeCall({ type: "huggr.tab.open", url: args.url, active: args.active })).tab);
     case "tab_close":
-      await chromeCall({ type: "hugr.tab.close", tabId: args.tab_id });
+      await chromeCall({ type: "huggr.tab.close", tabId: args.tab_id });
       return { closed: true };
     case "tab_switch":
-      await chromeCall({ type: "hugr.tab.switch", tabId: args.tab_id });
+      await chromeCall({ type: "huggr.tab.switch", tabId: args.tab_id });
       return { active: true };
     case "tab_reload":
       await chrome.tabs.reload(args.tab_id);

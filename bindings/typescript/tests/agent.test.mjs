@@ -56,14 +56,14 @@ function lookupTool(calls) {
 test("tool round-trip with accounting", async () => {
   const calls = [];
   const agent = makeAgent({ tools: [lookupTool(calls)] });
-  server.scriptToolCall("lookup", { word: "hugr" });
-  server.scriptText(JSON.stringify({ answer: "hugr is a toolkit" }));
+  server.scriptToolCall("lookup", { word: "huggr" });
+  server.scriptText(JSON.stringify({ answer: "huggr is a toolkit" }));
 
-  const answer = await agent.ask("What is hugr?");
+  const answer = await agent.ask("What is huggr?");
 
   assert.equal(answer.status, "success");
-  assert.deepEqual(answer.response, { answer: "hugr is a toolkit" });
-  assert.deepEqual(calls, [{ word: "hugr" }]);
+  assert.deepEqual(answer.response, { answer: "huggr is a toolkit" });
+  assert.deepEqual(calls, [{ word: "huggr" }]);
   assert.equal(answer.metadata.model_calls, 2);
   assert.equal(answer.metadata.tool_calls, 1);
   assert.ok(answer.metadata.cost_micro_usd > 0);
@@ -95,7 +95,7 @@ test("errors are answers", async () => {
 test("event stream ordering", async () => {
   const calls = [];
   const agent = makeAgent({ tools: [lookupTool(calls)] });
-  server.scriptToolCall("lookup", { word: "hugr" });
+  server.scriptToolCall("lookup", { word: "huggr" });
   server.scriptText('{"answer": "ok"}');
   const events = [];
   for await (const event of agent.run("q")) events.push(event);
@@ -108,7 +108,7 @@ test("event stream ordering", async () => {
 });
 
 test("resume and fork with fs store; verify via wasm", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hugr-ts-test-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "huggr-ts-test-"));
   const runtime = {
     loadWasm,
     traces: new FsTraceStore(path.join(home, "traces")),
@@ -159,7 +159,7 @@ test("feedback round-trip", async () => {
 });
 
 test("fs stores reject trace path traversal", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hugr-ts-keys-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "huggr-ts-keys-"));
   const traces = new FsTraceStore(path.join(home, "traces"));
   const feedback = new FsFeedbackStore(path.join(home, "feedback"));
   await assert.rejects(() => traces.get("../outside"), /invalid trace id/);
@@ -181,8 +181,8 @@ test("timeout interrupts a running tool and records cancellation", async () => {
 });
 
 test("createAgent defaults to the agent home layout", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hugr-ts-home-"));
-  process.env.HUGR_HOME = home;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "huggr-ts-home-"));
+  process.env.HUGGR_HOME = home;
   try {
     const agent = createAgent({
       name: "ts-home-agent",
@@ -194,7 +194,7 @@ test("createAgent defaults to the agent home layout", async () => {
     assert.equal(answer.status, "success");
     assert.ok(fs.existsSync(path.join(home, "ts-home-agent", "traces", `${answer.trace_id}.json`)));
   } finally {
-    delete process.env.HUGR_HOME;
+    delete process.env.HUGGR_HOME;
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

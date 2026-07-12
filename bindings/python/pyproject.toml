@@ -3,17 +3,17 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "hugr-agents"
+name = "huggr-agents"
 version = "0.0.2"
-description = "Define Hugr subagents in Python — tools as callables, config as data — running on the Rust runtime."
+description = "Define huglets in Python — tools as callables, config as data — running on the Rust runtime."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 
 [tool.maturin]
-manifest-path = "../../crates/hugr-python/Cargo.toml"
+manifest-path = "../../crates/huggr-python/Cargo.toml"
 python-source = "python"
-module-name = "hugr_agents._native"
+module-name = "huggr_agents._native"
 features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]

@@ -1,21 +1,21 @@
-"""Evaluate the hugr-docs agent against the published docs-QA dataset.
+"""Evaluate the huglet-docs agent against the published docs-QA dataset.
 
-Downloads the dataset from the Hub, asks the hugr-docs agent (in-process, through its typed Python wheel) every question, and grades each answer with a judge agent defined on the `hugr-agents` surface.
+Downloads the dataset from the Hub, asks the huglet-docs agent (in-process, through its typed Python wheel) every question, and grades each answer with a judge agent defined on the `huggr-agents` surface.
 """
 
 import json
 import sys
 from pathlib import Path
 
-import hugr_agents as hugr
-import hugr_docs
+import huggr_agents as huggr
+import huglet_docs
 from huggingface_hub import HfApi, hf_hub_download
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 
-REPO_ID = f"{HfApi().whoami()['name']}/hugr-docs-qa"
+REPO_ID = f"{HfApi().whoami()['name']}/huglet-docs-qa"
 
-judge = hugr.Agent(
+judge = huggr.Agent(
     name="qa-judge",
     description="Grades a candidate answer against the expected one.",
     system=(
@@ -25,7 +25,7 @@ judge = hugr.Agent(
     ),
     models={
         "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGR_API_KEY",
+        "api_key_env": "HUGGR_API_KEY",
         "default": "medium",
         "medium": {
             "model": "google/gemma-4-31B-it:cerebras",
@@ -45,13 +45,13 @@ judge = hugr.Agent(
 def main() -> None:
     data = hf_hub_download(REPO_ID, "data/qa.jsonl", repo_type="dataset")
     items = [json.loads(line) for line in Path(data).read_text().splitlines()]
-    print(f"evaluating hugr-docs on {len(items)} questions from {REPO_ID}\n")
+    print(f"evaluating huglet-docs on {len(items)} questions from {REPO_ID}\n")
 
     correct, cost = 0, 0
     for number, item in enumerate(items, 1):
-        answered = hugr_docs.ask(str(DOCS), item["question"])
+        answered = huglet_docs.ask(str(DOCS), item["question"])
         if not answered.ok:
-            sys.exit(f"hugr-docs failed (trace {answered.trace_id}): {answered.error}")
+            sys.exit(f"huglet-docs failed (trace {answered.trace_id}): {answered.error}")
         candidate = answered.response.response
 
         graded = judge.ask(

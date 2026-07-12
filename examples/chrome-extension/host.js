@@ -1,4 +1,4 @@
-// The Chrome host: wires the generic Hugr agent driver to this extension's
+// The Chrome host: wires the generic Huggr agent driver to this extension's
 // capability dispatcher (chrome.* APIs), IndexedDB storage, and system prompt.
 import { invokeBrowserCapability } from "./chrome_api.js";
 import { loadSettings, saveSession } from "./vendor/indexed_db.js";
@@ -9,9 +9,9 @@ let wasmReady;
 export const host = {
   async loadWasm() {
     if (!wasmReady) {
-      wasmReady = import("./pkg/hugr_wasm.js").then(async (module) => {
+      wasmReady = import("./pkg/huggr_wasm.js").then(async (module) => {
         await module.default();
-        return module.HugrWasm;
+        return module.HuggrWasm;
       });
     }
     return wasmReady;

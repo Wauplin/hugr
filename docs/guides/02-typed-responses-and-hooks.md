@@ -1,32 +1,32 @@
 # Typed responses and answer hooks
 
-This guide explains how a Hugr agent's response contract works. `RESPONSE_RUST_TYPE` turns a Rust struct into the provider's structured-output schema. The optional `MODEL_RESPONSE_RUST_TYPE` lets the model fill a simpler schema than the one users receive. `answer_hooks()` bridges the two with deterministic post-processing.
+This guide explains how a Huggr agent's response contract works. `RESPONSE_RUST_TYPE` turns a Rust struct into the provider's structured-output schema. The optional `MODEL_RESPONSE_RUST_TYPE` lets the model fill a simpler schema than the one users receive. `answer_hooks()` bridges the two with deterministic post-processing.
 
-The worked example is the checked-in reference agent `examples/hugr-docs`. It enriches model-cited document paths into public Hugging Face documentation URLs.
+The worked example is the checked-in reference agent `examples/huglet-docs`. It enriches model-cited document paths into public Hugging Face documentation URLs.
 
 Prerequisite: [guide 1](01-first-agent-cli.md). For the design background, see [language surfaces](../agents.md#language-surfaces).
 
 ## How the contract is discovered
 
-An agent folder is also a Rust crate, and `hugr build` (and typed `hugr run`, which uses the same shim) reads three things straight out of `src/lib.rs`:
+An agent folder is also a Rust crate, and `huggr build` (and typed `huggr run`, which uses the same shim) reads three things straight out of `src/lib.rs`:
 
-- `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` is **required**. The build fails with an explicit error if it is missing, and the value must look like `crate_name::TypeName`. The part before `::` names the dependency linked by the generated shim. If your Cargo package name differs (`hugr-docs` vs `hugr_docs`), the shim handles the rename.
+- `pub const RESPONSE_RUST_TYPE: &str = "crate_name::TypeName";` is **required**. The build fails with an explicit error if it is missing, and the value must look like `crate_name::TypeName`. The part before `::` names the dependency linked by the generated shim. If your Cargo package name differs (`huglet-docs` vs `huglet_docs`), the shim handles the rename.
 - `pub const MODEL_RESPONSE_RUST_TYPE: &str = ...;` is **optional**. When present and different from `RESPONSE_RUST_TYPE`, its schema is what the provider produces. The public type remains visible to callers in `Answer.response` and in `--config`/`--describe` output. When absent, one type plays both roles.
 - `pub fn answer_hooks() -> Vec<AnswerHook>` is **optional**. If the source contains such a function, the generated shim registers the hooks and runs them on every finished `Answer`.
 
 There is no registration ceremony: export the const(s) and the function, and the build wires everything. Under the hood the shim calls `ResponseContract::from_type::<Model>(...)` (plus `.with_public_type::<Public>()` when the two differ) and `.with_answer_hooks(...)`; you never write that code yourself.
 
-## The worked example: hugr-docs
+## The worked example: huglet-docs
 
-`examples/hugr-docs` answers questions from a read-only docs folder and cites its sources. The design problem: we want users to get *URLs*, but asking the model to construct `https://huggingface.co/docs/...` URLs invites hallucination. The fix is a split contract; the model cites bare paths, and a hook derives the URLs deterministically.
+`examples/huglet-docs` answers questions from a read-only docs folder and cites its sources. The design problem: we want users to get *URLs*, but asking the model to construct `https://huggingface.co/docs/...` URLs invites hallucination. The fix is a split contract; the model cites bare paths, and a hook derives the URLs deterministically.
 
 ### Two response types
 
-From `examples/hugr-docs/src/lib.rs`:
+From `examples/huglet-docs/src/lib.rs`:
 
 ```rust
-pub const RESPONSE_RUST_TYPE: &str = "hugr_docs::DocsResponse";
-pub const MODEL_RESPONSE_RUST_TYPE: &str = "hugr_docs::DocsModelResponse";
+pub const RESPONSE_RUST_TYPE: &str = "huglet_docs::DocsResponse";
+pub const MODEL_RESPONSE_RUST_TYPE: &str = "huglet_docs::DocsModelResponse";
 
 /// Public response payload returned by the docs agent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -61,7 +61,7 @@ A hook is a named function that mutates the finished `Answer` in place, after th
 
 ```rust
 pub fn answer_hooks() -> Vec<AnswerHook> {
-    vec![AnswerHook::new("hugr_docs::document_urls", |answer| {
+    vec![AnswerHook::new("huglet_docs::document_urls", |answer| {
         if answer.status != STATUS_SUCCESS {
             return;
         }
@@ -86,29 +86,29 @@ pub fn answer_hooks() -> Vec<AnswerHook> {
 Three habits worth copying:
 
 - **Bail early on non-success.** Error answers carry `{"error": ...}` in `response`; a hook should leave them alone.
-- **Be defensive about shape.** Hooks work on `serde_json::Value`, so match with `get_mut`/`as_array_mut` and skip quietly rather than unwrap; the hugr-docs hook even handles entries that are already objects, making it idempotent.
-- **Give the hook a namespaced name** (`"hugr_docs::document_urls"`): the name identifies the hook in traces and diagnostics.
+- **Be defensive about shape.** Hooks work on `serde_json::Value`, so match with `get_mut`/`as_array_mut` and skip quietly rather than unwrap; the huglet-docs hook even handles entries that are already objects, making it idempotent.
+- **Give the hook a namespaced name** (`"huglet_docs::document_urls"`): the name identifies the hook in traces and diagnostics.
 
 Hooks must be deterministic pure transformations, such as string processing or lookups against shipped data, with no IO or clock access. Answers are recorded in traces and replayed bit-for-bit. Use a hook for work such as deriving documentation URLs; use a model tool for network calls.
 
-The hook is unit-testable like any function; build an `Answer`, apply `answer_hooks()`, assert on `answer.response` (see the test at the bottom of `examples/hugr-docs/src/lib.rs`).
+The hook is unit-testable like any function; build an `Answer`, apply `answer_hooks()`, assert on `answer.response` (see the test at the bottom of `examples/huglet-docs/src/lib.rs`).
 
 ### Run it
 
 From the repo root:
 
 ```bash
-export HUGR_API_KEY=hf_...
-hugr run examples/hugr-docs ./docs "What is the narrow-waist rule?"
+export HUGGR_API_KEY=hf_...
+huggr run examples/huglet-docs ./docs "What is the narrow-waist rule?"
 ```
 
-(`./docs` fills the agent's required positional runtime argument `docs_path`, declared under `[runtime.args.docs_path]` in its `hugr.toml`; it re-jails `fs_read` to that folder per invocation.) The answer's `response.related_documents` comes back as `[{"path": "...", "url": "https://huggingface.co/docs/..."}]`; paths chosen by the model, URLs stamped by the hook.
+(`./docs` fills the agent's required positional runtime argument `docs_path`, declared under `[runtime.args.docs_path]` in its `huggr.toml`; it re-jails `fs_read` to that folder per invocation.) The answer's `response.related_documents` comes back as `[{"path": "...", "url": "https://huggingface.co/docs/..."}]`; paths chosen by the model, URLs stamped by the hook.
 
 ## Growing your own contract
 
 Take the weather agent from guide 1 and evolve it the same way:
 
-1. Widen `Response` in `src/lib.rs` with the fields you want callers to rely on (say `temperature_c: f64`, `conditions: String`). That alone changes the provider schema on the next run; no manifest edit, no rebuild command beyond `hugr run`/`hugr build` as usual.
+1. Widen `Response` in `src/lib.rs` with the fields you want callers to rely on (say `temperature_c: f64`, `conditions: String`). That alone changes the provider schema on the next run; no manifest edit, no rebuild command beyond `huggr run`/`huggr build` as usual.
 2. If a field is mechanical (units conversion, formatting, canonical links), move it out of the model's schema: declare a leaner model type, point `MODEL_RESPONSE_RUST_TYPE` at it, and compute the field in a hook.
 3. Keep `RESPONSE_RUST_TYPE` naming the public type. That is the contract received by every downstream consumer, including the CLI JSON, MCP, and agent-as-tool callers.
 
@@ -116,4 +116,4 @@ The rule of thumb: **the model fills in what only the model knows; hooks fill in
 
 ## Next
 
-Continue with [guide 3](03-first-chrome-extension.md), read `examples/hugr-docs/README.md` for runtime arguments and MCP serving, or see [agents as tools](../agents.md#agents-as-tools) to compose the binary into a larger agent.
+Continue with [guide 3](03-first-chrome-extension.md), read `examples/huglet-docs/README.md` for runtime arguments and MCP serving, or see [agents as tools](../agents.md#agents-as-tools) to compose the binary into a larger agent.

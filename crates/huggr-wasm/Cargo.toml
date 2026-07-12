@@ -1,0 +1,22 @@
+[package]
+name = "huggr-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+huggr-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+# Pure-data trace format + replay/verify fold; compiles to wasm because its fs
+# helpers are never called from here.
+huggr-replay.workspace = true
+

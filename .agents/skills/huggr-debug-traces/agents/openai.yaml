@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huggr Debug Traces"
+  short_description: "Replay and diagnose Huggr traces"
+  default_prompt: "Use $huggr-debug-traces to inspect, replay, verify, and analyze a Huggr trace."

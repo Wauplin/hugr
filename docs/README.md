@@ -1,10 +1,10 @@
-# Hugr documentation
+# Huggr documentation
 
-Hugr is a toolkit for building small, self-contained, domain-specific subagents on a runtime-free, sans-IO Rust core.
+Huggr is a toolkit for building small, self-contained, domain-specific huglets on a runtime-free, sans-IO Rust core.
 
 ## Concepts and architecture
 
-- [Overview](overview.md): vision, goals, non-goals, and the subagent model.
+- [Overview](overview.md): vision, goals, non-goals, and the huglet model.
 - [Agents](agents.md): defining, running, building, composing, and embedding agents.
 - [Project structure](project-structure.md): crate boundaries, dependency rules, and standards positioning.
 - [Runtime](runtime.md): the sans-IO design, core and host contract, state, concurrency, providers, replay, and risks.

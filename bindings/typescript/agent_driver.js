@@ -1,16 +1,16 @@
 import { callOpenAiCompatible } from "./openai_adapter.js";
 
-// The generic Hugr agent driver: it drives the WASM brain (submit/poll) and
+// The generic Huggr agent driver: it drives the WASM brain (submit/poll) and
 // performs IO through the injected `host`:
-//   host.loadWasm(): Promise<HugrWasm class>   — wasm-bindgen module, initialized
+//   host.loadWasm(): Promise<HuggrWasm class>   — wasm-bindgen module, initialized
 //   host.invokeCapability(name, args): Promise — the capability dispatcher
 //   host.loadSettings(): Promise<settings>     — apiKey/baseUrl/model/limits
 //   host.saveSession(record): Promise          — session/trace persistence
 //   host.systemPrompt: string                  — the agent's system prompt
 export async function runAgent(question, host, hooks = {}) {
-  const HugrWasm = await host.loadWasm();
+  const HuggrWasm = await host.loadWasm();
   const settings = await host.loadSettings();
-  const session = new HugrWasm(JSON.stringify(toRustConfig(settings, host)));
+  const session = new HuggrWasm(JSON.stringify(toRustConfig(settings, host)));
   const traceId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const timeline = [];
@@ -108,7 +108,7 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
     throwIfAborted(hooks.signal);
     steps += 1;
     if (steps > 120) {
-      throw new Error("stopped after 120 Hugr commands to avoid an infinite browser loop");
+      throw new Error("stopped after 120 Huggr commands to avoid an infinite browser loop");
     }
     const command = queue.shift();
     const [kind, payload] = tagged(command);
@@ -238,7 +238,7 @@ async function driveCommands(session, initialCommands, settings, host, hooks, pu
         await persistence?.autosave?.({ status: doneLabel(payload), ok: normalizeDone(payload).ok });
         break;
       default:
-        throw new Error(`unknown Hugr command: ${kind}`);
+        throw new Error(`unknown Huggr command: ${kind}`);
     }
   }
   if (!done) {

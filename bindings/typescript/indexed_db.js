@@ -1,4 +1,4 @@
-const DB_NAME = "hugr-wasm";
+const DB_NAME = "huggr-wasm";
 const DB_VERSION = 1;
 
 export async function loadSettings() {

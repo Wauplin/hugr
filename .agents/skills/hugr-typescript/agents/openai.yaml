@@ -1,4 +1,0 @@
-interface:
-  display_name: "Hugr TypeScript"
-  short_description: "Build Hugr agents with TypeScript"
-  default_prompt: "Use $hugr-typescript to define and run a Hugr agent in Node or the browser."

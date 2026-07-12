@@ -1,0 +1,24 @@
+# Huggr agent definition — edit, then run with:
+#   huglet-weather <question>            (a built binary)
+#   huggr run . "<question>"            (from this folder)
+# Set the provider key first:   export HUGGR_API_KEY=...
+
+[agent]
+name = "huglet-weather"
+version = "0.1.0"
+description = "Answers current-weather questions via the Open-Meteo API."
+
+[models]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HUGGR_API_KEY"
+default = "medium"
+
+[models.medium]
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
+
+# GET-only HTTP, jailed to an allowlist of hosts (the sandbox boundary).
+[tools.web_fetch]
+allow_hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
+

@@ -1,18 +1,18 @@
 # Your first agent from the CLI
 
-This guide scaffolds a weather-answering subagent with `hugr new` and explains every generated file. It then asks a question with `hugr run`, resumes and forks conversations by trace id, inspects the agent card with `--describe`, and compiles one self-contained binary with `hugr build`.
+This guide scaffolds a weather-answering huglet with `huggr new` and explains every generated file. It then asks a question with `huggr run`, resumes and forks conversations by trace id, inspects the agent card with `--describe`, and compiles one self-contained binary with `huggr build`.
 
-No prior Hugr knowledge is assumed. For the design rationale behind any step, see [the subagent overview](../overview.md#what-a-subagent-is).
+No prior Huggr knowledge is assumed. For the design rationale behind any step, see [the huglet overview](../overview.md#what-a-huglet-is).
 
 ## 1. Scaffold the agent
 
 From the directory where you want the new folder to appear, run:
 
 ```bash
-hugr new my-agent
+huggr new my-agent
 ```
 
-This creates `./my-agent` from the default `weather` template (the checked-in `examples/hugr-weather` crate, embedded at compile time with the name substituted; pass `--template blank` for a tool-free starting point instead). The command refuses to overwrite an existing folder and tells you the next step on stderr.
+This creates `./my-agent` from the default `weather` template (the checked-in `examples/huglet-weather` crate, embedded at compile time with the name substituted; pass `--template blank` for a tool-free starting point instead). The command refuses to overwrite an existing folder and tells you the next step on stderr.
 
 ## 2. Anatomy of the generated files
 
@@ -20,14 +20,14 @@ The folder is both an agent definition and a small Rust crate:
 
 ```
 my-agent/
-  hugr.toml    # the manifest: identity, models, tool grants, limits
+  huggr.toml    # the manifest: identity, models, tool grants, limits
   SYSTEM.md    # the system prompt
   src/lib.rs   # the typed Rust response contract
   Cargo.toml   # a normal crate manifest (serde + schemars)
   README.md    # next steps
 ```
 
-### hugr.toml
+### huggr.toml
 
 The manifest defines the agent's privileges. The agent can use only what is granted here (see [the manifest reference](../agents.md#the-manifest)). The weather template's manifest has four sections:
 
@@ -39,7 +39,7 @@ description = "Answers current-weather questions via the Open-Meteo API."
 
 [models]
 base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGR_API_KEY"
+api_key_env = "HUGGR_API_KEY"
 default = "medium"
 
 [models.medium]
@@ -52,7 +52,7 @@ output_usd_per_m_tokens = 1.5
 allow_hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
 ```
 
-- `[agent]` is the identity: the name also names the agent's state home (`~/.hugr/<name>/` by default, where traces and the scratchpad live).
+- `[agent]` is the identity: the name also names the agent's state home (`~/.huggr/<name>/` by default, where traces and the scratchpad live).
 - `[models]` points at any OpenAI-compatible endpoint; `api_key_env` names the environment variable that holds the key (the value itself never appears in any output). Tiers like `[models.medium]` carry the model id and its per-million-token prices, which is how every answer gets a cost.
 - `[tools.web_fetch]` is a *grant*: it registers the library's GET-only HTTP tool, jailed to those two Open-Meteo hosts. Delete the section and the agent has no network at all.
 - There is no `[limits]` block and none is required: an agent has no caps by default. Add `[limits]` (`max_model_calls`, `max_cost_micro_usd`, `timeout_s`) when you want to bound an ask; every unset key is unbounded.
@@ -75,15 +75,15 @@ pub struct Response {
 }
 ```
 
-`hugr run` and `hugr build` read `RESPONSE_RUST_TYPE`, derive a JSON Schema from the type with `schemars`, ask the provider for that structured output, and cast the final JSON with `serde` before it lands in `Answer.response`. Right now it is a single string; guide 2 shows how to grow it.
+`huggr run` and `huggr build` read `RESPONSE_RUST_TYPE`, derive a JSON Schema from the type with `schemars`, ask the provider for that structured output, and cast the final JSON with `serde` before it lands in `Answer.response`. Right now it is a single string; guide 2 shows how to grow it.
 
 ## 3. Ask a question
 
 Set the provider key named by `api_key_env`, then run one ask from inside (or pointing at) the folder:
 
 ```bash
-export HUGR_API_KEY=...   # e.g. an hf_... token for router.huggingface.co
-hugr run my-agent "what's the weather in Paris?"
+export HUGGR_API_KEY=...   # e.g. an hf_... token for router.huggingface.co
+huggr run my-agent "what's the weather in Paris?"
 ```
 
 You get one pretty-printed JSON `Answer` on stdout, while diagnostics go to stderr. Add `--json` for compact single-line output.
@@ -92,51 +92,51 @@ The `Answer` carries `status`, your typed `response` object, a `trace_id`, and m
 
 **The ask path always exits 0.** A missing key, a bad manifest, or a blown limit returns a `status: "error"` answer instead of crashing. See [the Ask and Answer contract](../agents.md#the-ask-and-answer-contract).
 
-Because this agent has a typed Rust contract, the first `hugr run` compiles a small cached shim crate that links your `src/lib.rs`; later runs reuse it, so only the first ask pays the compile.
+Because this agent has a typed Rust contract, the first `huggr run` compiles a small cached shim crate that links your `src/lib.rs`; later runs reuse it, so only the first ask pays the compile.
 
 ## 4. Resume and fork with trace ids
 
 Every ask is recorded as an immutable trace. List them as a lineage tree:
 
 ```bash
-hugr traces my-agent
+huggr traces my-agent
 ```
 
 To continue a conversation, pass the parent's trace id back in:
 
 ```bash
-hugr run my-agent --trace <TRACE_ID> "and in London?"
+huggr run my-agent --trace <TRACE_ID> "and in London?"
 ```
 
-A resumed ask never mutates the old trace. It writes a **new** trace with `depends_on` pointing at the parent. Resuming the same id twice forks the conversation into two branches, and `hugr traces` shows the tree.
+A resumed ask never mutates the old trace. It writes a **new** trace with `depends_on` pointing at the parent. Resuming the same id twice forks the conversation into two branches, and `huggr traces` shows the tree.
 
-`hugr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit. `hugr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../runtime.md#determinism-replay-and-traces) for the underlying design.
+`huggr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit. `huggr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../runtime.md#determinism-replay-and-traces) for the underlying design.
 
-`hugr stats my-agent` aggregates cost, tokens, and tool usage across stored traces.
+`huggr stats my-agent` aggregates cost, tokens, and tool usage across stored traces.
 
 ## 5. Inspect the agent card
 
 Every agent surface answers `--describe` with its agent card, including its name, scoped tools, priced model tiers, and limits. `--config` returns the parsed manifest as JSON, including the API key environment variable name and whether it resolves, but never the secret:
 
 ```bash
-hugr run my-agent -- --describe
+huggr run my-agent -- --describe
 ```
 
-(The `--` keeps `hugr` from eating the flag; the flags after it go to the agent's own generated surface.)
+(The `--` keeps `huggr` from eating the flag; the flags after it go to the agent's own generated surface.)
 
 ## 6. Build one standalone binary
 
 ```bash
-hugr build my-agent --release
+huggr build my-agent --release
 ```
 
 This generates a shim crate under `my-agent/dist/` (override with `--out <dir>`). The shim embeds the agent bundle, including the manifest, prompt, and response contract, then compiles it with cargo.
 
-The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repository checkout. On startup, it installs its bundle into a content-addressed `.definitions/<name>/<hash>/` cache beside `~/.hugr/<name>/`; traces and other mutable state remain in the agent home, so `--trace` resume works anywhere you copy the binary.
+The result is one self-contained binary at `my-agent/dist/my_agent-cli/target/release/my_agent` that needs no repository checkout. On startup, it installs its bundle into a content-addressed `.definitions/<name>/<hash>/` cache beside `~/.huggr/<name>/`; traces and other mutable state remain in the agent home, so `--trace` resume works anywhere you copy the binary.
 
 `--surface python` also generates a pip-installable Python module.
 
-The built binary speaks the same universal surface as `hugr run`:
+The built binary speaks the same universal surface as `huggr run`:
 
 ```
 my_agent "question" [--trace <ID>] [--json|--pretty] [--blob <PATH>...] [--skill <PATH>...] [--stream]
@@ -146,7 +146,7 @@ my_agent --mcp-serve
 my_agent --cron-serve [--allow-uncapped]
 ```
 
-- `--trace <ID>` resumes/forks exactly as with `hugr run`; `--json` switches from the default pretty printing to compact.
+- `--trace <ID>` resumes/forks exactly as with `huggr run`; `--json` switches from the default pretty printing to compact.
 - `--blob <PATH>` (repeatable) hands local files in as inbound blobs.
 - `--skill <PATH>` (repeatable) adds a standard `SKILL.md` folder, or a folder containing skills, for this ask. The model receives a compact catalog and loads matching instructions on demand.
 - `--stream` emits one JSON event per line as the run progresses, then the final `Answer` line.

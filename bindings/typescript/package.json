@@ -1,9 +1,9 @@
 {
-  "name": "hugr-agents",
+  "name": "huggr-agents",
   "private": true,
   "type": "module",
   "version": "0.0.2",
-  "description": "Define Hugr subagents in TypeScript — tools as functions, config as data — running on the WASM brain (Node and browser).",
+  "description": "Define huglets in TypeScript — tools as functions, config as data — running on the WASM brain (Node and browser).",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

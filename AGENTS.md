@@ -1,12 +1,12 @@
 # AGENTS.md
 
-Guidance for working in the Hugr repository.
+Guidance for working in the Huggr repository.
 
 ## What this is
 
-Hugr is a **toolkit for building small, self-contained, domain-specific subagents** on a runtime-free, sans-IO Rust core.
+Huggr is a **toolkit for building small, self-contained, domain-specific huglets** on a runtime-free, sans-IO Rust core.
 
-A subagent is a small Rust crate plus a system prompt and a set of tools with declared privileges. Hugr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in.
+A huglet is a small Rust crate plus a system prompt and a set of tools with declared privileges. Huggr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in.
 
 The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality.
 
@@ -14,11 +14,11 @@ The documentation under `docs/` contains the design, architecture, and threat mo
 
 ## The one rule that matters most
 
-**`hugr-core` is sans-IO and pure.** It is a reducer: `submit(event)` folds an event into state and queues commands; `poll()` drains them. It must never do IO.
+**`huggr-core` is sans-IO and pure.** It is a reducer: `submit(event)` folds an event into state and queues commands; `poll()` drains them. It must never do IO.
 
 Hard invariants:
 
-- **No environmental dependencies in `hugr-core`.** No `tokio`, no `reqwest`, no `std::fs`, no sockets, no clock, no RNG, no threads. Only pure-data crates (`serde`, `serde_json`). Verify with `cargo tree -p hugr-core`.
+- **No environmental dependencies in `huggr-core`.** No `tokio`, no `reqwest`, no `std::fs`, no sockets, no clock, no RNG, no threads. Only pure-data crates (`serde`, `serde_json`). Verify with `cargo tree -p huggr-core`.
 - **The brain is single-threaded.** All concurrency lives in the host. The moment the brain is multithreaded, we lose sans-IO, replay, and easy bindings.
 - **All nondeterminism is injected** as events (`Tick` for time; model output, tool results, user input as events). The brain never reads a clock or RNG. This makes replay bit-for-bit deterministic.
 - **The log is the source of truth.** `BrainState` is a *fold* over the log and must stay rebuildable from it. Don't add un-derived state.
@@ -39,12 +39,12 @@ Hard invariants:
 
 - **Agent strategy** (which model selector, how to project context, whether a capability is gated) lives in the pluggable `TurnPolicy`, never hardcoded in the reducer. `StaticPolicy` is the trivial pass-through projection. Custom policy decoders registered in `PolicyRegistry` must be pure so replay/resume stay deterministic.
 - **The reducer** (`brain.rs`) maintains the log and op table, drives the turn loop, asks the policy, routes opaque payloads, and decides when to finish or checkpoint. Strategy belongs in a policy, not the reducer.
-- **IO, HTTP, model resolution, and storage** belong in the host, not in `hugr-core`.
+- **IO, HTTP, model resolution, and storage** belong in the host, not in `huggr-core`.
 
 ## Project layout
 
 ```
-crates/hugr-core/       # the sans-IO brain (NO tokio/reqwest/fs)
+crates/huggr-core/       # the sans-IO brain (NO tokio/reqwest/fs)
   src/primitives.rs  # OpId, Seq, Timestamp, Value
   src/model.rs       # ModelRequest/Delta/Output, ToolCall, Usage, ModelSelector
   src/command.rs     # Command (brain → host) + OutputEvent
@@ -54,56 +54,56 @@ crates/hugr-core/       # the sans-IO brain (NO tokio/reqwest/fs)
   src/policy.rs      # TurnPolicy trait + StaticPolicy
   src/brain.rs       # Brain: poll() + submit() + the reducer
 
-crates/hugr-host/       # native tokio host: Engine/EngineBuilder driver loop,
+crates/huggr-host/       # native tokio host: Engine/EngineBuilder driver loop,
                         #   Capability trait + registry, ModelAdapter + registry,
                         #   Frontend trait, MCP stdio client, JSON-line framing
-crates/hugr-providers/  # OpenAI-compatible streaming adapter (retries inside)
-crates/hugr-replay/     # trace format (Trace { meta, events, log, commands, blobs })
+crates/huggr-providers/  # OpenAI-compatible streaming adapter (retries inside)
+crates/huggr-replay/     # trace format (Trace { meta, events, log, commands, blobs })
                         #   + fs content-addressed BlobStore + replay/verify/inspect
-crates/hugr-agent/      # the subagent runtime: Ask/Answer, trace/blob/scratch backends
+crates/huggr-agent/      # the huglet runtime: Ask/Answer, trace/blob/scratch backends
                         #   (trace_id/depends_on, fork), scratchpad, blobs,
                         #   limits, cost accounting, agent-as-tool (subprocess)
-crates/hugr-toolkit/    # agent crate manifests (hugr.toml + SYSTEM.md), the tool library
-                        #   (filesystem, shell, web, state, delegation), and the `hugr`
+crates/huggr-toolkit/    # agent crate manifests (huggr.toml + SYSTEM.md), the tool library
+                        #   (filesystem, shell, web, state, delegation), and the `huggr`
                         #   CLI: new / run / build / traces / replay / verify
-crates/hugr-wasm/       # generic WASM bindings around hugr-core for browser/JS
+crates/huggr-wasm/       # generic WASM bindings around huggr-core for browser/JS
                         #   hosts (submit/poll over JSON + browser tool schemas)
-crates/hugr-python/     # PyO3 runtime embedding (outside the cargo workspace;
+crates/huggr-python/     # PyO3 runtime embedding (outside the cargo workspace;
                         #   built by maturin from bindings/python)
-bindings/python/        # the `hugr-agents` Python package: typed pure-Python
-                        #   layer + pytest suite over crates/hugr-python
-bindings/typescript/    # the `hugr-agents` TS package: typed Agent over the WASM
+bindings/python/        # the `huggr-agents` Python package: typed pure-Python
+                        #   layer + pytest suite over crates/huggr-python
+bindings/typescript/    # the `huggr-agents` TS package: typed Agent over the WASM
                         #   brain (node + browser) + the vendored extension JS modules
-examples/hugr-docs/     # the reference subagent crate (docs Q&A): hugr.toml +
-                        #   SYSTEM.md plus typed response contract using hugr-toolkit
-examples/hugr-weather/  # the self-contained beginner example; also the source of
-                        #   the `hugr new --template weather` scaffold (embedded
+examples/huglet-docs/     # the reference huglet crate (docs Q&A): huggr.toml +
+                        #   SYSTEM.md plus typed response contract using huggr-toolkit
+examples/huglet-weather/  # the self-contained beginner example; also the source of
+                        #   the `huggr new --template weather` scaffold (embedded
                         #   at compile time, name substituted)
-examples/hugr-insights/ # offline self-improvement agent: mines another agent's
+examples/huglet-insights/ # offline self-improvement agent: mines another agent's
                         #   traces + feedback via traces_read and reports suggestions
-examples/hugr-datasmith/ # docs-QA dataset synthesizer: fs_read-jailed, typed QaDataset
+examples/huglet-datasmith/ # docs-QA dataset synthesizer: fs_read-jailed, typed QaDataset
                         #   contract, buildable as a typed Python wheel
 examples/hf-librarian/  # Python-surface pipeline: datasmith wheel → jailed Hub
-                        #   publisher → judge-graded eval of hugr-docs
+                        #   publisher → judge-graded eval of huglet-docs
 examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   side-panel UI, MV3 manifest (vendors the generic JS)
-.agents/skills/          # concise coding-agent workflows for building Hugr agents,
+.agents/skills/          # concise coding-agent workflows for building Huggr agents,
                         #   language/browser surfaces, and trace debugging
 ```
 
-`hugr-replay` is a host-side **persistence** crate. It may use `std::fs`, but it depends on `hugr-core` as pure data only.
+`huggr-replay` is a host-side **persistence** crate. It may use `std::fs`, but it depends on `huggr-core` as pure data only.
 
-The layers stack strictly: `hugr-agent` on `hugr-host` + `hugr-replay`, then `hugr-toolkit` on `hugr-agent`. Nothing reaches into `hugr-core` internals; these layers are hosts like any other.
+The layers stack strictly: `huggr-agent` on `huggr-host` + `huggr-replay`, then `huggr-toolkit` on `huggr-agent`. Nothing reaches into `huggr-core` internals; these layers are hosts like any other.
 
-**Never add environmental dependencies to `hugr-core`** to make a host easier. Put them in the host crate.
+**Never add environmental dependencies to `huggr-core`** to make a host easier. Put them in the host crate.
 
-Subagent-layer conventions are documented in `docs/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
+Huglet-layer conventions are documented in `docs/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
 
-Traces are immutable. A resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.hugr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.hugr/blobs`. Override these paths with `HUGR_AGENT_HOME`, `HUGR_HOME`, or `HUGR_BLOB_STORE`. Custom `StorageOverrides` are trusted host code and must stay outside `hugr-core`.
+Traces are immutable. A resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.huggr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.huggr/blobs`. Override these paths with `HUGGR_AGENT_HOME`, `HUGGR_HOME`, or `HUGGR_BLOB_STORE`. Custom `StorageOverrides` are trusted host code and must stay outside `huggr-core`.
 
 Tools are granted in the manifest and jailed to their declared scope through sandbox-by-registration. Never register a capability that the manifest does not grant.
 
-A built Hugr agent can be granted as a tool with `[tools.agent.<name>]` and a subprocess over the CLI JSON contract. Delegation never widens privileges, and the child's cost folds into the caller's `AnswerMeta`.
+A built Huggr agent can be granted as a tool with `[tools.agent.<name>]` and a subprocess over the CLI JSON contract. Delegation never widens privileges, and the child's cost folds into the caller's `AnswerMeta`.
 
 Process access is an explicit operator grant. Restricted `[tools.shell]` executes allowlisted programs directly without shell syntax; `full_access = true`, `[tools.mcp.<name>]`, and agent delegation are external-process escape hatches whose operating-system sandbox belongs to the host. Never register them without the matching manifest grant.
 
@@ -113,18 +113,18 @@ When extending the host, keep capabilities uniform with no privileged built-ins.
 
 ```bash
 cargo test                  # all tests
-cargo test -p hugr-core    # core only
+cargo test -p huggr-core    # core only
 cargo clippy --all-targets  # lint (keep it clean)
 cargo fmt --all             # format before committing
-cargo tree -p hugr-core    # audit: must stay free of tokio/reqwest/fs
-hugr stats <agent-dir>      # aggregate trace costs/tokens/tools/feedback
-hugr cron <agent-dir>       # run configured [cron.<name>] recurring asks
+cargo tree -p huggr-core    # audit: must stay free of tokio/reqwest/fs
+huggr stats <agent-dir>      # aggregate trace costs/tokens/tools/feedback
+huggr cron <agent-dir>       # run configured [cron.<name>] recurring asks
 ```
 
 ## Conventions
 
 - **Keep the docs and agent skills in sync.** After a behavior change, update the relevant reference documentation under `docs/` and every tutorial that demonstrates it. A manifest, tool, surface, packaging, or trace-workflow change is not complete until the relevant `.agents/skills/*/SKILL.md` cheat sheet matches reality.
-- **Keep Rust and Python API types in sync in both directions.** Any change to a Rust-serialized runtime input or output type must update the corresponding `bindings/python/python/hugr_agents/_types.py` `TypedDict`/dataclass, caster, exports, and tests. This includes contracts, events, cards, trace listings, feedback, stats, and nested values.
+- **Keep Rust and Python API types in sync in both directions.** Any change to a Rust-serialized runtime input or output type must update the corresponding `bindings/python/python/huggr_agents/_types.py` `TypedDict`/dataclass, caster, exports, and tests. This includes contracts, events, cards, trace listings, feedback, stats, and nested values.
 
   Any change to those public Python mirrors must update the corresponding Rust type, serde wire shape, and tests.
 - **Prefer deletion over abstraction.** One way to do each thing; if two mechanisms do the same job, keep the one the live stack uses and delete the other.
