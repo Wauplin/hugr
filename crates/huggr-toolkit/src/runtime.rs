@@ -373,13 +373,15 @@ pub async fn build_agent_with_options(
     // Granted tools — sandbox-by-registration. Library grants build in-process;
     // MCP grants connect their external process and register the discovered
     // tools.
+    let readable_roots = fs_read_roots(def, &base_dir);
     for grant in &def.tools {
         match grant.kind {
             ToolKind::Library => {
                 if grant.name == "delegate" {
-                    agent
-                        .agent_tools
-                        .push(build_delegate_tool(grant, &base_dir)?);
+                    agent.agent_tools.push(
+                        build_delegate_tool(grant, &base_dir)?
+                            .with_readable_roots(readable_roots.clone()),
+                    );
                 }
                 for capability in tools::build_library_grant(grant, &base_dir)? {
                     agent.capabilities.push(capability);
@@ -397,7 +399,9 @@ pub async fn build_agent_with_options(
                 agent.capabilities.extend(caps);
             }
             ToolKind::Agent => {
-                agent.agent_tools.push(build_agent_tool(grant, &base_dir)?);
+                agent.agent_tools.push(
+                    build_agent_tool(grant, &base_dir)?.with_readable_roots(readable_roots.clone()),
+                );
                 agent
                     .capabilities
                     .push(Arc::new(build_agent_feedback_tool(grant, &base_dir)?));
@@ -452,6 +456,24 @@ pub async fn build_agent_with_options(
     }
 
     Ok((agent, warnings))
+}
+
+/// The canonical `fs_read` jail roots of this definition — the only local
+/// files a model-supplied `Path` blob ref may name when delegating, so a
+/// child never reads what its caller could not.
+fn fs_read_roots(def: &AgentDefinition, base_dir: &Path) -> Vec<PathBuf> {
+    def.tools
+        .iter()
+        .filter(|grant| grant.kind == ToolKind::Library && grant.name == "fs_read")
+        .filter_map(|grant| {
+            let root = grant
+                .config
+                .get("root")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            std::fs::canonicalize(resolve(base_dir, root)).ok()
+        })
+        .collect()
 }
 
 fn build_delegate_tool(grant: &ToolGrant, base_dir: &Path) -> Result<AgentToolSpec, RuntimeError> {

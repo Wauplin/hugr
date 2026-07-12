@@ -63,6 +63,13 @@ impl ChunkSink {
     pub fn chunk(&self, chunk: Value) {
         let _ = self.tx.send(Event::CapabilityChunk { op: self.op, chunk });
     }
+
+    /// A sink that drops every chunk — for invoking a capability outside an
+    /// engine (tests, one-off host calls).
+    pub fn noop() -> Self {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        Self { op: OpId(0), tx }
+    }
 }
 
 /// Maps capability names to their implementations.

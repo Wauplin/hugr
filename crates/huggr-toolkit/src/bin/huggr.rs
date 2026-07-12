@@ -18,10 +18,7 @@ use huggr_toolkit::surface::{error_answer, print_answer, run_definition_args};
 use huggr_toolkit::traces::render_lineage_with_feedback;
 
 #[derive(Parser)]
-#[command(
-    name = "huggr",
-    about = "Build and run tiny, self-contained huglets."
-)]
+#[command(name = "huggr", about = "Build and run tiny, self-contained huglets.")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

@@ -74,5 +74,6 @@ The user then asks a follow-up with the returned `trace_id`. The new ask's scrat
 - `scratch_read`, `memory_read`, and skill files handle UTF-8 text; binary blobs can be materialized into the scratchpad and returned from `out/`, but the model cannot read their bytes through the scratch tools. Give binary formats to a capability that can parse them.
 - Outbound media types are guessed from file extensions, with `application/octet-stream` as the fallback.
 - `Bytes` refs do not forward across the agent-as-tool subprocess boundary; hand children `path` or `sha256` refs.
+- When the model fills in `blobs` for `agent_<name>`, `delegate`, or an MCP `ask`, `path` refs are accepted only for files inside the calling agent's `fs_read` roots and `sha256` refs must be well-formed content addresses. Orchestrator hand-ins (`--blob` on the CLI, `Ask` from host code) are trusted and unrestricted.
 - The blob store has no garbage collection or access control beyond the filesystem; it grows until the operator prunes it, and every local agent sharing the store can read any object by hash.
 - Copy-on-fork copies the whole finalized subtree at ask start; a scratchpad holding gigabytes makes every resume pay that copy.

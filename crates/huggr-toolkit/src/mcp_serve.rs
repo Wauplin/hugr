@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use huggr_agent::{Agent, AgentCard, Ask, BlobHandle, TraceId};
+use huggr_agent::{Agent, AgentCard, Ask, BlobHandle, TraceId, validate_model_blobs};
 use huggr_host::framing;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -182,6 +182,25 @@ struct FeedbackArgs {
     payload: Value,
 }
 
+/// Validate model-facing `ask` arguments into an [`Ask`]. The MCP client is an
+/// untrusted caller: `Path` blob refs are rejected outright (no readable roots
+/// exist for an external caller) and content addresses must be well formed.
+fn ask_from_args(args: AskArgs) -> Result<Ask, String> {
+    validate_model_blobs(&args.blobs, &[]).map_err(|e| format!("invalid `ask` blobs: {e}"))?;
+    let trace_id = args
+        .trace_id
+        .map(TraceId::try_new)
+        .transpose()
+        .map_err(|e| format!("invalid `trace_id`: {e}"))?;
+    Ok(Ask {
+        question: args.question,
+        trace_id,
+        blobs: args.blobs,
+        skills: args.skills,
+        ..Ask::default()
+    })
+}
+
 /// Handle a `tools/call`: only `ask` is exposed. The [`Answer`] rides back as
 /// `structuredContent` plus a text block; run failures are `status: "error"`
 /// answers (not MCP `isError`), so orchestrators branch on the structured data.
@@ -192,7 +211,10 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
             serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
                 .map_err(|e| format!("invalid `feedback` arguments: {e}"))?;
         let feedback = agent
-            .feedback(TraceId::new(args.trace_id), args.payload)
+            .feedback(
+                TraceId::try_new(args.trace_id).map_err(|e| format!("invalid `trace_id`: {e}"))?,
+                args.payload,
+            )
             .await
             .map_err(|e| e.to_string())?;
         let structured = serde_json::to_value(&feedback).map_err(|e| e.to_string())?;
@@ -208,14 +230,7 @@ async fn tools_call(agent: &Agent, params: Value) -> Result<Value, String> {
     let args: AskArgs =
         serde_json::from_value(params.get("arguments").cloned().unwrap_or(Value::Null))
             .map_err(|e| format!("invalid `ask` arguments: {e}"))?;
-
-    let ask = Ask {
-        question: args.question,
-        trace_id: args.trace_id.map(TraceId::new),
-        blobs: args.blobs,
-        skills: args.skills,
-        ..Ask::default()
-    };
+    let ask = ask_from_args(args)?;
 
     // Infra `AskError` (unknown parent id, store write) surfaces as an MCP error
     // result; run failures are already answers.
@@ -246,7 +261,10 @@ async fn tools_call_definition(
             eprintln!("warning: {warning}");
         }
         let feedback = agent
-            .feedback(TraceId::new(args.trace_id), args.payload)
+            .feedback(
+                TraceId::try_new(args.trace_id).map_err(|e| format!("invalid `trace_id`: {e}"))?,
+                args.payload,
+            )
             .await
             .map_err(|e| e.to_string())?;
         let structured = serde_json::to_value(&feedback).map_err(|e| e.to_string())?;
@@ -271,13 +289,7 @@ async fn tools_call_definition(
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
-    let ask = Ask {
-        question: args.question,
-        trace_id: args.trace_id.map(TraceId::new),
-        blobs: args.blobs,
-        skills: args.skills,
-        ..Ask::default()
-    };
+    let ask = ask_from_args(args)?;
     let answer = agent.ask(ask).await.map_err(|e| e.to_string())?;
     let structured = serde_json::to_value(&answer).map_err(|e| e.to_string())?;
     let text = answer_text(&answer.response);
@@ -352,7 +364,7 @@ fn ask_tool_schema(def: Option<&AgentDefinition>) -> Value {
             "blobs".to_string(),
             json!({
                 "type": "array",
-                "description": "Inbound file handles (contract BlobHandle JSON).",
+                "description": "Inbound file handles (contract BlobHandle JSON). Only `bytes` and well-formed `sha256` refs are accepted; `path` refs are rejected.",
                 "items": { "type": "object" }
             }),
         ),
@@ -584,6 +596,29 @@ help = "Docs root."
             feedback["result"]["structuredContent"]["payload"]["score"],
             1
         );
+
+        // A model-facing `path` blob ref is rejected before the ask runs.
+        let path_blob = handle_message(
+            &agent,
+            &card,
+            &json!({ "id": 6, "method": "tools/call",
+                     "params": { "name": "ask", "arguments": { "question": "hi",
+                         "blobs": [{ "ref": { "kind": "path", "path": "/etc/passwd" }, "media_type": "text/plain" }] } } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(path_blob["error"]["code"], -32602);
+
+        // A crafted trace id is an error, not a panic or a filesystem touch.
+        let bad_trace = handle_message(
+            &agent,
+            &card,
+            &json!({ "id": 7, "method": "tools/call",
+                     "params": { "name": "ask", "arguments": { "question": "hi", "trace_id": "../outside" } } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(bad_trace["error"]["code"], -32602);
 
         // An unknown tool is a JSON-RPC error.
         let bad = handle_message(
