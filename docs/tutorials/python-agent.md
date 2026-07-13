@@ -237,7 +237,7 @@ fb = agent.feedback(answer.trace_id, {"score": 5, "note": "correct policy cited"
 assert fb.trace_id == answer.trace_id
 ```
 
-`feedback(trace_id, payload)` returns a `Feedback` dataclass (`trace_id`, `payload`, `created_at_ms`). The payload is opaque JSON; Huggr never interprets it. Read it back with `feedback_for(trace_id)` which returns a `List[Feedback]`. Filing feedback on a nonexistent trace raises `RuntimeError`.
+`feedback(trace_id, payload)` returns a `Feedback` dataclass (`trace_id`, `payload`, `created_at_ms`). The payload is opaque JSON; Huggr never interprets it. Read it back with `feedback_for(trace_id)` which returns a `List[Feedback]`. Filing feedback on a nonexistent trace raises `RuntimeError`; a malformed trace id raises `ValueError` before any store access.
 
 ## Inspect and aggregate
 

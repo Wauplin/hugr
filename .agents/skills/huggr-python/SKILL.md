@@ -78,6 +78,8 @@ Use `BlobHandle.from_path(...)` and the `blobs=` ask argument for files. Opaque 
 
 State defaults to `~/.huggr/<name>/`, shared with Rust and TypeScript surfaces.
 
+Trace ids accepted from callers contain only ASCII letters, digits, `-`, and `_`. Malformed ids raise `ValueError`; valid ids that are absent from the store raise the surface's ordinary not-found error.
+
 ## Validate
 
 ```bash

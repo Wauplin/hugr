@@ -111,7 +111,7 @@ impl NativeAgent {
 
     fn feedback(&self, py: Python<'_>, trace_id: &str, payload_json: &str) -> PyResult<String> {
         let payload = parse(payload_json, "feedback payload")?;
-        let trace_id = TraceId::new(trace_id);
+        let trace_id = TraceId::try_new(trace_id).map_err(value_err)?;
         let feedback = py
             .allow_threads(|| {
                 self.runtime
@@ -122,7 +122,7 @@ impl NativeAgent {
     }
 
     fn feedback_for(&self, py: Python<'_>, trace_id: &str) -> PyResult<String> {
-        let trace_id = TraceId::new(trace_id);
+        let trace_id = TraceId::try_new(trace_id).map_err(value_err)?;
         let feedback = py
             .allow_threads(|| self.runtime.block_on(self.agent.feedback_for(&trace_id)))
             .map_err(runtime_err)?;

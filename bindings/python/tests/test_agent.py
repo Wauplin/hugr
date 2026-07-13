@@ -215,6 +215,10 @@ def test_feedback_round_trip(server):
     )
     with pytest.raises(RuntimeError):
         agent.feedback("no-such-trace", {"score": 0})
+    with pytest.raises(ValueError, match="trace id must contain"):
+        agent.feedback("../outside", {"score": 0})
+    with pytest.raises(ValueError, match="trace id must contain"):
+        agent.feedback_for("../outside")
 
 
 def test_response_contract_casts_final_json(server):

@@ -98,14 +98,7 @@ fn checked_trace_id(args: &Value) -> Result<TraceId> {
         .get("trace_id")
         .and_then(Value::as_str)
         .context("requires string `trace_id`")?;
-    anyhow::ensure!(
-        !id.is_empty()
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-        "invalid trace_id: {id}"
-    );
-    Ok(TraceId::new(id))
+    TraceId::try_new(id).map_err(|error| anyhow::anyhow!("invalid trace_id `{id}`: {error}"))
 }
 
 fn truncate_chars(text: &str, limit: usize) -> (String, bool) {

@@ -213,10 +213,10 @@ async fn stats(args: StatsArgs) {
 
     let mut options = StatsOptions::new();
     if let Some(trace_id) = args.since {
-        options = options.since(TraceId::new(trace_id));
+        options = options.since(external_trace_id_or_exit(&trace_id));
     }
     if let Some(trace_id) = args.trace {
-        options = options.trace(TraceId::new(trace_id));
+        options = options.trace(external_trace_id_or_exit(&trace_id));
     }
     let stats = match agent.stats(options).await {
         Ok(stats) => stats,
@@ -240,7 +240,8 @@ async fn stats(args: StatsArgs) {
 
 fn verify(args: TraceArgs) {
     let store = load_store(&args.agent_dir);
-    let trace = match store.get(&TraceId::new(args.trace_id.clone())) {
+    let trace_id = external_trace_id_or_exit(&args.trace_id);
+    let trace = match store.get(&trace_id) {
         Ok(trace) => trace,
         Err(err) => {
             eprintln!("error: loading trace {}: {err}", args.trace_id);
@@ -258,7 +259,8 @@ fn verify(args: TraceArgs) {
 
 fn replay(args: ReplayArgs) {
     let store = load_store(&args.agent_dir);
-    let trace = match store.get(&TraceId::new(args.trace_id.clone())) {
+    let trace_id = external_trace_id_or_exit(&args.trace_id);
+    let trace = match store.get(&trace_id) {
         Ok(trace) => trace,
         Err(err) => {
             eprintln!("error: loading trace {}: {err}", args.trace_id);
@@ -288,6 +290,16 @@ fn replay(args: ReplayArgs) {
             commands,
             trace.log.len(),
         );
+    }
+}
+
+fn external_trace_id_or_exit(value: &str) -> TraceId {
+    match TraceId::try_new(value) {
+        Ok(trace_id) => trace_id,
+        Err(error) => {
+            eprintln!("error: invalid trace id: {error}");
+            std::process::exit(1);
+        }
     }
 }
 

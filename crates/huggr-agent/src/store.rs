@@ -313,9 +313,18 @@ impl TraceStore {
                 reason: format!("stamped trace_id `{trace_id}` does not match the file key"),
             });
         }
+        let depends_on = meta
+            .depends_on
+            .map(|parent| {
+                TraceId::try_new(parent).map_err(|reason| StoreError::CorruptHeader {
+                    id: id.clone(),
+                    reason: format!("invalid `depends_on`: {reason}"),
+                })
+            })
+            .transpose()?;
         Ok(TraceHead {
-            trace_id: TraceId::new(trace_id),
-            depends_on: meta.depends_on.map(TraceId::new),
+            trace_id: id.clone(),
+            depends_on,
             agent_name: meta.agent_name.ok_or_else(|| field_err("agent_name"))?,
             agent_version: meta
                 .agent_version

@@ -135,6 +135,8 @@ pub struct Feedback {
 
 `AnswerMeta` is never optional, so an orchestrator can always account for a call. `response` is always a JSON object. Without a declared response contract, plain model text is wrapped as `{ "text": ... }`.
 
+External trace ids must be non-empty and contain only ASCII letters, digits, `-`, or `_`. Invalid ids return an error answer on ask and feedback surfaces, or an ordinary validation error on audit and language APIs; they never reach filesystem path construction.
+
 A typed response contract is a Rust `serde` + `schemars` type. Huggr derives JSON Schema from it, passes that schema to the model provider as `response_format`, and casts the final JSON into the Rust type before returning it. If that cast fails, the agent asks the model to repair the response up to the contract's attempt limit.
 
 A Rust-only final answer hook may then rewrite the `Answer` deterministically at the last host-layer boundary before returning it to the caller. This hook is not a core event and does not enter the trace. `extra` is reserved for non-answer extras and is never load-bearing for the contract.

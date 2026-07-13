@@ -201,3 +201,26 @@ fn list_skips_corrupt_entries_instead_of_aborting() {
     assert_eq!(heads.len(), 1);
     assert_eq!(heads[0].trace_id, good);
 }
+
+#[test]
+fn head_rejects_an_invalid_parent_id_in_a_tampered_header() {
+    let dir = TempDir::new("agent-store-invalid-parent");
+    let store = TraceStore::new(dir.path());
+    let id = store.put(empty_trace(1), header("tampered")).unwrap();
+    let path = store.path_of(&id);
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    value["meta"]["depends_on"] = serde_json::json!("../outside");
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+    match store.head(&id) {
+        Err(StoreError::CorruptHeader {
+            id: corrupt,
+            reason,
+        }) => {
+            assert_eq!(corrupt, id);
+            assert!(reason.contains("invalid `depends_on`"), "{reason}");
+        }
+        other => panic!("expected CorruptHeader, got {other:?}"),
+    }
+}

@@ -179,7 +179,14 @@ where
         Mode::Stats => {
             let mut options = StatsOptions::new();
             if let Some(trace_id) = args.trace {
-                options = options.trace(TraceId::new(trace_id));
+                let trace_id = match external_trace_id(trace_id) {
+                    Ok(trace_id) => trace_id,
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                        return 1;
+                    }
+                };
+                options = options.trace(trace_id);
             }
             match agent.stats(options).await {
                 Ok(stats) => print_json_or_die(&stats, pretty),
@@ -400,7 +407,11 @@ async fn run_feedback(
         Ok(payload) => payload,
         Err(err) => return print_answer(&error_answer(err, started), pretty),
     };
-    match agent.feedback(TraceId::new(trace_id), payload).await {
+    let trace_id = match external_trace_id(trace_id) {
+        Ok(trace_id) => trace_id,
+        Err(err) => return print_answer(&error_answer(err, started), pretty),
+    };
+    match agent.feedback(trace_id, payload).await {
         Ok(feedback) => print_json_or_die(&feedback, pretty),
         Err(err) => print_answer(&error_answer(err.to_string(), started), pretty),
     }
@@ -465,6 +476,10 @@ pub async fn run_ask(
             pretty,
         );
     };
+    let trace_id = match trace.map(external_trace_id).transpose() {
+        Ok(trace_id) => trace_id,
+        Err(err) => return print_answer(&error_answer(err, started), pretty),
+    };
 
     let mut blobs = Vec::with_capacity(paths.blobs.len());
     for path in paths.blobs {
@@ -476,7 +491,7 @@ pub async fn run_ask(
 
     let ask = Ask {
         question,
-        trace_id: trace.map(TraceId::new),
+        trace_id,
         blobs,
         skills: paths
             .skills
@@ -524,6 +539,10 @@ pub async fn ask_bundle_with_options(
     runtime: &RuntimeValues,
 ) -> Answer {
     let started = Instant::now();
+    let trace_id = match trace_id.map(external_trace_id).transpose() {
+        Ok(trace_id) => trace_id,
+        Err(err) => return error_answer(err, started),
+    };
     let mut def = match prepare_definition(bundle_bytes, options.model_catalog()) {
         Ok(def) => def,
         Err(err) => return error_answer(err.to_string(), started),
@@ -551,7 +570,7 @@ pub async fn ask_bundle_with_options(
 
     let ask = Ask {
         question,
-        trace_id: trace_id.map(TraceId::new),
+        trace_id,
         blobs,
         skills: paths
             .skills
@@ -813,6 +832,10 @@ fn audit_or_answer_error(mode: Mode, message: String, started: Instant, pretty: 
     }
 }
 
+fn external_trace_id(value: String) -> Result<TraceId, String> {
+    TraceId::try_new(value).map_err(|error| format!("invalid trace id: {error}"))
+}
+
 /// An error-status [`Answer`] stamped with the elapsed duration. Shared by
 /// every surface that must turn a failure into an answer.
 pub fn error_answer(message: impl Into<String>, started: Instant) -> Answer {
@@ -1033,5 +1056,84 @@ required = true
         let entries = feedback.list(&trace_id).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].payload["score"], 1);
+    }
+
+    #[tokio::test]
+    async fn external_trace_ids_fail_without_panicking() {
+        let root = std::env::temp_dir().join(format!(
+            "huggr-invalid-trace-surface-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let agent = Agent::new(
+            "invalid-trace",
+            "0.0.0",
+            huggr_agent::TraceStore::new(&root),
+        );
+
+        let ask_code = run_ask(
+            &agent,
+            Some("question".to_string()),
+            Some("../outside".to_string()),
+            AskPaths {
+                blobs: &[],
+                skills: &[],
+            },
+            Instant::now(),
+            false,
+            false,
+        )
+        .await;
+        assert_eq!(ask_code, 0, "ask validation is an error answer");
+
+        let feedback_code = run_feedback(
+            &agent,
+            Some("../outside".to_string()),
+            Some("{}".to_string()),
+            Instant::now(),
+            false,
+        )
+        .await;
+        assert_eq!(feedback_code, 0, "feedback validation is an error answer");
+
+        let bundle_answer = ask_bundle_with_options(
+            &[],
+            &RuntimeOptions::default(),
+            "question".to_string(),
+            Some("../outside".to_string()),
+            AskPaths {
+                blobs: &[],
+                skills: &[],
+            },
+            serde_json::Value::Null,
+            &RuntimeValues::default(),
+        )
+        .await;
+        assert_eq!(bundle_answer.status, STATUS_ERROR);
+        assert!(
+            bundle_answer.response["error"]
+                .as_str()
+                .unwrap()
+                .contains("invalid trace id")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn stats_rejects_an_invalid_trace_id() {
+        let def = AgentDefinition::parse(
+            "[agent]\nname = \"invalid-stats\"\n[models]\ndefault = \"balanced\"\n",
+            "huggr.toml",
+        )
+        .unwrap();
+        let code = run_definition_args_with_options(
+            def,
+            ["--stats", "--trace", "../outside"],
+            Instant::now(),
+            RuntimeOptions::default(),
+        )
+        .await;
+        assert_eq!(code, 1);
     }
 }
