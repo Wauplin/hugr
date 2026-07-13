@@ -1,7 +1,7 @@
 //! MCP stdio client adapted into ordinary host capabilities.
 //!
 //! This is deliberately a host-only integration: MCP servers are subprocesses,
-//! their tools are advertised as [`Capability`](crate::Capability)s, and the
+//! their tools are advertised as [`Capability`]s, and the
 //! brain only ever sees normal `StartCapability` commands. Tool arguments and
 //! results stay opaque `Value`s.
 

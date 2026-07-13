@@ -631,7 +631,8 @@ impl EngineBuilder {
     /// Resuming implies recording (so the continued session can be re-saved as a
     /// trace that still verifies bit-for-bit): the recorder is pre-loaded with
     /// the trace's events, and any new events are appended after them. The
-    /// session's `TurnPolicy` is restored from the trace ([`policy_from_trace`])
+    /// session's `TurnPolicy` is restored from the trace
+    /// ([`policy_from_trace`](huggr_replay::policy_from_trace))
     /// so the continued session branches identically; a trace without a captured
     /// policy falls back to the default.
     pub fn resume(mut self, trace: Trace) -> Self {

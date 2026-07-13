@@ -251,7 +251,7 @@ impl TraceStore {
     }
 
     /// Read the header of the trace stored under `id` **without** loading its
-    /// events: only `meta` is deserialized (see [`HeadOnly`]).
+    /// events: only the `meta` header is deserialized.
     pub fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError> {
         let path = self.path_of(id);
         if !path.exists() {

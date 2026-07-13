@@ -57,7 +57,7 @@ impl OpenAiAdapter {
 
     /// Set the maximum number of attempts per model call (initial try plus
     /// retries) for *transient* transport failures — network errors, HTTP 429,
-    /// and 5xx (default [`DEFAULT_MAX_ATTEMPTS`]). A value of `0` or `1` disables
+    /// and 5xx (default 4). A value of `0` or `1` disables
     /// retries. Non-429 4xx (semantic) errors are never retried.
     pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
         self.max_attempts = max_attempts.max(1);

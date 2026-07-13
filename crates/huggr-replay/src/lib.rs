@@ -75,7 +75,7 @@ pub struct Trace {
     /// The ordered host→brain [`Event`] stream — the *input* to replay.
     pub events: Vec<Event>,
     /// The ordered brain→host [`Command`] sequence the live host drained — the
-    /// recorded *output* [`verify`](crate::verify) checks a replay against. An
+    /// recorded *output* [`verify`] checks a replay against. An
     /// empty vec means "not recorded" (older traces); verify then falls back to
     /// log-only comparison. Skipped from serialized JSON when empty so such
     /// traces stay byte-identical to the pre-`commands` format.
@@ -242,7 +242,7 @@ impl Trace {
     }
 
     /// Attach the recorded brain→host [`Command`] sequence (in emission order)
-    /// so [`verify`](crate::verify) can assert replay reproduces it. The host's
+    /// so [`verify`] can assert replay reproduces it. The host's
     /// recorder captures these as it drains `brain.poll()`.
     pub fn with_commands(mut self, commands: Vec<Command>) -> Self {
         self.commands = commands;

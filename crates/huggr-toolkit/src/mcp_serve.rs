@@ -1,6 +1,6 @@
 //! The MCP stdio server surface.
 //!
-//! A cli-built agent binary run with `--mcp-serve` speaks the Model Context Protocol over stdio: newline-delimited JSON-RPC 2.0. It advertises a single `ask` tool (question + optional `trace_id` + blob handles) whose structured result is the full [`Answer`]; server info comes from the [`AgentCard`]. This is how Claude Code / other orchestrators consume a Huggr agent natively.
+//! A cli-built agent binary run with `--mcp-serve` speaks the Model Context Protocol over stdio: newline-delimited JSON-RPC 2.0. It advertises a single `ask` tool (question + optional `trace_id` + blob handles) whose structured result is the full [`Answer`](huggr_agent::Answer); server info comes from the [`AgentCard`]. This is how Claude Code / other orchestrators consume a Huggr agent natively.
 //!
 //! Session continuity rides our `trace_id` in the tool arguments, **not** MCP session state — a follow-up is just another `ask` carrying the previous answer's `trace_id`. We never use MCP sampling; the agent owns its provider.
 
