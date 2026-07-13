@@ -381,7 +381,7 @@ impl AgentDefinition {
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
         let cron = parse_cron(&table, path)?;
         let context: ContextConfig = parse_section(&table, "context", path)?;
-        validate_context(&context, path)?;
+        validate_context(&context, &models, path)?;
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
         let traces: TracesConfig = parse_section(&table, "traces", path)?;
         let runtime = parse_runtime(&table, path)?;
@@ -731,7 +731,11 @@ fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestErr
     Ok(())
 }
 
-fn validate_context(context: &ContextConfig, path: &Path) -> Result<(), ManifestError> {
+fn validate_context(
+    context: &ContextConfig,
+    models: &ModelsConfig,
+    path: &Path,
+) -> Result<(), ManifestError> {
     let compaction = context.compaction.as_deref().unwrap_or("none");
     if !matches!(compaction, "none" | "truncate" | "summarize") {
         return Err(ManifestError::Validate {
@@ -767,11 +771,21 @@ fn validate_context(context: &ContextConfig, path: &Path) -> Result<(), Manifest
             }
         }
     }
-    if matches!(context.summary_model.as_deref(), Some("")) {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: "[context].summary_model must not be empty".to_string(),
-        });
+    if let Some(summary_model) = context.summary_model.as_deref() {
+        if summary_model.is_empty() {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: "[context].summary_model must not be empty".to_string(),
+            });
+        }
+        if !models.tiers.contains_key(summary_model) {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!(
+                    "[context].summary_model `{summary_model}` is not a declared [models.<tier>]"
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -857,6 +871,9 @@ name = "x"
 [models.medium]
 model = "m"
 
+[models.small]
+model = "s"
+
 [context]
 budget_tokens = 4096
 compaction = "summarize"
@@ -879,6 +896,26 @@ browser_observation = 1
         assert_eq!(
             def.context.forget.keep_last_per_tool["browser_observation"],
             1
+        );
+    }
+
+    #[test]
+    fn summary_model_must_name_a_declared_tier() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models.medium]
+model = "m"
+
+[context]
+compaction = "summarize"
+summary_model = "nonesuch"
+"#;
+        let err = AgentDefinition::parse(src, "huggr.toml").unwrap_err();
+        assert!(
+            err.to_string().contains("summary_model"),
+            "unexpected error: {err}"
         );
     }
 
