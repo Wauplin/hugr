@@ -56,7 +56,7 @@ for await (const event of agent.run("What receipt is needed?", { traceId: answer
 
 Model text deltas are yielded as the provider stream delivers them; other events retain their order.
 
-Pass `extra` for trace metadata and an `AbortSignal` as `signal` for cancellation. A resumed ask writes a new trace with `depends_on`; it never mutates the parent.
+Pass `extra` for trace metadata and an `AbortSignal` as `signal` for cancellation. A resumed ask restores the parent trace's recorded policy, writes a new trace with `depends_on`, and never mutates the parent.
 
 ## Choose Node or browser storage
 

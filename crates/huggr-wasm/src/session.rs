@@ -124,6 +124,12 @@ impl AgentSession {
         }
         let trace = Trace::from_json(trace_json.as_bytes())
             .map_err(|err| JsValue::from_str(&format!("invalid trace: {err}")))?;
+        let restored_policy = huggr_replay::policy_from_trace(&trace);
+        self.policy_config = trace
+            .policy
+            .clone()
+            .unwrap_or(to_value(&StaticPolicy::default())?);
+        self.brain = Brain::new(restored_policy);
         for event in trace.events {
             self.events.push(event.clone());
             self.brain.submit(event);

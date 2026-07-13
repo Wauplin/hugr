@@ -156,7 +156,7 @@ interface AskOptions {
 }
 ```
 
-- `traceId` resumes/forks: the parent trace is loaded, re-folded into a fresh session via `session.resume_trace(...)`, and the *new* ask writes a new trace with `depends_on` set. Resuming never mutates the old trace; resuming the same id twice forks into two branches.
+- `traceId` resumes/forks: the parent trace is loaded, its recorded context and tool policy is restored, its events are re-folded into a fresh session via `session.resume_trace(...)`, and the *new* ask writes a new trace with `depends_on` set. Resuming never mutates the old trace; resuming the same id twice forks into two branches.
 - `signal` cancels the run; an aborted signal drains the brain via `session.abort(...)` and produces an error answer (`status: "error"`, `response.error: "aborted by caller"`) rather than throwing.
 - `extra` is arbitrary JSON stamped into the trace's meta; for tagging, correlation, anything you want to filter on later.
 

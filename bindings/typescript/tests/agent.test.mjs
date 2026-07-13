@@ -22,11 +22,11 @@ function memRuntime() {
   return { loadWasm, traces: new MemTraceStore(), feedback: new MemFeedbackStore() };
 }
 
-function makeAgent({ tools = [], limits, context, runtime = memRuntime() } = {}) {
+function makeAgent({ tools = [], limits, context, system = "Answer as JSON.", runtime = memRuntime() } = {}) {
   return new Agent(
     {
       name: "ts-test-agent",
-      system: "Answer as JSON.",
+      system,
       providers: { test: { base_url: server.baseUrl, api_key: "test-key" } },
       models: {
         default: "balanced",
@@ -182,6 +182,22 @@ test("failed resumed turns do not reuse the parent answer", async () => {
   assert.match(String(resumed.response.error), /model did not produce a final answer/);
   assert.notDeepEqual(resumed.response, parent.response);
   await agent.verify(resumed.trace_id);
+});
+
+test("resumed turns restore the parent trace policy", async () => {
+  const runtime = memRuntime();
+  const parentAgent = makeAgent({ system: "Original system prompt.", runtime });
+  server.scriptText('{"answer": "parent"}');
+  const parent = await parentAgent.ask("first question");
+
+  const changedAgent = makeAgent({ system: "Changed system prompt.", runtime });
+  server.scriptText('{"answer": "child"}');
+  const child = await changedAgent.ask("follow-up", { traceId: parent.trace_id });
+
+  const systemMessage = server.requests.at(-1).messages.find((message) => message.role === "system");
+  assert.equal(systemMessage.content, "Original system prompt.");
+  assert.equal(child.status, "success");
+  await changedAgent.verify(child.trace_id);
 });
 
 test("limits trip to error answers", async () => {
