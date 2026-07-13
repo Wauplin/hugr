@@ -268,6 +268,20 @@ impl McpTool {
 pub async fn load_stdio(config: McpServerConfig) -> Result<Vec<Arc<dyn Capability>>, McpError> {
     let client = McpClient::connect(config).await?;
     let tools = client.list_tools().await?;
+    // Two server tool names can sanitize to the same namespaced capability
+    // (e.g. `a.b` and `a/b` both become `a_b`), which would silently shadow
+    // one tool. Detect the collision at load time rather than dispatching to
+    // the wrong tool later.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for tool in &tools {
+        let namespaced = namespaced_tool_name(&client.server_name, &tool.name);
+        if let Some(other) = seen.insert(namespaced.clone(), tool.name.clone()) {
+            return Err(McpError::Protocol(format!(
+                "MCP server `{}` tools `{}` and `{}` map to the same capability name `{namespaced}`",
+                client.server_name, other, tool.name
+            )));
+        }
+    }
     Ok(tools
         .into_iter()
         .map(|tool| {
@@ -299,5 +313,24 @@ fn sanitize_name(name: &str) -> String {
         "server".to_string()
     } else {
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::namespaced_tool_name;
+
+    #[test]
+    fn punctuation_variants_collide_to_one_namespaced_name() {
+        // `load_stdio` relies on this collision being detectable: distinct
+        // server tool names that sanitize to the same capability name.
+        assert_eq!(
+            namespaced_tool_name("srv", "a.b"),
+            namespaced_tool_name("srv", "a/b")
+        );
+        assert_ne!(
+            namespaced_tool_name("srv", "read"),
+            namespaced_tool_name("srv", "write")
+        );
     }
 }

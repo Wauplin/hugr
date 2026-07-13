@@ -1354,3 +1354,32 @@ async fn a_panicking_model_adapter_resolves_as_a_model_error() {
     let dones = capture.done.lock().unwrap();
     assert!(!dones.is_empty(), "the turn reached a Done command");
 }
+
+/// The registry advertises tools sorted by name, so the same agent definition
+/// projects an identical tool ordering across processes (no HashMap-order
+/// variance between runs).
+#[test]
+fn registry_schemas_are_sorted_by_name() {
+    use huggr_host::CapabilityRegistry;
+
+    struct Named(&'static str);
+    #[async_trait]
+    impl Capability for Named {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(self.0, "x", json!({ "type": "object" }))
+        }
+        async fn invoke(&self, _args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
+            Ok(json!({}))
+        }
+    }
+
+    let mut registry = CapabilityRegistry::new();
+    for name in ["zebra", "apple", "mango", "banana"] {
+        registry.register(Arc::new(Named(name)));
+    }
+    let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
+    assert_eq!(names, ["apple", "banana", "mango", "zebra"]);
+}
