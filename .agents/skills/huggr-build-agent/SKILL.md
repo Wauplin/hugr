@@ -113,7 +113,9 @@ schema = "response.schema.json"
 
 Use `[response].schema` only for the legacy manifest-owned schema path. Prefer a Rust response contract. Omit optional sections rather than copying placeholders; especially avoid custom scratch/trace paths unless the default `~/.huggr/<agent>/` home is unsuitable.
 
-The CLI creates `~/.huggr/models.toml` on first run. That file maps fixed tiers to provider aliases, concrete model ids, and input/output prices. Source resolution is a manifest `[models.<tier>]` pin, then `HUGGR_MODEL_<TIER>`, then the global catalog. A build embeds the resolved catalog; a catalog on the runtime host overrides it. Inspect provenance and key availability with `--config`. See [Models, providers, and pricing](../../../docs/concepts/models-and-pricing.md).
+The CLI creates `~/.huggr/models.toml` on first run. That file maps fixed tiers to provider aliases, concrete model ids, and input/output prices. The built-in catalog defines `fast`, `balanced`, and `powerful`; an unset `max` falls back to `powerful`, and the operator may add `[models.max]`. Source resolution is a manifest `[models.<tier>]` pin, then `HUGGR_MODEL_<TIER>`, then the global catalog. A build embeds the resolved catalog; a catalog on the runtime host overrides it. Inspect provenance and key availability with `--config`. See [Models, providers, and pricing](../../../docs/concepts/models-and-pricing.md).
+
+Use [Hugging Face Inference Providers](https://huggingface.co/inference/models) to choose from the provider and model combinations available through the built-in `hf` provider. For another OpenAI-compatible endpoint, add a separate provider alias, set its `base_url` to the API URL and its `api_key_env` to that service's credential variable, then point the desired tiers at it.
 
 ## Choose grants deliberately
 

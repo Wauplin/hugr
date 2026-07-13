@@ -88,6 +88,24 @@ test("runtime model catalog overrides author mappings", () => {
   assert.equal(resolved.models.max.model, "runtime-model");
 });
 
+test("built-in max tier falls back to powerful", () => {
+  const agent = new Agent(
+    { name: "defaults", system: "Answer as JSON.", models: { default: "max" } },
+    memRuntime(),
+  );
+  const resolved = agent.resolvedModels();
+  assert.equal(resolved.models.fast.model, "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai");
+  assert.equal(resolved.models.fast.input_usd_per_m_tokens, 0.14);
+  assert.equal(resolved.models.fast.output_usd_per_m_tokens, 0.28);
+  assert.equal(resolved.models.balanced.model, "google/gemma-4-31B-it:cerebras");
+  assert.equal(resolved.models.balanced.input_usd_per_m_tokens, 1.0);
+  assert.equal(resolved.models.balanced.output_usd_per_m_tokens, 1.5);
+  assert.equal(resolved.models.powerful.model, "zai-org/GLM-5.2:together");
+  assert.equal(resolved.models.powerful.input_usd_per_m_tokens, 1.4);
+  assert.equal(resolved.models.powerful.output_usd_per_m_tokens, 4.4);
+  assert.deepEqual(resolved.models.max, resolved.models.powerful);
+});
+
 test("tool exceptions are semantic errors", async () => {
   const agent = makeAgent({
     tools: [{ name: "boom", description: "d", schema: { type: "object" }, invoke: () => { throw new Error("kaput"); } }],

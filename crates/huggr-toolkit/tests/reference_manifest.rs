@@ -14,7 +14,8 @@ fn reference_manifest_parses_without_warnings() {
     assert_eq!(def.providers["hf"].api_key_env, "HF_TOKEN");
     assert_eq!(def.default_tier(), Some("powerful"));
     let powerful = &def.models.tiers["powerful"];
-    assert_eq!(powerful.input_usd_per_m_tokens, Some(0.037));
+    assert_eq!(powerful.input_usd_per_m_tokens, Some(1.4));
+    assert_eq!(powerful.output_usd_per_m_tokens, Some(4.4));
 
     // Only fs_read is uncommented in the reference.
     assert_eq!(def.tools.len(), 1);

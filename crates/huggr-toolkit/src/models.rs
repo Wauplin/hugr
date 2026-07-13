@@ -19,27 +19,21 @@ api_key_env = "HF_TOKEN"
 
 [models.fast]
 provider = "hf"
-model = "Qwen/Qwen3-4B-Instruct-2507:nscale"
-input_usd_per_m_tokens = 0.01
-output_usd_per_m_tokens = 0.03
+model = "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai"
+input_usd_per_m_tokens = 0.14
+output_usd_per_m_tokens = 0.28
 
 [models.balanced]
 provider = "hf"
-model = "openai/gpt-oss-20b:deepinfra"
-input_usd_per_m_tokens = 0.03
-output_usd_per_m_tokens = 0.14
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
 
 [models.powerful]
 provider = "hf"
-model = "openai/gpt-oss-120b:deepinfra"
-input_usd_per_m_tokens = 0.037
-output_usd_per_m_tokens = 0.17
-
-[models.max]
-provider = "hf"
-model = "zai-org/GLM-5.2:deepinfra"
-input_usd_per_m_tokens = 0.93
-output_usd_per_m_tokens = 3.0
+model = "zai-org/GLM-5.2:together"
+input_usd_per_m_tokens = 1.4
+output_usd_per_m_tokens = 4.4
 "#;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -457,11 +451,38 @@ model = "local-fast"
     }
 
     #[test]
-    fn default_catalog_defines_all_fixed_tiers() {
+    fn default_catalog_uses_requested_models_and_powerful_for_max() {
         let catalog = default_catalog();
-        for tier in MODEL_TIERS {
-            assert!(catalog.models.contains_key(tier));
-        }
+        assert_eq!(catalog.models.len(), 3);
+        assert!(!catalog.models.contains_key("max"));
+        assert_eq!(
+            catalog.models["fast"].model,
+            "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai"
+        );
+        assert_eq!(catalog.models["fast"].input_usd_per_m_tokens, Some(0.14));
+        assert_eq!(catalog.models["fast"].output_usd_per_m_tokens, Some(0.28));
+        assert_eq!(
+            catalog.models["balanced"].model,
+            "google/gemma-4-31B-it:cerebras"
+        );
+        assert_eq!(catalog.models["balanced"].input_usd_per_m_tokens, Some(1.0));
+        assert_eq!(
+            catalog.models["balanced"].output_usd_per_m_tokens,
+            Some(1.5)
+        );
+        assert_eq!(catalog.models["powerful"].input_usd_per_m_tokens, Some(1.4));
+        assert_eq!(
+            catalog.models["powerful"].output_usd_per_m_tokens,
+            Some(4.4)
+        );
+
+        let def = definition("[agent]\nname='x'\n[models]\ndefault='max'\n");
+        let resolved = resolve_source_definition_with_env(&def, &catalog, |_| None).unwrap();
+        assert_eq!(
+            resolved.models.tiers["max"].model,
+            "zai-org/GLM-5.2:together"
+        );
+        assert_eq!(resolved.model_sources["max"].resolved_from, "powerful");
     }
 
     #[test]

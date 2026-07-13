@@ -29,20 +29,28 @@ api_key_env = "HF_TOKEN"
 
 [models.fast]
 provider = "hf"
-model = "Qwen/Qwen3-4B-Instruct-2507:nscale"
-input_usd_per_m_tokens = 0.01
-output_usd_per_m_tokens = 0.03
+model = "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai"
+input_usd_per_m_tokens = 0.14
+output_usd_per_m_tokens = 0.28
+
+[models.balanced]
+provider = "hf"
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
 
 [models.powerful]
 provider = "hf"
-model = "openai/gpt-oss-120b:deepinfra"
-input_usd_per_m_tokens = 0.037
-output_usd_per_m_tokens = 0.17
+model = "zai-org/GLM-5.2:together"
+input_usd_per_m_tokens = 1.4
+output_usd_per_m_tokens = 4.4
 ```
 
 Provider names are local aliases. A provider declares an OpenAI-compatible endpoint and the name of the environment variable containing its key. A model entry selects that provider, the concrete model id, and optional input and output prices in USD per million tokens. Secrets never enter either configuration file.
 
-The CLI creates `~/.huggr/models.toml` with mappings for all four tiers the first time any `huggr` command runs. Set `HUGGR_HOME` to relocate the Huggr home, or `HUGGR_MODELS_FILE` to point directly at another catalog. The generated file is ordinary user configuration and can be edited at any time.
+The CLI creates `~/.huggr/models.toml` with the three mappings above the first time any `huggr` command runs. The built-in catalog intentionally omits `max`, so it resolves to `powerful` unless the operator adds a `[models.max]` entry. Set `HUGGR_HOME` to relocate the Huggr home, or `HUGGR_MODELS_FILE` to point directly at another catalog. The generated file is ordinary user configuration and can be edited at any time.
+
+[Hugging Face Inference Providers](https://huggingface.co/inference/models) lists a large choice of provider and model combinations that work with the built-in `hf` provider. To use another OpenAI-compatible service, add a separate provider alias with its `base_url` set to the API URL of your choice, set its own `api_key_env`, and reference that alias from the relevant model tiers. Keep the `hf` alias for requests routed through Hugging Face.
 
 ## Resolution before a build
 
@@ -72,7 +80,7 @@ An environment override replaces only the concrete model id. It inherits the pro
 
 ## Missing tiers
 
-A catalog may define any non-empty subset of the four tiers. A missing tier uses the closest configured tier, preferring the lower tier when two candidates are equally close. For example, missing `max` resolves to `powerful`, then `balanced`, then `fast`; missing `fast` resolves upward. `--config` reports the tier it resolved from.
+A catalog may define any non-empty subset of the four tiers. A missing tier uses the closest configured tier, preferring the lower tier when two candidates are equally close. For example, the built-in catalog leaves `max` unset, so it resolves to `powerful`; more generally, missing `max` resolves to `powerful`, then `balanced`, then `fast`, while missing `fast` resolves upward. `--config` reports the tier it resolved from.
 
 This fallback is for operator convenience. The logical selector remains the tier requested by the author, so traces and aggregate statistics continue to say `fast`, `balanced`, `powerful`, or `max`.
 

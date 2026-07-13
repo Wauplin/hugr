@@ -72,10 +72,9 @@ const DEFAULT_MODEL_CATALOG: ModelCatalog = {
     hf: { base_url: "https://router.huggingface.co/v1", api_key_env: "HF_TOKEN" },
   },
   models: {
-    fast: { provider: "hf", model: "Qwen/Qwen3-4B-Instruct-2507:nscale", input_usd_per_m_tokens: 0.01, output_usd_per_m_tokens: 0.03 },
-    balanced: { provider: "hf", model: "openai/gpt-oss-20b:deepinfra", input_usd_per_m_tokens: 0.03, output_usd_per_m_tokens: 0.14 },
-    powerful: { provider: "hf", model: "openai/gpt-oss-120b:deepinfra", input_usd_per_m_tokens: 0.037, output_usd_per_m_tokens: 0.17 },
-    max: { provider: "hf", model: "zai-org/GLM-5.2:deepinfra", input_usd_per_m_tokens: 0.93, output_usd_per_m_tokens: 3.0 },
+    fast: { provider: "hf", model: "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai", input_usd_per_m_tokens: 0.14, output_usd_per_m_tokens: 0.28 },
+    balanced: { provider: "hf", model: "google/gemma-4-31B-it:cerebras", input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
+    powerful: { provider: "hf", model: "zai-org/GLM-5.2:together", input_usd_per_m_tokens: 1.4, output_usd_per_m_tokens: 4.4 },
   },
 };
 

@@ -30,9 +30,9 @@ api_key_env = "HF_TOKEN"
 
 [models.powerful]
 provider = "hf"
-model = "openai/gpt-oss-120b:deepinfra"
-input_usd_per_m_tokens = 0.037   # optional: feeds AnswerMeta.cost_micro_usd
-output_usd_per_m_tokens = 0.17
+model = "zai-org/GLM-5.2:together"
+input_usd_per_m_tokens = 1.4     # optional: feeds AnswerMeta.cost_micro_usd
+output_usd_per_m_tokens = 4.4
 
 # [tools.<name>] — grants from the predefined tool library. The scope keys are
 # tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard

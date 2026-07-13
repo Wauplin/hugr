@@ -58,18 +58,26 @@ api_key_env = "HF_TOKEN"
 
 [models.fast]
 provider = "hf"
-model = "Qwen/Qwen3-4B-Instruct-2507:nscale"
-input_usd_per_m_tokens = 0.01
-output_usd_per_m_tokens = 0.03
+model = "deepseek-ai/DeepSeek-V4-Flash:fireworks-ai"
+input_usd_per_m_tokens = 0.14
+output_usd_per_m_tokens = 0.28
+
+[models.balanced]
+provider = "hf"
+model = "google/gemma-4-31B-it:cerebras"
+input_usd_per_m_tokens = 1.0
+output_usd_per_m_tokens = 1.5
 
 [models.powerful]
 provider = "hf"
-model = "openai/gpt-oss-120b:deepinfra"
-input_usd_per_m_tokens = 0.037
-output_usd_per_m_tokens = 0.17
+model = "zai-org/GLM-5.2:together"
+input_usd_per_m_tokens = 1.4
+output_usd_per_m_tokens = 4.4
 ```
 
-The CLI writes a complete built-in catalog on first run when the file is absent. `HUGGR_HOME` relocates the Huggr home, and `HUGGR_MODELS_FILE` selects a catalog directly. The file holds no secrets.
+The CLI writes the built-in catalog on first run when the file is absent. It omits `max`, which falls back to `powerful` unless the operator configures it. `HUGGR_HOME` relocates the Huggr home, and `HUGGR_MODELS_FILE` selects a catalog directly. The file holds no secrets.
+
+[Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. A different OpenAI-compatible service should use a separate provider alias whose `base_url` is the chosen API URL and whose `api_key_env` names its own credential.
 
 A non-empty partial catalog is valid. A missing tier resolves to the nearest configured tier, with the lower tier winning equal-distance ties. For example, `max` falls back through `powerful`, `balanced`, and `fast`. The requested selector does not change, so trace accounting stays in the author's four-tier vocabulary.
 

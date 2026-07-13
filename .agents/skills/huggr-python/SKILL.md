@@ -70,7 +70,7 @@ async def stream():
             answer = event.answer
 ```
 
-Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog.
+Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. The built-in catalog leaves `max` unset, so it falls back to `powerful`. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog. [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. For another OpenAI-compatible service, give it a separate provider alias with its own `base_url` API URL and credential configuration.
 
 Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`. Turn failures are answers with mandatory metadata; configuration and infrastructure failures raise exceptions.
 
