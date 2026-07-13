@@ -66,6 +66,8 @@ The runtime resolves the fixed `fast`, `balanced`, `powerful`, and `max` tiers f
 
 Provider-reported usage cost is authoritative for answer metadata and `max_cost_micro_usd`; configured token prices are the fallback when the provider reports no cost.
 
+The OpenAI-compatible adapter retries transport failures and 429/5xx responses before streaming begins. Mid-stream failures are final.
+
 ## Context policy
 
 Pass `context` using manifest-shaped keys:

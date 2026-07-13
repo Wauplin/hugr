@@ -14,7 +14,7 @@ The `huggr-agents` npm package in `bindings/typescript/` is a typed layer over t
 - **`huggr-agents/node`:** the Node runtime: `createAgent(config)`, `loadWasm()` from `./pkg`, `FsTraceStore` / `FsFeedbackStore` under `~/.huggr/<name>/`, and `api_key_env` resolved from `process.env`.
 - **`huggr-agents/browser`:** the browser runtime: `createAgent(config)`, `loadWasm(pkgUrl?)` over `fetch`, `IndexedDbTraceStore` / `IndexedDbFeedbackStore`.
 
-The brain never touches IO. The TS `Agent` is the host: it loads the wasm, drives the submit/poll loop, fetches the model, invokes tools, and persists traces, following the documented runtime boundary.
+The brain never touches IO. The TS `Agent` is the host: it loads the wasm, drives the submit/poll loop, fetches the model, invokes tools, and persists traces, following the documented runtime boundary. Its OpenAI-compatible adapter retries transport failures and 429/5xx responses before a response stream starts; a failure after streaming begins is final.
 
 ## Prerequisites
 

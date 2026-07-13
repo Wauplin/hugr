@@ -1,5 +1,6 @@
 // OpenAI-compatible streaming /chat/completions client over fetch, with the
-// same retry rules as huggr-providers: 429/5xx only, exponential backoff.
+// same retry boundary as huggr-providers: transport failures and 429/5xx
+// responses before streaming starts, with exponential backoff.
 // Request shaping comes from the brain's ModelRequest blocks — no adapter-side
 // pruning.
 
@@ -32,15 +33,23 @@ export async function callOpenAiCompatible(
   const body = buildBody(request as Record<string, Json>, settings.tier);
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${settings.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: hooks.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${settings.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: hooks.signal,
+      });
+    } catch (error) {
+      if (hooks.signal?.aborted || isAbortError(error) || attempt === MAX_ATTEMPTS) throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      await sleep(200 * 2 ** (attempt - 1), hooks.signal);
+      continue;
+    }
     if (response.ok) {
       const contentType = response.headers.get("content-type") ?? "";
       if (!contentType.startsWith("text/event-stream")) throw new Error(`unexpected model content type: ${contentType}`);
@@ -53,6 +62,12 @@ export async function callOpenAiCompatible(
     await sleep(200 * 2 ** (attempt - 1), hooks.signal);
   }
   throw lastError ?? new Error("model request failed");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
 function buildBody(request: Record<string, Json>, tier: TierConfig): Record<string, Json> {

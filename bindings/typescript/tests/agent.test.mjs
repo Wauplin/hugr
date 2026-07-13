@@ -105,6 +105,18 @@ test("errors are answers", async () => {
   assert.ok(answer.trace_id);
 });
 
+test("transient transport failures are retried", async () => {
+  const agent = makeAgent();
+  server.scriptTransportFailure();
+  server.scriptText('{"answer": "retried"}');
+
+  const answer = await agent.ask("q");
+
+  assert.equal(answer.status, "success");
+  assert.deepEqual(answer.response, { answer: "retried" });
+  assert.equal(server.requests.length, 2);
+});
+
 test("event stream ordering", async () => {
   const calls = [];
   const agent = makeAgent({ tools: [lookupTool(calls)] });

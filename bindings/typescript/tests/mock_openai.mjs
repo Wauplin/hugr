@@ -18,6 +18,10 @@ export class MockOpenAi {
           res.end("mock ran out of scripted outputs");
           return;
         }
+        if (output.transportError) {
+          req.socket.destroy();
+          return;
+        }
         res.writeHead(200, { "content-type": "text/event-stream" });
         const chunks = sseChunks(output);
         res.write(`data: ${JSON.stringify(chunks.shift())}\n\n`);
@@ -44,6 +48,10 @@ export class MockOpenAi {
 
   scriptText(text, usage) {
     this.outputs.push({ text, usage });
+  }
+
+  scriptTransportFailure() {
+    this.outputs.push({ transportError: true });
   }
 
   scriptPausedText(text) {

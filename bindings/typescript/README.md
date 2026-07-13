@@ -21,7 +21,7 @@ const answer = await agent.ask("Can I expense a train ticket?");
 for await (const event of agent.run("Follow-up?", { traceId: answer.trace_id })) { /* stream */ }
 ```
 
-- `huggr-agents` (root export): the platform-neutral `Agent`, contract types, the OpenAI-compatible fetch adapter (429/5xx retries), and in-memory reference stores.
+- `huggr-agents` (root export): the platform-neutral `Agent`, contract types, the OpenAI-compatible fetch adapter (transport and 429/5xx retries before streaming starts), and in-memory reference stores.
 - `huggr-agents/node`: fs `TraceStore`/`FeedbackStore` under `~/.huggr/<name>/` with the Rust runtime's layout, wasm loader from `./pkg`, and `api_key_env` from `process.env`. `huggr verify` and `huggr traces` can read those traces when the supplied agent crate resolves to the same store.
 - `huggr-agents/browser`: IndexedDB stores and a fetch-based wasm loader.
 - `agent.verify(traceId)` replays a stored trace bit-for-bit through the wasm `verify_trace_json` fold, the same gate as `huggr verify`, across compatible trace stores.
