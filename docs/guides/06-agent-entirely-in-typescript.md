@@ -111,7 +111,7 @@ console.log(answer.metadata.model_calls);      // number
 
 The `Answer` has the same shape on every surface. It contains `status` (`"success"` or `"error"`), `response` (a `Record<string, Json>` object), `trace_id`, optional `blobs`, and `metadata: AnswerMeta`. Metadata contains `duration_ms`, `cost_micro_usd`, `tokens_in`, `tokens_out`, `model_calls`, and `tool_calls`.
 
-Errors are answers and are never thrown. A blown limit, missing final model text, or timeout returns an error answer with `response.error` set.
+Run errors are answers, not exceptions: a blown limit, missing final model text, or timeout ends `ask`/`run` with an error answer (`status: "error"`, `response.error` set) rather than throwing. Failures outside a run still throw as ordinary exceptions: an invalid config, a `feedback` call for an unknown trace, and `verify` on a drifting trace.
 
 ## 4. Stream with `agent.run`
 

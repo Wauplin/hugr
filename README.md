@@ -169,7 +169,7 @@ cargo fmt --all
 cargo tree -p huggr-core     # audit: must stay free of tokio/reqwest/fs
 ```
 
-Notable tests: `huggr-core/tests` (scripted sessions + deterministic replay), `huggr-host/tests/end_to_end.rs` (real engine, tools, MCP, record/replay/resume), and the ignored slow gates `cargo test -p huggr-toolkit --test conformance -- --ignored` / `--test build_cli -- --ignored` (compile a real agent binary and check every surface agrees).
+Notable tests: `huggr-core/tests` (scripted sessions + deterministic replay), `huggr-host/tests/end_to_end.rs` (real engine, tools, MCP, record/replay/resume), and the ignored slow gates `cargo test -p huggr-toolkit --test conformance -- --ignored` / `--test build_cli -- --ignored` (compile a real agent binary and check the in-process crate, built CLI, and MCP surfaces agree; the generated Python, typed Node/browser, and Chrome surfaces are not yet in this gate).
 
 ## License
 
