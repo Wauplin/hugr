@@ -149,6 +149,26 @@ impl TraceHeader {
     }
 }
 
+/// Stamp the header fields into a trace's meta before its id is derived. The
+/// `trace_id` is assigned separately, once each backend's collision reservation
+/// picks a free id.
+fn stamp_header(trace: &mut Trace, header: TraceHeader) {
+    trace.meta.depends_on = header.depends_on.map(String::from);
+    trace.meta.agent_name = Some(header.agent_name);
+    trace.meta.agent_version = Some(header.agent_version);
+    trace.meta.question = Some(header.question);
+    trace.meta.status = Some(header.status);
+    trace.meta.extra = header.extra;
+}
+
+/// The content-derived base id: the first 16 hex chars of the SHA-256 of the
+/// headed trace. Deterministic (no RNG, no clock) so the same bytes always map
+/// to the same id; each backend appends a `-N` collision suffix of its own.
+fn base_id(trace: &Trace) -> Result<String, StoreError> {
+    let digest = Sha256::digest(trace.to_json()?);
+    Ok(format!("{digest:x}")[..16].to_string())
+}
+
 /// A directory-backed store of immutable traces keyed by [`TraceId`].
 #[derive(Clone, Debug)]
 pub struct TraceStore {
@@ -193,26 +213,19 @@ impl TraceStore {
     pub fn put(&self, mut trace: Trace, header: TraceHeader) -> Result<TraceId, StoreError> {
         std::fs::create_dir_all(&self.root)?;
 
-        trace.meta.depends_on = header.depends_on.map(String::from);
-        trace.meta.agent_name = Some(header.agent_name);
-        trace.meta.agent_version = Some(header.agent_version);
-        trace.meta.question = Some(header.question);
-        trace.meta.status = Some(header.status);
-        trace.meta.extra = header.extra;
+        stamp_header(&mut trace, header);
 
         // Content-derived id: hash the headed trace *before* the id is stamped
         // in (the id cannot depend on itself), then collision-check against
         // the directory with a monotonic counter.
-        let digest = Sha256::digest(trace.to_json()?);
-        let base = format!("{digest:x}");
-        let base = &base[..16];
+        let base = base_id(&trace)?;
 
         // Reserve the id's path atomically: two asks landing on the same
         // content hash must not both claim the same file. `create_new` is the
         // atomic claim — the loser sees `AlreadyExists` and bumps the `-N`
         // suffix, so parallel puts always produce distinct ids and no trace is
         // ever clobbered. (A bare `exists()` check would be a TOCTOU race.)
-        let mut candidate = TraceId::new(base);
+        let mut candidate = TraceId::new(base.as_str());
         let mut counter = 1u64;
         let reserved = loop {
             match std::fs::OpenOptions::new()
@@ -360,10 +373,8 @@ impl MemTraceStore {
         traces: &BTreeMap<TraceId, Trace>,
         trace: &Trace,
     ) -> Result<TraceId, StoreError> {
-        let digest = Sha256::digest(trace.to_json()?);
-        let base = format!("{digest:x}");
-        let base = &base[..16];
-        let mut candidate = TraceId::new(base);
+        let base = base_id(trace)?;
+        let mut candidate = TraceId::new(base.as_str());
         let mut counter = 1u64;
         while traces.contains_key(&candidate) {
             candidate = TraceId::new(format!("{base}-{counter}"));
@@ -376,12 +387,7 @@ impl MemTraceStore {
 #[async_trait]
 impl TraceBackend for MemTraceStore {
     async fn put(&self, mut trace: Trace, header: TraceHeader) -> Result<TraceId, StoreError> {
-        trace.meta.depends_on = header.depends_on.map(String::from);
-        trace.meta.agent_name = Some(header.agent_name);
-        trace.meta.agent_version = Some(header.agent_version);
-        trace.meta.question = Some(header.question);
-        trace.meta.status = Some(header.status);
-        trace.meta.extra = header.extra;
+        stamp_header(&mut trace, header);
         let mut traces = self.traces.lock().unwrap();
         let id = Self::allocate_id(&traces, &trace)?;
         trace.meta.trace_id = Some(id.as_str().to_string());
