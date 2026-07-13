@@ -121,7 +121,7 @@ pub struct Answer {
 
 pub struct AnswerMeta {
     pub duration_ms: u64,
-    pub cost_micro_usd: u64,         // folded from per-op usage × per-tier pricing
+    pub cost_micro_usd: u64,         // provider-reported cost, with per-tier pricing as fallback
     pub tokens_in: u64, pub tokens_out: u64,
     pub model_calls: u32, pub tool_calls: u32,
 }
