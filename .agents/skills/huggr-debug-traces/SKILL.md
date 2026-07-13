@@ -1,11 +1,11 @@
 ---
 name: huggr-debug-traces
-description: Inspect, replay, verify, compare, and analyze Huggr traces, lineage, costs, tool activity, feedback, cron runs, and offline insights. Use when an ask fails, a trace no longer verifies, behavior changes after a reducer or policy edit, costs regress, a resumed session looks wrong, or an agent needs trace-driven improvement suggestions.
+description: Inspect, replay, verify, compare, and analyze Huggr traces, lineage, costs, tool activity, feedback, and offline insights. Use when an ask fails, a trace no longer verifies, behavior changes after a reducer or policy edit, costs regress, a resumed session looks wrong, or an agent needs trace-driven improvement suggestions.
 ---
 
 # Debug Huggr traces
 
-Treat trace files as immutable evidence and never repair a failure by editing a stored trace. Read [guide 08](../../../docs/guides/08-traces-replay-debugging.md) for trace anatomy and [the runtime documentation](../../../docs/runtime.md#determinism-replay-and-traces) for the determinism contract.
+Treat trace files as immutable evidence and never repair a failure by editing a stored trace. Read [Inspect, replay, and verify traces](../../../docs/guides/inspect-traces.md) for trace anatomy and [the runtime documentation](../../../docs/concepts/runtime.md#determinism-replay-and-traces) for the determinism contract.
 
 ## Locate the right store
 
@@ -60,10 +60,6 @@ huggr run ./examples/huglet-insights ~/.huggr/<target-agent> "What should this a
 ```
 
 Treat its structured prompt/tool suggestions as a report for human review. Apply nothing automatically; validate accepted changes with focused asks, stats, and `verify`.
-
-## Check recurring asks
-
-Cron runs are ordinary traces tagged in `extra` with the job name and fire time. Check effective cost limits, `lineage = "fresh" | "chain"`, and overlap-skip notices before blaming the brain. The scheduler owns the clock; the core remains deterministic.
 
 ## Finish a trace-related code change
 

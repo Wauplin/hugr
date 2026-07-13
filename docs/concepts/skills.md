@@ -1,6 +1,6 @@
 # Skills
 
-This guide explains how a huglet uses Agent Skills: what a skill folder looks like, how progressive disclosure keeps skills out of the context until needed, how to bundle skills with an agent definition versus attaching them at invocation time, and where the trust boundary sits. It applies to every surface: the manifest, the built CLI binary, MCP, and the Python and TypeScript runtime APIs.
+This page explains how a huglet uses Agent Skills: what a skill folder looks like, how progressive disclosure keeps skills out of the context until needed, how to bundle skills with an agent definition versus attaching them at invocation time, and where the trust boundary sits. It applies to manifest-defined agents, the built CLI binary, MCP, and the Python runtime API.
 
 ## The problem
 
@@ -61,7 +61,7 @@ Each entry may point at one skill folder, a `SKILL.md` file directly, or a direc
 my-agent --skill ./skills/incident-runbook "Summarize yesterday's incidents"
 ```
 
-The flag is repeatable. The same field exists on every surface: `Ask.skills` in Rust, the `skills` array on the MCP `ask` tool, and `skills=` in the generated Python wrapper and TypeScript `Ask`. Runtime and definition skills are merged before discovery, so a runtime skill whose name collides with a bundled one is an error, not an override.
+The flag is repeatable. The same field exists on `Ask.skills` in Rust, the `skills` array on the MCP `ask` tool, and `skills=` in the generated and runtime Python APIs. The TypeScript contract type mirrors the field, but its `Agent.ask` and `Agent.run` options do not currently accept skills. Runtime and definition skills are merged before discovery, so a runtime skill whose name collides with a bundled one is an error, not an override.
 
 Use definition skills for instructions the agent always might need; use runtime skills when the caller owns the procedure, for example an orchestrator that hands each specialist the runbook for the current job.
 
@@ -69,7 +69,7 @@ Use definition skills for instructions the agent always might need; use runtime 
 
 Skill instructions are trusted prompt input, on the same footing as `SYSTEM.md`: they can steer the model but cannot register capabilities or widen any jail. `skill_read` itself is jailed to the selected skill folder, rejects traversal and symlink escapes after canonicalization, reads only UTF-8 files, and caps each file at 1 MB.
 
-The corollary is about who supplies the path. Whoever controls a skill folder controls part of the ask's instructions, so accepting a runtime skill path from an untrusted party hands them the prompt. The [security notes](../security.md) state this as the rule: do not accept runtime skill paths unless granting that party control over the instructions is intended.
+The corollary is about who supplies the path. Whoever controls a skill folder controls part of the ask's instructions, so accepting a runtime skill path from an untrusted party hands them the prompt. The [security notes](security.md) state this as the rule: do not accept runtime skill paths unless granting that party control over the instructions is intended.
 
 ## Worked example
 

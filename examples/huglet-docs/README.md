@@ -5,15 +5,15 @@
 ## Usage
 
 ```bash
-export HUGGR_API_KEY=hf_...
-cargo run -p huggr-toolkit --bin huggr -- run crates/huglet-docs ./docs "What is the narrow-waist rule?" | jq
+export HF_TOKEN=hf_...
+cargo run -p huggr-toolkit --bin huggr -- run examples/huglet-docs ./docs "What is the narrow-waist rule?" | jq
 ```
 
 To build the standalone artifact:
 
 ```bash
-cargo run -p huggr-toolkit --bin huggr -- build crates/huglet-docs --release
-./crates/huglet-docs/dist/huglet-docs-cli/target/release/huglet-docs ./docs "What is the narrow-waist rule?"
+cargo run -p huggr-toolkit --bin huggr -- build examples/huglet-docs --release
+./examples/huglet-docs/dist/huglet-docs-cli/target/release/huglet-docs ./docs "What is the narrow-waist rule?"
 ```
 
 The first runtime argument, `docs_path`, is declared in `huggr.toml` under `[runtime.args.docs_path]` and patches `tools.fs_read.root` for that invocation. Relative paths are resolved from the caller's current directory, so the same built binary can be run against a different docs folder each time.
@@ -25,7 +25,7 @@ The output is the standard Huggr `Answer` JSON:
   "status": "success",
   "response": {
     "response": "...",
-    "related_documents": ["docs/README.md"]
+    "related_documents": [{ "path": "docs/README.md", "url": "https://huggingface.co/docs/docs/README" }]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
   "blobs": [],

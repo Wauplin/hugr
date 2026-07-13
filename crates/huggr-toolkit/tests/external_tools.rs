@@ -29,8 +29,8 @@ async fn manifest_declared_mcp_tool_is_registered_on_the_agent() {
     let manifest = r#"
 [agent]
 name = "mcp-agent"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 
 [tools.mcp.fake]
 command = "python3"
@@ -60,7 +60,7 @@ for line in sys.stdin:
     let (agent, warnings) = build_agent(&def)
         .await
         .expect("MCP server should be loaded from the manifest");
-    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
 
     let card = agent.describe();
     let names: Vec<_> = card.tools.iter().map(|t| t.name.as_str()).collect();

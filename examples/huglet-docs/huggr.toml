@@ -6,14 +6,7 @@ version = "0.0.2"
 description = "Answers questions from a read-only documentation folder."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "docs"
-
-[models.docs]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.fs_read]
 root = "."

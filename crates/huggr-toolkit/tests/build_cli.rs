@@ -23,12 +23,13 @@ fn scaffold_bundle(name: &str, template: Template) -> (Vec<u8>, PathBuf) {
     for file in scaffold_files(name, template) {
         let path = src.join(&file.rel_path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // Keep the tests hermetic: the scaffolded default is HUGGR_API_KEY,
-        // which may be set on a developer machine and would turn the expected
-        // "no key" error answers into live model calls.
+        // Keep the tests hermetic even when the developer's global catalog and
+        // provider key are configured.
         let contents = if file.rel_path == Path::new("huggr.toml") {
-            file.contents
-                .replace("HUGGR_API_KEY", "HUGGR_BCLI_TEST_UNSET_KEY")
+            format!(
+                "{}\n[providers.test]\nbase_url = \"http://127.0.0.1:9/v1\"\napi_key_env = \"HUGGR_BCLI_TEST_UNSET_KEY\"\n\n[models.balanced]\nprovider = \"test\"\nmodel = \"test-model\"\n",
+                file.contents
+            )
         } else {
             file.contents
         };
@@ -156,11 +157,17 @@ fn real_build_produces_a_runnable_binary() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, file.contents).unwrap();
     }
-    let mut manifest = std::fs::read_to_string(docs_src.join("huggr.toml"))
-        .unwrap()
-        .replace("HUGGR_API_KEY", "HUGGR_BCLI_TEST_UNSET_KEY");
+    let mut manifest = std::fs::read_to_string(docs_src.join("huggr.toml")).unwrap();
     manifest.push_str(
         r#"
+[providers.test]
+base_url = "http://127.0.0.1:9/v1"
+api_key_env = "HUGGR_BCLI_TEST_UNSET_KEY"
+
+[models.balanced]
+provider = "test"
+model = "test-model"
+
 [tools.fs_read]
 root = "./docs"
 

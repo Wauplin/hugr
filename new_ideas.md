@@ -4,7 +4,6 @@
 - let's have a "new_ideas.md" file in which we can drop ideas as unstructured text. Let's update AGENTS.md so codex/claude can also add their -short- ideas while implementing to I can get a look at them and later add them to the roadmap
 - Detailed analytics (cost per request, cost per tool/huglet -never nested-, tokens in/out per tier, nb calls, etc.)
 - Shared blobs between agents => make sure no local copy (can be huge in case of e.g a dataset)
-- Define cron job for an agent (I.e. a prompt + a cron formula)
 - Scratchpad, memory, traces, etc. For now we assume all of this is a normal local filesystem. But we must be able to swap different backends. Filesystem is an obvious backend. But can also be a postgre SQL db. Can be a local storage (if run in a browser). Can be anything able to manage data.
 - have a built-in and configurable compaction/"forget" mechanisms. Currently we have a POC in huggr-wasm for the Chrome extension but it's not entirely satisfying and not built-in. Make sure the configuration stays flexible and easy to use. 
 - let's cleanup the codebase. There is A LOT of comments in the code and most of them can just be removed. Let's remove all references to other docs, all "how it works" comments, anything that just describe what's going on when the code is already self-explanatory. When something is very hacky/specific then it's fine to have comments but it shouldn't be the default.

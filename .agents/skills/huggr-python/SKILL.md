@@ -8,7 +8,7 @@ description: Define and run huglets in Python with typed contract objects, sync 
 Select the surface based on where the agent is defined:
 
 - To define the system prompt, model config, and tools in Python, use the `huggr-agents` runtime API below.
-- To consume an existing Rust-defined agent as a typed Python package, keep its definition in Rust and run `huggr build <agent-dir> --surface python --release`; follow [guide 04](../../../docs/guides/04-agent-binary-from-python.md).
+- To consume an existing Rust-defined agent as a typed Python package, keep its definition in Rust and run `huggr build <agent-dir> --surface python --release`; follow [Package an agent for Python](../../../docs/guides/package-agent-for-python.md).
 
 ## Prepare the runtime package
 
@@ -26,7 +26,7 @@ Import the package as `huggr_agents`. It runs the native Rust runtime; the Pytho
 
 ## Define tools and the agent
 
-Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]` or `X | None`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead — the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported. Exceptions become semantic tool errors returned to the model.
+Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]` or `X | None`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead; the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported; async callables run through `asyncio.run` on a blocking worker and cannot reuse objects bound to the caller's event loop. Exceptions become semantic tool errors returned to the model.
 
 ```python
 import huggr_agents as huggr
@@ -39,12 +39,7 @@ def lookup_policy(query: str) -> dict:
 agent = huggr.Agent(
     name="policy-helper",
     system="Use lookup_policy, then return a JSON object with an answer field.",
-    models={
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
-    },
+    models={"default": "balanced"},
     tools=[lookup_policy],
     response_schema={
         "type": "object",
@@ -75,9 +70,9 @@ async def stream():
             answer = event.answer
 ```
 
-Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Tier selectors and external grant instance names remain typed mappings because they are open strings.
+Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog.
 
-Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`. Errors are answers with mandatory metadata.
+Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`. Turn failures are answers with mandatory metadata; configuration and infrastructure failures raise exceptions.
 
 Use `BlobHandle.from_path(...)` and the `blobs=` ask argument for files. Opaque domain payloads remain `JsonValue`/`JsonObject`; validation stays in Rust and Python only casts.
 
@@ -99,4 +94,4 @@ huggr verify <matching-agent-dir> <trace-id>
 huggr replay <matching-agent-dir> <trace-id> --step
 ```
 
-Read [guide 05](../../../docs/guides/05-agent-entirely-in-python.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by `api_key_env`. If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.
+Read [Define an agent in Python](../../../docs/tutorials/python-agent.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by the resolved provider's `api_key_env` (`HF_TOKEN` for the built-in catalog). If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.

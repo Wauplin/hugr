@@ -12,8 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use huggr_agent::{
     Agent, AgentLimits, AgentToolResolver, AgentToolSpec, Answer, AnswerHook, Ask, AskHook,
-    BlobRef, FsBlobStore, FsFeedbackStore, FsMemory, FsScratch, Pricing, StorageOverrides,
-    TraceStore, depth_exceeded_resolver,
+    BlobRef, FsBlobStore, FsFeedbackStore, FsMemory, FsScratch, ModelDetails, Pricing,
+    StorageOverrides, TraceStore, depth_exceeded_resolver,
 };
 use huggr_core::{BudgetPolicy, ModelSelector, ToolSchema, Value};
 use huggr_host::{
@@ -25,7 +25,11 @@ use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::AsyncReadExt;
 
-use crate::manifest::{AgentDefinition, ToolGrant, ToolKind};
+use crate::manifest::{AgentDefinition, MODEL_TIERS, ToolGrant, ToolKind};
+use crate::models::{
+    ModelCatalog, ModelConfigError, default_catalog, resolve_runtime_definition,
+    resolve_source_definition,
+};
 use crate::tools::{self, ToolError};
 
 pub use huggr_agent::ResponseContract;
@@ -170,6 +174,8 @@ pub enum RuntimeError {
     /// Definition-level runtime wiring failed.
     #[error("{message}")]
     Definition { message: String },
+    #[error(transparent)]
+    Models(#[from] ModelConfigError),
 }
 
 /// Default recursion cap for agent-as-tool delegation: how many nested
@@ -194,6 +200,7 @@ pub struct RuntimeOptions {
     answer_hooks: Vec<AnswerHook>,
     storage: Option<StorageOverrides>,
     state_root: Option<PathBuf>,
+    model_catalog: Option<ModelCatalog>,
 }
 
 impl RuntimeOptions {
@@ -246,6 +253,12 @@ impl RuntimeOptions {
         self
     }
 
+    /// Override all four model tiers for this host runtime.
+    pub fn with_model_catalog(mut self, catalog: ModelCatalog) -> Self {
+        self.model_catalog = Some(catalog);
+        self
+    }
+
     pub(crate) fn with_state_root(mut self, root: PathBuf) -> Self {
         self.state_root = Some(root);
         self
@@ -272,6 +285,10 @@ impl RuntimeOptions {
     pub fn storage(&self) -> Option<StorageOverrides> {
         self.storage.clone()
     }
+
+    pub fn model_catalog(&self) -> Option<&ModelCatalog> {
+        self.model_catalog.as_ref()
+    }
 }
 
 /// Assemble a [`Agent`] from a definition, collecting non-fatal build warnings
@@ -288,6 +305,17 @@ pub async fn build_agent_with_options(
     def: &AgentDefinition,
     options: &RuntimeOptions,
 ) -> Result<(Agent, Vec<String>), RuntimeError> {
+    let resolved;
+    let def = if def.models.tiers.len() == MODEL_TIERS.len() {
+        def
+    } else {
+        resolved = if let Some(catalog) = options.model_catalog() {
+            resolve_runtime_definition(def, Some(catalog), None)?
+        } else {
+            resolve_source_definition(def, &default_catalog())?
+        };
+        &resolved
+    };
     let mut warnings = Vec::new();
     let base_dir = def.source_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
@@ -318,30 +346,50 @@ pub async fn build_agent_with_options(
     };
     agent.description = def.agent.description.clone();
 
-    // The provider API key rides an env var — never the manifest. When
-    // unset, the adapter gets an empty key and the run fails as an error answer.
-    let api_key = def
-        .models
-        .api_key_env
-        .as_deref()
-        .and_then(|var| std::env::var(var).ok())
-        .unwrap_or_default();
-    if let Some(var) = &def.models.api_key_env
-        && api_key.is_empty()
-    {
-        warnings.push(format!(
-            "api key env var `{var}` is unset; model calls will fail until it is set"
-        ));
-    }
-
     let mut pricing = Pricing::new();
     for (tier_name, tier) in &def.models.tiers {
-        let selector = ModelSelector::named(tier_name.clone());
-        let mut adapter = OpenAiAdapter::new(api_key.clone(), tier.model.clone());
-        if let Some(base) = &def.models.base_url {
-            adapter = adapter.with_base_url(base.clone());
+        let provider =
+            def.providers
+                .get(&tier.provider)
+                .ok_or_else(|| ModelConfigError::UnknownProvider {
+                    tier: tier_name.clone(),
+                    provider: tier.provider.clone(),
+                })?;
+        let api_key = std::env::var(&provider.api_key_env).unwrap_or_default();
+        if api_key.is_empty() {
+            let warning = format!(
+                "api key env var `{}` is unset; model calls will fail until it is set",
+                provider.api_key_env
+            );
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
         }
+        let api_key_resolved = !api_key.is_empty();
+        let selector = ModelSelector::named(tier_name.clone());
+        let adapter = OpenAiAdapter::new(api_key, tier.model.clone())
+            .with_base_url(provider.base_url.clone());
         agent.models.push((selector, Arc::new(adapter)));
+        let resolution = def
+            .model_sources
+            .get(tier_name)
+            .cloned()
+            .unwrap_or_else(|| crate::manifest::ModelResolution {
+                source: "inline".to_string(),
+                resolved_from: tier_name.clone(),
+            });
+        agent.model_details.insert(
+            tier_name.clone(),
+            ModelDetails {
+                provider: tier.provider.clone(),
+                model: tier.model.clone(),
+                base_url: provider.base_url.clone(),
+                api_key_env: provider.api_key_env.clone(),
+                api_key_resolved,
+                source: resolution.source,
+                resolved_from: resolution.resolved_from,
+            },
+        );
 
         // Price a tier that declares either side; a missing side is 0.
         if tier.input_usd_per_m_tokens.is_some() || tier.output_usd_per_m_tokens.is_some() {
@@ -961,8 +1009,8 @@ mod tests {
     const DEF: &str = r#"
 [agent]
 name = "policy-docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 "#;
@@ -987,8 +1035,8 @@ root = "."
             r#"
 [agent]
 name = "worker"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_write]
 root = "."
 [tools.shell]
@@ -1104,7 +1152,7 @@ allow_hosts = ["example.com"]
         assert!(tool_names.contains(&"fs_grep"));
         assert!(tool_names.contains(&"fs_glob"));
         assert!(tool_names.contains(&"scratch_write"));
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[tokio::test]
@@ -1113,11 +1161,8 @@ allow_hosts = ["example.com"]
 [agent]
 name = "x"
 
-[models.medium]
-model = "m"
-
-[models.small]
-model = "small-m"
+[models]
+default = "balanced"
 
 [context]
 budget_tokens = 64
@@ -1125,20 +1170,20 @@ compaction = "summarize"
 trigger_tokens = 48
 keep_recent_tokens = 16
 max_block_tokens = 8
-summary_model = "small"
+summary_model = "fast"
 
 [context.forget.keep_last_per_tool]
 page_snapshot = 1
 "#;
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         let (agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
         let policy = agent.context_policy.as_ref().expect("budget policy");
         let value = serde_json::to_value(policy).unwrap();
         assert_eq!(value["kind"], "budget");
         assert_eq!(value["budget_tokens"], 64);
         assert_eq!(value["trigger_tokens"], 48);
-        assert_eq!(value["summary_selector"], "small");
+        assert_eq!(value["summary_selector"], "fast");
         assert_eq!(value["keep_last_per_tool"]["page_snapshot"], 1);
         assert_eq!(agent.describe().context["kind"], "budget");
     }
@@ -1149,15 +1194,15 @@ page_snapshot = 1
 [agent]
 name = "x"
 
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 
 [tools.memory]
 readonly = true
 "#;
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         let (agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
         let card = agent.describe();
         let tools: Vec<_> = card.tools.iter().map(|tool| tool.name.clone()).collect();
         assert!(tools.contains(&"memory_read".to_string()), "{tools:?}");
@@ -1189,13 +1234,13 @@ readonly = true
         let artifact = dir.join("child-bin");
         std::fs::write(&artifact, b"#!/bin/sh\n").unwrap();
         let parent_src = format!(
-            "[agent]\nname = \"parent\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.helper]\nartifact = {:?}\n",
+            "[agent]\nname = \"parent\"\n[models]\ndefault = \"balanced\"\n[tools.agent.helper]\nartifact = {:?}\n",
             artifact.display().to_string()
         );
         let mut def = AgentDefinition::parse(&parent_src, "huggr.toml").unwrap();
         def.source_dir = Some(std::env::temp_dir());
         let (agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
         let names: Vec<_> = agent
             .describe()
             .tools
@@ -1212,10 +1257,10 @@ readonly = true
 
     #[tokio::test]
     async fn delegate_grant_registers_self_agent_tool() {
-        let src = "[agent]\nname = \"self\"\n[models.medium]\nmodel = \"m\"\n[tools.delegate]\n";
+        let src = "[agent]\nname = \"self\"\n[models]\ndefault = \"balanced\"\n[tools.delegate]\n";
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         let (agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
         let tools: Vec<_> = agent
             .describe()
             .tools
@@ -1274,14 +1319,14 @@ readonly = true
         perms.set_mode(0o755);
         std::fs::set_permissions(&artifact, perms).unwrap();
 
-        let parent_src = "[agent]\nname = \"parent-feedback\"\n[models.medium]\nmodel = \"m\"\n[tools.agent.helper]\nartifact = \"child-feedback.sh\"\n";
+        let parent_src = "[agent]\nname = \"parent-feedback\"\n[models]\ndefault = \"balanced\"\n[tools.agent.helper]\nartifact = \"child-feedback.sh\"\n";
         let mut def = AgentDefinition::parse(parent_src, "huggr.toml").unwrap();
         def.source_dir = Some(dir.clone());
         let (mut agent, warnings) = build_agent(&def).await.unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
         agent.models.clear();
         agent.models.push((
-            ModelSelector::named("medium"),
+            ModelSelector::named("balanced"),
             Arc::new(MockModel {
                 outputs: Mutex::new(VecDeque::from([
                     ModelOutput::tool_calls(vec![ToolCall::new(
@@ -1366,8 +1411,8 @@ readonly = true
         let src = r#"
 [agent]
 name = "x"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.agent.receipts]
 artifact = "./does-not-exist"
 "#;
@@ -1385,8 +1430,8 @@ artifact = "./does-not-exist"
         let src = r#"
 [agent]
 name = "x"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.mcp.docs]
 args = ["--stdio"]
 "#;

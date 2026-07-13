@@ -1,11 +1,11 @@
-# Reference
+# Glossary and open questions
 
 ## Open questions
 
 - **Trace schema migration.** Long-lived traces need a migration story as `Record`/`Event` evolve (`format_version` exists; migrations do not).
 - **Trace garbage collection.** Fork trees accumulate. The pruning policy is undecided; delete traces manually for now.
 - **Concurrent asks on one agent.** By default, each ask is an independent session or process, which traces make safe. A serving mode with a session pool is future work.
-- **Browser packaging.** The split is done (generic `huggr-wasm` bindings + `bindings/typescript` + the Chrome-extension example with a vendor/pkg build script); what remains open is typed TS packaging and store-signed distribution.
+- **Browser packaging.** The split and typed TypeScript package are done; store-signed extension distribution remains open.
 
 ## Glossary
 
@@ -19,7 +19,7 @@
 - **Scratchpad:** the agent's private filesystem subtree, writable without gates and jailed to its root.
 - **Tool:** the model-facing view of an effect: a manifest grant that advertises one or more named, schema-described functions to the model. A built Huggr agent can itself be granted as a tool.
 - **Capability:** the host-side implementation behind a tool, registered in the host's capability registry and invoked when the brain emits `StartCapability`. See [Tools and capabilities](agents.md#tools-and-capabilities).
-- **Event / Command / Op / Projection / Policy:** the core vocabulary described in [Runtime](runtime.md).
+- **Event / Command / Op / Projection / Policy:** the core vocabulary described in [Runtime](../concepts/runtime.md).
 
 ## Name
 

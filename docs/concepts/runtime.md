@@ -42,7 +42,7 @@ These separations provide the following behavior:
 
 ## Core and host contract
 
-The entire surface between brain and host is two enums plus two methods: `submit(event)` folds an event into state and queues commands, while `poll()` drains them. Both are synchronous and pure, with no `async` or IO. The only `await` in the system is the host's `next_event()`.
+The entire surface between brain and host is two enums plus two methods: `submit(event)` folds an event into state and queues commands, while `poll()` drains them. Both are synchronous and pure, with no `async` or IO. Awaiting effects and the next event belongs to the host.
 
 ```rust
 pub enum Command {
@@ -63,17 +63,17 @@ pub enum Command {
 }
 
 pub enum Event {
-    UserInput { text: String },                          // queued if ops are in flight
+    UserInput { content: Value, est_tokens: u32 },       // ignored if ops are in flight
     UserAbort,                                           // pure cancel, no new content
     ModelDelta { op: OpId, delta: ModelDelta },          // streaming transport, never durable
-    ModelDone  { op: OpId, output: ModelOutput, usage: Usage },
-    ModelError { op: OpId, error: ModelError },
+    ModelDone  { op: OpId, output: ModelOutput, usage: Usage, est_tokens: u32 },
+    ModelError { op: OpId, error: Value },
     CapabilityChunk { op: OpId, chunk: Value },
-    CapabilityDone  { op: OpId, result: Value },
-    CapabilityError { op: OpId, error: CapabilityError },
-    PermissionDecision { op: OpId, decision: Decision }, // Allow | Deny { reason }
+    CapabilityDone  { op: OpId, result: Value, est_tokens: u32 },
+    CapabilityError { op: OpId, error: Value, est_tokens: u32 },
+    PermissionDecision { op: OpId, decision: Decision, est_tokens: u32 },
     OpCancelled { op: OpId },
-    Tick { now: Timestamp },                             // injected time — the brain has no clock
+    Tick { now: Timestamp },                             // injected time, the brain has no clock
 }
 ```
 
@@ -123,7 +123,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
   Its `ModelDone` appends `Record::ContextSummary { replaces_up_to, text, est_tokens }` plus the normal `OpEnded`. Later projections render that summary block instead of records up to `replaces_up_to`, without deleting the original records.
 
   Replay remains deterministic because the summary text is another recorded model result.
-- **Large payloads are content-addressed blobs.** Tool outputs and file exchange are stored by SHA-256 through the host-layer `BlobBackend`.
+- **Large file exchange uses content-addressed blobs.** Explicit inbound and outbound files are stored by SHA-256 through the host-layer `BlobBackend`; ordinary tool results remain opaque values in the log.
 
   The default `FsBlobStore` wraps `huggr-replay::BlobStore`, shards objects under the shared `~/.huggr/blobs/` store (or `HUGGR_BLOB_STORE`), and copies filesystem inputs into atomically installed objects. Existing and loaded objects are checked against their content address. `MemBlobStore` is the in-memory reference backend.
 
@@ -132,7 +132,7 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
 
 ## In-flight operations and concurrency
 
-- **The op table.** `StartModelCall`/`StartCapability` insert into `inflight`; each `*Delta`/`*Chunk` appends to the op's buffer cheaply; `*Done`/`*Error`/`OpCancelled` remove the op and append a final `Record::OpEnded` carrying **`OpMeta`** `{ started_at, ended_at, model, usage, extra }`. Latency and spend are queryable from the trace itself without a side table.
+- **The op table.** `StartModelCall`/`StartCapability` insert into `inflight`; each model delta appends to the model op's buffer cheaply, while capability chunks are transport-only and ignored by the reducer. `*Done`/`*Error`/`OpCancelled` remove the op and append a final `Record::OpEnded` carrying **`OpMeta`** `{ started_at, ended_at, model, usage, extra }`. Latency and spend are queryable from the trace itself without a side table.
 - **Atomicity is automatic.** The brain processes one event at a time. The host provides concurrency by merging many sources into one ordered stream. The brain contains no locks.
 - **Foreground vs background** is a policy answer (`is_background(capability)`): a foreground op blocks the turn, while a background op lets the model resume immediately and folds its result in at the next turn boundary. This distinction is invisible to the host.
 - **Cancellation is first-class:** `Command::Cancel` → host aborts → `Event::OpCancelled` → the op is removed and its partial output logged explicitly (`OpOutcome::Cancelled { partial }`). Never an implicit gap.
@@ -141,14 +141,14 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
 
   Exactly **one** consolidated `Record::ModelOutput` is appended per model call. Tool chunks follow the same rule and produce one `Record::ToolResult`.
 
-  This keeps traces the size of a normal message history and makes replay clean. Replay feeds consolidated events only.
+  This keeps the durable log the size of a normal message history. The trace event stream still records transport deltas because replay verifies the full submitted event sequence.
 - **Backpressure:** handlers stay O(1)-ish by appending to a buffer. Heavy work never happens in the reducer.
 
 ## Model provider abstraction
 
 - **Canonical request/response.** `ModelRequest { blocks, tools, extra }` with structured `ContextBlock`s; `ModelOutput { text, tool_calls, stop }`. Provider-specific knobs the brain never reads ride the opaque `extra`.
 - **A model call is a typed command, not a capability**, because the brain *reasons about model output* (tool calls drive the turn loop) but never about tool output (opaque leaves). At the host level a model adapter is still registered like any capability.
-- **`ModelSelector` is a plain string newtype.** The manifest maps free-form tier names to concrete adapters (`[models.<tier>]` → endpoint, model id, pricing); the policy picks a selector; the host registry resolves it. Each model op records its selector in `OpMeta`, so per-tier spend falls out of the trace.
+- **`ModelSelector` is a plain string newtype.** The toolkit's host-facing configuration restricts authors to `fast`, `balanced`, `powerful`, and `max`, then resolves each tier to a provider, model id, and pricing before registering adapters. The core still branches on no provider or catalog type. Each model op records its selector in `OpMeta`, so per-tier spend falls out of the trace.
 - **Streaming is the only mode.** Adapters stream deltas live via the sink and return the consolidated output; there is no non-streaming path. Transport errors (429s, network blips, timeouts) are retried inside the adapter and never reach the brain; only the final outcome is recorded, so a replayed session doesn't re-suffer transient failures.
 - **Transport vs semantic errors.** If retrying the same request unchanged might work, the error is transport-level and the host retries internally. If the model must change something to succeed, such as malformed tool args or a logical tool failure, the error is semantic and returns to the turn loop as a tool result so the model can correct it.
 
@@ -159,10 +159,11 @@ All nondeterminism is injected: time via `Event::Tick`, model output and tool re
 ```rust
 pub struct Trace {
     meta: TraceMeta,        // trace_id, depends_on, agent name/version, created_at, question, status
-    events: Vec<Event>,     // the ordered host→brain stream — the replay INPUT
-    log: Vec<LogEntry>,     // the consolidated record stream — the truth
+    events: Vec<Event>,     // the ordered host→brain stream, the replay INPUT
+    log: Vec<LogEntry>,     // the consolidated record stream, the truth
     commands: Vec<Command>, // the drained command sequence
     blobs: BlobManifest,    // refs to content-addressed payloads (not inlined)
+    policy: Option<Value>,  // opaque TurnPolicy configuration
 }
 ```
 
@@ -194,7 +195,7 @@ pub struct Trace {
 | Risk                                                | Mitigation                                                            |
 | --------------------------------------------------- | --------------------------------------------------------------------- |
 | Interface over-/under-engineered                    | Narrow waist: type only what the brain branches on              |
-| Traces balloon from per-token deltas                | Deltas are transport-only; persist consolidated records + blobs |
+| Durable logs balloon from per-token deltas          | Deltas are transport-only in the reducer; persist consolidated records + blobs |
 | Sans-IO makes the simple case painful               | `huggr run` on an agent crate folder is the ten-second loop            |
 | Canonical model type too thin to use providers well | First-class streaming/tool-call fields + opaque `extra`               |
-| Feature creep back toward a platform                | One artifact, one escape hatch (MCP), no enum without a branch        |
+| Feature creep back toward a platform                | Small artifacts, explicit process grants, no enum without a branch   |

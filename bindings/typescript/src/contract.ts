@@ -84,18 +84,32 @@ export interface ToolSpec {
 
 /// One `[models.<tier>]`-shaped entry (same keys as the manifest).
 export interface TierConfig {
+  provider: string;
   model: string;
   input_usd_per_m_tokens?: number;
   output_usd_per_m_tokens?: number;
 }
 
-/// The `[models]`-shaped block: provider knobs plus one tier per other key.
+export type ModelTier = "fast" | "balanced" | "powerful" | "max";
+
+/// The `[models]`-shaped block: one default tier plus optional concrete overrides.
 export interface ModelsConfig {
-  base_url?: string;
-  api_key?: string;
+  default: ModelTier;
+  fast?: TierConfig;
+  balanced?: TierConfig;
+  powerful?: TierConfig;
+  max?: TierConfig;
+}
+
+export interface ProviderConfig {
+  base_url: string;
   api_key_env?: string;
-  default?: string;
-  [tier: string]: TierConfig | string | undefined;
+  api_key?: string;
+}
+
+export interface ModelCatalog {
+  providers: Record<string, ProviderConfig>;
+  models: Partial<Record<ModelTier, TierConfig>>;
 }
 
 export interface LimitsConfig {
@@ -115,7 +129,7 @@ export interface ContextConfig {
   trigger_tokens?: number;
   keep_recent_tokens?: number;
   max_block_tokens?: number;
-  summary_model?: string;
+  summary_model?: ModelTier;
   tool_ttl?: Record<string, number>;
   keep_last_per_tool?: Record<string, number>;
 }
@@ -126,6 +140,7 @@ export interface AgentConfig {
   description?: string;
   system?: string;
   models: ModelsConfig;
+  providers?: Record<string, ProviderConfig>;
   tools?: ToolSpec[];
   limits?: LimitsConfig;
   context?: ContextConfig;

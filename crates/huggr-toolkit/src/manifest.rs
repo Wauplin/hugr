@@ -6,9 +6,8 @@
 //!
 //! Unknown keys are **hard errors** (`deny_unknown_fields` on every
 //! fixed-schema section, plus a top-level check) — a typo in a manifest fails
-//! the parse instead of silently doing nothing. Tier names under `[models]`
-//! and scope keys under `[tools.<name>]` are caller-defined, so they are never
-//! flagged.
+//! the parse instead of silently doing nothing. Scope keys under
+//! `[tools.<name>]` are caller-defined, so they are never flagged.
 //!
 //! The typed shape mirrors the pieces an agent runtime declares (system prompt,
 //! model tiers + pricing, granted tools, limits, runtime arguments, response
@@ -17,7 +16,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use croner::Cron;
 use serde::{Deserialize, Serialize};
 
 /// The manifest file name expected inside an agent crate folder.
@@ -26,6 +24,9 @@ pub const MANIFEST_FILE: &str = "huggr.toml";
 pub const CARGO_MANIFEST_FILE: &str = "Cargo.toml";
 /// The system-prompt file name expected inside an agent crate folder.
 pub const SYSTEM_PROMPT_FILE: &str = "SYSTEM.md";
+
+/// The fixed model selectors understood by Huggr configuration.
+pub const MODEL_TIERS: [&str; 4] = ["fast", "balanced", "powerful", "max"];
 
 /// Reserved keys under `[tools]` that namespace external tool grants. Every
 /// other key under `[tools]` is a predefined-library grant.
@@ -38,8 +39,12 @@ const TOOL_NAMESPACES: &[(&str, ToolKind)] = &[("mcp", ToolKind::Mcp), ("agent",
 pub struct AgentDefinition {
     /// Identity block (`[agent]`): name (required), version, description.
     pub agent: AgentMeta,
-    /// Model tiers + provider knobs (`[models]`).
+    /// Default tier plus optional manifest-owned concrete overrides (`[models]`).
     pub models: ModelsConfig,
+    /// Provider endpoints referenced by manifest-owned model overrides.
+    pub providers: BTreeMap<String, ProviderConfig>,
+    /// Resolution provenance populated before runtime assembly.
+    pub model_sources: BTreeMap<String, ModelResolution>,
     /// Granted tools (`[tools.*]`), deterministically ordered.
     pub tools: Vec<ToolGrant>,
     /// Standard Agent Skills folders bundled with this definition. Paths are
@@ -47,8 +52,6 @@ pub struct AgentDefinition {
     pub skills: Vec<String>,
     /// Declared runtime limits (`[limits]`).
     pub limits: LimitsConfig,
-    /// Recurring asks (`[cron.<name>]`), deterministically ordered.
-    pub cron: Vec<CronJobConfig>,
     /// Context projection and deterministic compaction (`[context]`).
     pub context: ContextConfig,
     /// Scratchpad configuration (`[scratchpad]`).
@@ -82,19 +85,12 @@ pub struct AgentMeta {
     pub description: String,
 }
 
-/// The `[models]` block: shared provider settings plus one nested table per
-/// logical tier (`[models.small]`, `[models.medium]`, `[models.big]`).
+/// The `[models]` block: one default fixed tier plus optional concrete overrides.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelsConfig {
-    /// Provider base URL shared by every tier (`base_url`).
-    pub base_url: Option<String>,
-    /// Environment variable holding the provider API key (`api_key_env`) —
-    /// the value itself is never stored in the manifest.
-    pub api_key_env: Option<String>,
-    /// Which tier the turn policy calls by default (`default`); when unset the
-    /// runtime falls back to `medium`, else the first tier.
+    /// Which fixed tier the turn policy calls by default.
     pub default: Option<String>,
-    /// Logical tier → model id + pricing.
+    /// Fixed tier to provider/model/pricing mapping.
     pub tiers: BTreeMap<String, TierConfig>,
 }
 
@@ -102,12 +98,29 @@ pub struct ModelsConfig {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TierConfig {
-    /// Provider model id (required per tier).
+    /// Provider name declared under `[providers.<name>]`.
+    pub provider: String,
+    /// Provider model id.
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_usd_per_m_tokens: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_usd_per_m_tokens: Option<f64>,
+}
+
+/// One `[providers.<name>]` entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConfig {
+    pub base_url: String,
+    pub api_key_env: String,
+}
+
+/// Where one effective fixed-tier mapping came from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelResolution {
+    pub source: String,
+    pub resolved_from: String,
 }
 
 /// A single granted tool (`[tools.<name>]` or `[tools.<ns>.<instance>]`).
@@ -145,29 +158,6 @@ pub struct LimitsConfig {
     pub max_cost_micro_usd: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
-}
-
-/// One `[cron.<name>]` recurring ask.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CronJobConfig {
-    /// Stable job id, taken from `[cron.<name>]`.
-    #[serde(skip)]
-    pub name: String,
-    /// Five-field cron expression: minute hour day-of-month month day-of-week.
-    pub schedule: String,
-    /// Question to ask when the job fires.
-    pub question: String,
-    /// `fresh` starts every run without a parent; `chain` resumes from the previous successful run.
-    #[serde(default = "default_cron_lineage")]
-    pub lineage: String,
-    /// Optional limits that override `[limits]` for this unattended ask.
-    #[serde(default)]
-    pub limits: LimitsConfig,
-}
-
-fn default_cron_lineage() -> String {
-    "fresh".to_string()
 }
 
 /// The `[context]` block.
@@ -365,6 +355,7 @@ impl AgentDefinition {
         reject_unknown_top_level(&table, path)?;
         let agent = parse_agent(&table, path)?;
         let models = parse_models(&table, path)?;
+        let providers = parse_providers(&table, path)?;
         let tools = parse_tools(&table, path)?;
         let skills = table
             .get("skills")
@@ -379,9 +370,8 @@ impl AgentDefinition {
             })?
             .unwrap_or_default();
         let limits: LimitsConfig = parse_section(&table, "limits", path)?;
-        let cron = parse_cron(&table, path)?;
         let context: ContextConfig = parse_section(&table, "context", path)?;
-        validate_context(&context, &models, path)?;
+        validate_context(&context, path)?;
         let scratchpad: ScratchpadConfig = parse_section(&table, "scratchpad", path)?;
         let traces: TracesConfig = parse_section(&table, "traces", path)?;
         let runtime = parse_runtime(&table, path)?;
@@ -390,10 +380,11 @@ impl AgentDefinition {
         Ok(Self {
             agent,
             models,
+            providers,
+            model_sources: BTreeMap::new(),
             tools,
             skills,
             limits,
-            cron,
             context,
             scratchpad,
             traces,
@@ -405,118 +396,19 @@ impl AgentDefinition {
         })
     }
 
-    /// Re-check the semantic invariants that `parse` enforces on a definition
-    /// **built directly** (not from TOML) — e.g. the Python surface, which
-    /// constructs `AgentDefinition` through serde and would otherwise carry an
-    /// invalid compaction mode, a dangling default/summary tier, or zero forget
-    /// values into the runtime. `label` names the source in diagnostics.
-    pub fn validate_semantics(&self, label: impl AsRef<Path>) -> Result<(), ManifestError> {
-        let path = label.as_ref();
-        if self.models.tiers.is_empty() {
-            return Err(ManifestError::Validate {
-                path: path.to_path_buf(),
-                message: "[models] must declare at least one tier".to_string(),
-            });
-        }
-        if let Some(default) = &self.models.default
-            && !self.models.tiers.contains_key(default)
-        {
-            return Err(ManifestError::Validate {
-                path: path.to_path_buf(),
-                message: format!("[models].default = \"{default}\" names no declared tier"),
-            });
-        }
-        validate_context(&self.context, &self.models, path)?;
-        Ok(())
-    }
-
-    /// The default tier selector: the explicit `[models].default`, else
-    /// `medium` if present, else the first tier by name, else `None`.
+    /// The selected default fixed tier.
     pub fn default_tier(&self) -> Option<&str> {
-        if let Some(default) = &self.models.default {
-            return Some(default.as_str());
-        }
-        if self.models.tiers.contains_key("medium") {
-            return Some("medium");
-        }
-        self.models.tiers.keys().next().map(String::as_str)
+        self.models.default.as_deref()
     }
-}
 
-fn parse_cron(table: &toml::Table, path: &Path) -> Result<Vec<CronJobConfig>, ManifestError> {
-    let Some(value) = table.get("cron") else {
-        return Ok(Vec::new());
-    };
-    let cron_table = value.as_table().ok_or_else(|| ManifestError::Validate {
-        path: path.to_path_buf(),
-        message: "[cron] must be a table of named jobs".to_string(),
-    })?;
-    let mut jobs = Vec::new();
-    for (name, value) in cron_table {
-        validate_cron_name(name, path)?;
-        let mut job: CronJobConfig =
-            value
-                .clone()
-                .try_into()
-                .map_err(|err: toml::de::Error| ManifestError::Validate {
-                    path: path.to_path_buf(),
-                    message: format!("[cron.{name}]: {}", err.message()),
-                })?;
-        job.name = name.clone();
-        validate_cron_job(&job, path)?;
-        jobs.push(job);
+    /// Re-check the `[context]` semantic invariants that `parse` enforces, for a
+    /// definition **built directly** (not from TOML) — e.g. the Python surface,
+    /// which constructs `AgentDefinition` through serde and would otherwise
+    /// carry an invalid compaction mode, an out-of-set summary tier, or a zero
+    /// forget value into the runtime. `label` names the source in diagnostics.
+    pub fn validate_semantics(&self, label: impl AsRef<Path>) -> Result<(), ManifestError> {
+        validate_context(&self.context, label.as_ref())
     }
-    jobs.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(jobs)
-}
-
-fn validate_cron_name(name: &str, path: &Path) -> Result<(), ManifestError> {
-    let ok = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if ok {
-        Ok(())
-    } else {
-        Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!(
-                "[cron.{name}] names must contain only ASCII letters, digits, `_`, or `-`"
-            ),
-        })
-    }
-}
-
-fn validate_cron_job(job: &CronJobConfig, path: &Path) -> Result<(), ManifestError> {
-    if job.schedule.split_whitespace().count() != 5 {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!(
-                "[cron.{}].schedule must be a five-field cron expression",
-                job.name
-            ),
-        });
-    }
-    Cron::new(&job.schedule)
-        .with_seconds_optional()
-        .parse()
-        .map_err(|err| ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!("[cron.{}].schedule is invalid: {err}", job.name),
-        })?;
-    if job.question.trim().is_empty() {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!("[cron.{}].question is required", job.name),
-        });
-    }
-    if !matches!(job.lineage.as_str(), "fresh" | "chain") {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!("[cron.{}].lineage must be \"fresh\" or \"chain\"", job.name),
-        });
-    }
-    Ok(())
 }
 
 fn parse_agent(table: &toml::Table, path: &Path) -> Result<AgentMeta, ManifestError> {
@@ -556,19 +448,11 @@ fn parse_models(table: &toml::Table, path: &Path) -> Result<ModelsConfig, Manife
     let Some(value) = table.get("models").and_then(toml::Value::as_table) else {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
-            message: "missing required [models] section with at least one tier".to_string(),
+            message: "missing required [models] section with a default fixed tier".to_string(),
         });
     };
 
     let mut models = ModelsConfig {
-        base_url: value
-            .get("base_url")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        api_key_env: value
-            .get("api_key_env")
-            .and_then(|v| v.as_str())
-            .map(String::from),
         default: value
             .get("default")
             .and_then(|v| v.as_str())
@@ -576,11 +460,19 @@ fn parse_models(table: &toml::Table, path: &Path) -> Result<ModelsConfig, Manife
         tiers: BTreeMap::new(),
     };
 
-    // Every non-reserved key under [models] is a tier table.
+    let Some(default) = &models.default else {
+        return Err(ManifestError::Validate {
+            path: path.to_path_buf(),
+            message: "[models].default is required (fast, balanced, powerful, or max)".to_string(),
+        });
+    };
+    validate_model_tier(default, "[models].default", path)?;
+
     for (key, tier_value) in value {
-        if matches!(key.as_str(), "base_url" | "api_key_env" | "default") {
+        if key == "default" {
             continue;
         }
+        validate_model_tier(key, &format!("[models.{key}]"), path)?;
         let tier: TierConfig = tier_value
             .clone()
             .try_into()
@@ -588,31 +480,56 @@ fn parse_models(table: &toml::Table, path: &Path) -> Result<ModelsConfig, Manife
                 path: path.to_path_buf(),
                 message: format!("[models.{key}]: {}", err.message()),
             })?;
-        if tier.model.trim().is_empty() {
+        if tier.provider.trim().is_empty() || tier.model.trim().is_empty() {
             return Err(ManifestError::Validate {
                 path: path.to_path_buf(),
-                message: format!("[models.{key}].model is required"),
+                message: format!("[models.{key}] requires non-empty provider and model fields"),
             });
         }
         models.tiers.insert(key.clone(), tier);
     }
 
-    if models.tiers.is_empty() {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: "[models] must declare at least one tier, e.g. [models.medium]".to_string(),
-        });
-    }
-    if let Some(default) = &models.default
-        && !models.tiers.contains_key(default)
-    {
-        return Err(ManifestError::Validate {
-            path: path.to_path_buf(),
-            message: format!("[models].default = \"{default}\" names no declared tier"),
-        });
-    }
-
     Ok(models)
+}
+
+fn parse_providers(
+    table: &toml::Table,
+    path: &Path,
+) -> Result<BTreeMap<String, ProviderConfig>, ManifestError> {
+    let Some(value) = table.get("providers").and_then(toml::Value::as_table) else {
+        return Ok(BTreeMap::new());
+    };
+    let mut providers = BTreeMap::new();
+    for (name, provider_value) in value {
+        let provider: ProviderConfig =
+            provider_value
+                .clone()
+                .try_into()
+                .map_err(|err: toml::de::Error| ManifestError::Validate {
+                    path: path.to_path_buf(),
+                    message: format!("[providers.{name}]: {}", err.message()),
+                })?;
+        if provider.base_url.trim().is_empty() || provider.api_key_env.trim().is_empty() {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!(
+                    "[providers.{name}] requires non-empty base_url and api_key_env fields"
+                ),
+            });
+        }
+        providers.insert(name.clone(), provider);
+    }
+    Ok(providers)
+}
+
+fn validate_model_tier(value: &str, field: &str, path: &Path) -> Result<(), ManifestError> {
+    if MODEL_TIERS.contains(&value) {
+        return Ok(());
+    }
+    Err(ManifestError::Validate {
+        path: path.to_path_buf(),
+        message: format!("{field} must be one of: {}", MODEL_TIERS.join(", ")),
+    })
 }
 
 fn parse_tools(table: &toml::Table, path: &Path) -> Result<Vec<ToolGrant>, ManifestError> {
@@ -731,8 +648,6 @@ fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestErr
             | "feedback"
             | "feedback-payload"
             | "mcp-serve"
-            | "cron-serve"
-            | "allow-uncapped"
     ) {
         return Err(ManifestError::Validate {
             path: path.to_path_buf(),
@@ -756,11 +671,7 @@ fn validate_runtime_arg(arg: &RuntimeArg, path: &Path) -> Result<(), ManifestErr
     Ok(())
 }
 
-fn validate_context(
-    context: &ContextConfig,
-    models: &ModelsConfig,
-    path: &Path,
-) -> Result<(), ManifestError> {
+fn validate_context(context: &ContextConfig, path: &Path) -> Result<(), ManifestError> {
     let compaction = context.compaction.as_deref().unwrap_or("none");
     if !matches!(compaction, "none" | "truncate" | "summarize") {
         return Err(ManifestError::Validate {
@@ -796,21 +707,8 @@ fn validate_context(
             }
         }
     }
-    if let Some(summary_model) = context.summary_model.as_deref() {
-        if summary_model.is_empty() {
-            return Err(ManifestError::Validate {
-                path: path.to_path_buf(),
-                message: "[context].summary_model must not be empty".to_string(),
-            });
-        }
-        if !models.tiers.contains_key(summary_model) {
-            return Err(ManifestError::Validate {
-                path: path.to_path_buf(),
-                message: format!(
-                    "[context].summary_model `{summary_model}` is not a declared [models.<tier>]"
-                ),
-            });
-        }
+    if let Some(summary_model) = &context.summary_model {
+        validate_model_tier(summary_model, "[context].summary_model", path)?;
     }
     Ok(())
 }
@@ -839,10 +737,10 @@ fn reject_unknown_top_level(table: &toml::Table, path: &Path) -> Result<(), Mani
     const KNOWN: &[&str] = &[
         "agent",
         "models",
+        "providers",
         "tools",
         "skills",
         "limits",
-        "cron",
         "context",
         "scratchpad",
         "traces",
@@ -874,15 +772,15 @@ mod tests {
 [agent]
 name = "policy-docs"
 
-[models.medium]
-model = "google/gemma-4-31B-it"
+[models]
+default = "balanced"
 "#;
 
     #[test]
     fn minimal_manifest_parses() {
         let def = AgentDefinition::parse(MINIMAL, "huggr.toml").unwrap();
         assert_eq!(def.agent.name, "policy-docs");
-        assert_eq!(def.default_tier(), Some("medium"));
+        assert_eq!(def.default_tier(), Some("balanced"));
         assert!(def.tools.is_empty());
         assert_eq!(def.context, ContextConfig::default());
     }
@@ -893,11 +791,8 @@ model = "google/gemma-4-31B-it"
 [agent]
 name = "x"
 
-[models.medium]
-model = "m"
-
-[models.small]
-model = "s"
+[models]
+default = "balanced"
 
 [context]
 budget_tokens = 4096
@@ -905,7 +800,7 @@ compaction = "summarize"
 trigger_tokens = 3500
 keep_recent_tokens = 500
 max_block_tokens = 200
-summary_model = "small"
+summary_model = "fast"
 
 [context.forget.tool_ttl]
 page_snapshot = 2
@@ -916,7 +811,7 @@ browser_observation = 1
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         assert_eq!(def.context.budget_tokens, Some(4096));
         assert_eq!(def.context.compaction.as_deref(), Some("summarize"));
-        assert_eq!(def.context.summary_model.as_deref(), Some("small"));
+        assert_eq!(def.context.summary_model.as_deref(), Some("fast"));
         assert_eq!(def.context.forget.tool_ttl["page_snapshot"], 2);
         assert_eq!(
             def.context.forget.keep_last_per_tool["browser_observation"],
@@ -925,44 +820,8 @@ browser_observation = 1
     }
 
     #[test]
-    fn validate_semantics_rejects_a_dangling_default_on_a_built_definition() {
-        // Simulates the Python path: a definition built directly, not from TOML.
-        let mut def = AgentDefinition::parse(
-            "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n",
-            "huggr.toml",
-        )
-        .unwrap();
-        def.models.default = Some("nonesuch".to_string());
-        let err = def.validate_semantics("python agent config").unwrap_err();
-        assert!(err.to_string().contains("nonesuch"), "unexpected: {err}");
-        // A valid definition passes.
-        def.models.default = Some("medium".to_string());
-        assert!(def.validate_semantics("python agent config").is_ok());
-    }
-
-    #[test]
-    fn summary_model_must_name_a_declared_tier() {
-        let src = r#"
-[agent]
-name = "x"
-
-[models.medium]
-model = "m"
-
-[context]
-compaction = "summarize"
-summary_model = "nonesuch"
-"#;
-        let err = AgentDefinition::parse(src, "huggr.toml").unwrap_err();
-        assert!(
-            err.to_string().contains("summary_model"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
     fn invalid_context_is_a_validation_error() {
-        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        let base = "[agent]\nname = \"x\"\n[models]\ndefault = \"balanced\"\n";
         for (src, needle) in [
             (
                 format!("{base}[context]\ncompaction = \"compactify\"\n"),
@@ -984,63 +843,8 @@ summary_model = "nonesuch"
     }
 
     #[test]
-    fn cron_jobs_parse_and_validate() {
-        let src = r#"
-[agent]
-name = "x"
-
-[models.medium]
-model = "m"
-
-[cron.daily]
-schedule = "0 8 * * *"
-question = "Write the daily summary."
-lineage = "chain"
-
-[cron.daily.limits]
-max_cost_micro_usd = 100
-"#;
-        let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
-        assert_eq!(def.cron.len(), 1);
-        let job = &def.cron[0];
-        assert_eq!(job.name, "daily");
-        assert_eq!(job.schedule, "0 8 * * *");
-        assert_eq!(job.lineage, "chain");
-        assert_eq!(job.limits.max_cost_micro_usd, Some(100));
-    }
-
-    #[test]
-    fn invalid_cron_is_a_validation_error() {
-        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
-        for (src, needle) in [
-            (
-                format!("{base}[cron.bad]\nschedule = \"* * * * * *\"\nquestion = \"q\"\n"),
-                "five-field".to_string(),
-            ),
-            (
-                format!("{base}[cron.bad]\nschedule = \"99 * * * *\"\nquestion = \"q\"\n"),
-                "schedule".to_string(),
-            ),
-            (
-                format!("{base}[cron.bad]\nschedule = \"* * * * *\"\nquestion = \"\"\n"),
-                "question".to_string(),
-            ),
-            (
-                format!(
-                    "{base}[cron.bad]\nschedule = \"* * * * *\"\nquestion = \"q\"\nlineage = \"forkish\"\n"
-                ),
-                "lineage".to_string(),
-            ),
-        ] {
-            let err = AgentDefinition::parse(&src, "huggr.toml").unwrap_err();
-            assert!(matches!(err, ManifestError::Validate { .. }), "{src}");
-            assert!(err.to_string().contains(&needle), "{err}");
-        }
-    }
-
-    #[test]
     fn missing_name_is_a_validation_error() {
-        let src = "[agent]\nversion = \"0.1.0\"\n[models.medium]\nmodel = \"m\"\n";
+        let src = "[agent]\nversion = \"0.1.0\"\n[models]\ndefault = \"balanced\"\n";
         let err = AgentDefinition::parse(src, "huggr.toml").unwrap_err();
         assert!(matches!(err, ManifestError::Validate { .. }));
         assert!(err.to_string().contains("name is required"));
@@ -1064,14 +868,14 @@ max_cost_micro_usd = 100
 
     #[test]
     fn unknown_keys_are_hard_errors() {
-        let base = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        let base = "[agent]\nname = \"x\"\n[models]\ndefault = \"balanced\"\n";
         for (src, needle) in [
             (
                 format!("{base}[limits]\nmaxturns = 6\n"),
                 "maxturns".to_string(),
             ),
             (
-                "[agent]\nname = \"x\"\ndescriptn = \"typo\"\n[models.medium]\nmodel = \"m\"\n"
+                "[agent]\nname = \"x\"\ndescriptn = \"typo\"\n[models]\ndefault = \"balanced\"\n"
                     .to_string(),
                 "descriptn".to_string(),
             ),
@@ -1097,37 +901,37 @@ max_cost_micro_usd = 100
 name = "x"
 
 [models]
+default = "powerful"
+
+[providers.hf]
 base_url = "https://router.huggingface.co/v1"
 api_key_env = "X_API_KEY"
-default = "big"
 
-[models.small]
+[models.fast]
+provider = "hf"
 model = "small-m"
 
-[models.big]
+[models.powerful]
+provider = "hf"
 model = "big-m"
 input_usd_per_m_tokens = 1.0
 output_usd_per_m_tokens = 1.5
 "#;
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
-        assert_eq!(
-            def.models.base_url.as_deref(),
-            Some("https://router.huggingface.co/v1")
-        );
-        assert_eq!(def.models.api_key_env.as_deref(), Some("X_API_KEY"));
-        assert_eq!(def.default_tier(), Some("big"));
+        assert_eq!(def.providers["hf"].api_key_env, "X_API_KEY");
+        assert_eq!(def.default_tier(), Some("powerful"));
         assert_eq!(def.models.tiers.len(), 2);
-        let big = &def.models.tiers["big"];
+        let big = &def.models.tiers["powerful"];
         assert_eq!(big.model, "big-m");
         assert_eq!(big.input_usd_per_m_tokens, Some(1.0));
         assert_eq!(big.output_usd_per_m_tokens, Some(1.5));
     }
 
     #[test]
-    fn default_tier_naming_a_missing_tier_is_rejected() {
-        let src = "[agent]\nname=\"x\"\n[models]\ndefault=\"nope\"\n[models.small]\nmodel=\"m\"\n";
+    fn unknown_default_tier_is_rejected() {
+        let src = "[agent]\nname=\"x\"\n[models]\ndefault=\"nope\"\n";
         let err = AgentDefinition::parse(src, "huggr.toml").unwrap_err();
-        assert!(err.to_string().contains("names no declared tier"), "{err}");
+        assert!(err.to_string().contains("must be one of"), "{err}");
     }
 
     #[test]
@@ -1135,8 +939,8 @@ output_usd_per_m_tokens = 1.5
         let src = r#"
 [agent]
 name = "x"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 
 [tools.fs_read]
 root = "./policies"
@@ -1173,8 +977,8 @@ artifact = "./receipts"
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 [runtime.args.docs_path]
@@ -1199,8 +1003,8 @@ help = "Docs folder."
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [response]
 rust_type = "huglet_docs::DocsResponse"
 "#;
@@ -1217,8 +1021,8 @@ rust_type = "huglet_docs::DocsResponse"
             r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [response]
 schema = "schemas/response.json"
 "#,

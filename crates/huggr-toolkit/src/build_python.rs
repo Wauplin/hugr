@@ -580,8 +580,8 @@ mod tests {
 name = "huglet-docs"
 version = "0.0.2"
 description = "Answers questions from a docs folder."
-[models.docs]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 [runtime.args.docs_path]

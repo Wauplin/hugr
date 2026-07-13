@@ -10,13 +10,13 @@ The idea is that a specialist with a focused prompt and five jailed tools is che
 
 ```bash
 cargo run -p huggr-toolkit --bin huggr -- new my-agent            # scaffold an agent crate
-export HUGGR_API_KEY=hf_...                                       # the provider key named by the manifest
+export HF_TOKEN=hf_...                                            # key for the default Hugging Face provider
 cargo run -p huggr-toolkit --bin huggr -- run my-agent "question" # interpret it (dev loop)
 cargo run -p huggr-toolkit --bin huggr -- build my-agent          # ship it: one standalone binary
-./my-agent/dist/my-agent "question"                              # answers; --trace <id> resumes; --mcp-serve serves MCP
+./my-agent/dist/my-agent-cli/target/debug/my-agent "question"    # answers; --trace <id> resumes; --mcp-serve serves MCP
 ```
 
-Every built binary self-describes: `--describe` (tools, privileges, tiers, pricing, limits), `--config` (the parsed manifest, secrets redacted), `--traces` (stored lineage).
+Every built binary self-describes: `--describe` (tools, privileges, tiers, pricing, context policy, limits), `--config` (effective identity, models, grants, skills, runtime args, limits, state paths, and response schema, with secrets omitted), `--traces` (stored lineage).
 
 Agent state lives under `~/.huggr/<agent-name>/` by default: immutable traces in `traces/`, per-lineage scratch state in `scratch/`. Override with `HUGGR_AGENT_HOME` or `HUGGR_HOME`.
 
@@ -25,7 +25,7 @@ Agent state lives under `~/.huggr/<agent-name>/` by default: immutable traces in
 ```
 my-agent/
   Cargo.toml          # Rust crate metadata; typed contracts and hooks live here
-  huggr.toml           # name, model tiers + pricing, tool grants + scopes, limits
+  huggr.toml           # name, required model tier, tool grants + scopes, limits
   SYSTEM.md           # the system prompt
   src/lib.rs          # optional typed response / hooks / custom Rust wiring
 ```
@@ -36,27 +36,23 @@ name = "policy-docs"
 description = "Answers questions about the company travel policy."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.fs_read]
 root = "./policies"        # read-only, jailed to this folder
 ```
 
-The manifest defines the agent's blast radius and is the document to audit. A tool that is not granted is not registered, so there is no code path to it. Unknown keys are hard errors, so a typo cannot silently widen or narrow the grant.
+The manifest chooses among four stable capability tiers: `fast`, `balanced`, `powerful`, and `max`. Concrete providers, model ids, and prices normally live once in `~/.huggr/models.toml`; the CLI creates that file with usable defaults on first run. A build resolves and embeds the mappings, while a `models.toml` on the machine running the built artifact overrides the embedded snapshot. See [Models, providers, and pricing](docs/concepts/models-and-pricing.md).
 
-The built-in library includes jailed filesystem reads and writes, restricted or full shell execution, allowlisted web fetch, Exa web search, memory, trace inspection, scratch state, and isolated self-delegation. High-privilege tools remain opt-in grants: restricted shell commands execute without shell syntax, while full shell and full-disk roots explicitly hand sandboxing to the operator. See the [built-in capability reference](docs/capabilities.md).
+The manifest defines the agent's blast radius and is the document to audit. Grant-driven tools that are not declared are not registered; the per-lineage scratchpad is part of every ask. Unknown keys are hard errors, so a typo cannot silently widen or narrow the grant.
+
+The built-in library includes jailed filesystem reads and writes, restricted or full shell execution, allowlisted web fetch, Exa web search, memory, trace inspection, scratch state, and isolated self-delegation. High-privilege tools remain opt-in grants: restricted shell commands execute without shell syntax, while full shell and full-disk roots explicitly hand sandboxing to the operator. See the [built-in capability reference](docs/reference/capabilities.md).
 
 ## What every agent gets
 
 - **One invocation contract.** The input is a question string. The output is a structured response with mandatory status, cost, duration, token, and trace-id metadata. Errors are answers (`status: "error"`, exit 0), so callers branch on data instead of exceptions.
-- **Resumable and forkable traces.** Every run persists an immutable trace. Pass its `trace_id` back to continue the conversation, or pass an older id to fork a sibling branch. Replay is bit-for-bit deterministic.
-- **Sandboxing by construction.** An agent registers only the tools granted by its manifest, each jailed to its declared scope. Every agent also gets a private, jailed scratchpad and explicit blob exchange with the caller.
+- **Resumable and forkable traces.** Every completed turn persists an immutable trace. Pass its `trace_id` back to continue the conversation, or pass an older id to fork a sibling branch. Replay is bit-for-bit deterministic.
+- **Sandboxing by construction.** An agent registers only its manifest-granted tools plus the universal scratchpad, each jailed to its declared scope. Every agent also gets explicit blob exchange with the caller.
 - **Progressively disclosed skills.** Add standard `SKILL.md` folders to `skills = [...]` in the manifest or pass `--skill <path>` for one ask. The model sees the skill catalog and loads matching instructions or referenced files through a jailed reader only when needed.
 - **Cost accounting.** Every response carries cost (from per-tier pricing config), duration, and token counts, folded from the trace. `huggr stats` aggregates them across runs.
 - **Composition.** A built Huggr agent is a tool: grant it with `[tools.agent.<name>] artifact = "..."` and call it like any capability. Delegation never widens privileges, and the child's cost folds into the caller's metadata.
@@ -67,7 +63,7 @@ The built-in library includes jailed filesystem reads and writes, restricted or 
 [`examples/huglet-docs`](examples/huglet-docs/) answers questions about a documentation folder. It has no shell, write, or network tools; only the read-only, folder-jailed `fs_*` family.
 
 ```bash
-export HUGGR_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
+export HF_TOKEN=hf_...
 cargo run -p huggr-toolkit --bin huggr -- run examples/huglet-docs ./docs "What is the narrow-waist rule?" | jq
 ```
 
@@ -76,7 +72,7 @@ cargo run -p huggr-toolkit --bin huggr -- run examples/huglet-docs ./docs "What 
   "status": "success",
   "response": {
     "response": "The narrow-waist rule is ...",
-    "related_documents": ["docs/README.md"]
+    "related_documents": [{ "path": "docs/README.md", "url": "https://huggingface.co/docs/docs/README" }]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
   "metadata": { "duration_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "cost_micro_usd": 1300, "model_calls": 2, "tool_calls": 3 }
@@ -89,11 +85,11 @@ The docs folder is runtime config, not a compiled-in scope: the same agent crate
 
 The same runtime is available without writing Rust:
 
-- **Consume a built agent from Python.** `huggr build <agent> --surface python` wraps the agent into a typed wheel: `ask()` in-process, dataclasses out. See [guide 4](docs/guides/04-agent-binary-from-python.md).
-- **Define an agent in Python.** The [`huggr-agents` package](bindings/python/README.md) embeds the runtime: tools are decorated callables, config is data, `agent.ask(...)` returns the standard `Answer`. See [guide 5](docs/guides/05-agent-entirely-in-python.md).
-- **Define an agent in TypeScript.** The [`huggr-agents` TS package](bindings/typescript/README.md) drives the same brain compiled to WASM, in Node and the browser. See [guide 6](docs/guides/06-agent-entirely-in-typescript.md).
+- **Consume a built agent from Python.** `huggr build <agent> --surface python` wraps the agent into a typed wheel: `ask()` in-process, dataclasses out. See [Package an agent for Python](docs/guides/package-agent-for-python.md).
+- **Define an agent in Python.** The [`huggr-agents` package](bindings/python/README.md) embeds the runtime: tools are decorated callables, config is data, `agent.ask(...)` returns the standard `Answer`. See [Define an agent in Python](docs/tutorials/python-agent.md).
+- **Define an agent in TypeScript.** The [`huggr-agents` TS package](bindings/typescript/README.md) drives the same brain compiled to WASM, in Node and the browser. See [Define an agent in TypeScript](docs/tutorials/typescript-agent.md).
 
-Traces written from any surface verify with the Rust CLI.
+Traces use the same `huggr-replay` format across surfaces. The Rust CLI can verify a trace when an agent crate resolves to its store; the TypeScript runtime also exposes `agent.verify()`.
 
 ## The core underneath
 
@@ -142,22 +138,15 @@ huggr/
 │   ├── huglet-datasmith/     # docs-QA dataset synthesizer with a typed QaDataset contract
 │   ├── hf-librarian/       # Python pipeline: datasmith wheel, jailed Hub publisher, judge-graded eval
 │   └── chrome-extension/   # a concrete browser host: chrome.* capabilities, side-panel UI, MV3
-└── docs/                   # reference documentation, guides, and tutorials
+└── docs/                   # tutorials, task guides, concepts, and reference
 ```
 
 ## Documentation
 
-- [Overview](docs/overview.md): vision, goals, non-goals, and the huglet model.
-- [Agents](docs/agents.md): defining, running, building, composing, and embedding agents; the manifest; tools vs capabilities.
-- [Runtime](docs/runtime.md): the sans-IO design, core and host contract, determinism, and replay.
-- [Security](docs/security.md): the security model and threat notes for each capability.
-- [Built-in capabilities](docs/capabilities.md): every toolkit grant, option, limit, and trust boundary.
-- [Project structure](docs/project-structure.md): crate boundaries, dependency rules, and standards positioning.
-- [Reference](docs/reference.md): open questions, glossary, and naming.
-
-The [guides](docs/guides/README.md) are runnable introductions to each surface: [the CLI](docs/guides/01-first-agent-cli.md), [typed responses](docs/guides/02-typed-responses-and-hooks.md), [a Chrome extension](docs/guides/03-first-chrome-extension.md), [an agent binary from Python](docs/guides/04-agent-binary-from-python.md), [agents in pure Python](docs/guides/05-agent-entirely-in-python.md), [agents in TypeScript](docs/guides/06-agent-entirely-in-typescript.md), [composition and cost](docs/guides/07-composition-and-cost.md), and [traces and replay](docs/guides/08-traces-replay-debugging.md).
-
-The [tutorials](docs/tutorials/README.md) are self-contained, end-to-end walkthroughs with real outputs. Start with [a docs Q&A dataset, published to the Hub](docs/tutorials/docs-qa-dataset-pipeline.md).
+- [Tutorials](docs/tutorials/README.md) teach a surface end to end.
+- [Guides](docs/guides/README.md) cover specific tasks.
+- [Concepts](docs/concepts/README.md) explain design and behavior.
+- [Reference](docs/reference/README.md) specifies contracts, configuration, packages, and terminology.
 
 ## Building and testing
 

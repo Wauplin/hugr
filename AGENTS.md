@@ -6,11 +6,11 @@ Guidance for working in the Huggr repository.
 
 Huggr is a **toolkit for building small, self-contained, domain-specific huglets** on a runtime-free, sans-IO Rust core.
 
-A huglet is a small Rust crate plus a system prompt and a set of tools with declared privileges. Huggr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in.
+A huglet is a small Rust crate plus a system prompt and a set of tools with declared privileges. Huggr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in. Authors select the fixed `fast`, `balanced`, `powerful`, or `max` model tier per component; hosts map those tiers to providers, concrete models, and prices through `~/.huggr/models.toml`.
 
 The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality.
 
-`docs/guides/` contains per-surface teaching material that links to the reference documentation instead of restating it; `docs/tutorials/` contains self-contained end-to-end walkthroughs whose command outputs come from real runs. A behavior change is not complete until the reference documentation matches reality and every tutorial or guide that shows the changed behavior still works.
+`docs/tutorials/` contains self-contained end-to-end lessons whose command outputs come from real runs; `docs/guides/` contains task-oriented procedures; `docs/concepts/` explains design and behavior; `docs/reference/` documents contracts, configuration, packages, and terminology. A behavior change is not complete until the relevant documentation matches reality and every tutorial or guide that shows the changed behavior still works.
 
 ## The one rule that matters most
 
@@ -97,7 +97,7 @@ The layers stack strictly: `huggr-agent` on `huggr-host` + `huggr-replay`, then 
 
 **Never add environmental dependencies to `huggr-core`** to make a host easier. Put them in the host crate.
 
-Huglet-layer conventions are documented in `docs/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
+Huglet-layer conventions are documented in `docs/reference/agents.md`. The `Ask`/`Answer` contract is the stable boundary. `AnswerMeta` (cost/duration/tokens) is mandatory, errors are answers (`status: "error"`, exit 0), and the user-facing payload uses `Answer.response` as a JSON object. Typed Rust response contracts derive provider JSON Schema with `schemars` and cast final JSON with `serde`.
 
 Traces are immutable. A resumed ask writes a **new** trace with `depends_on` set. Default agent state is `~/.huggr/<agent>/` (`traces/`, `scratch/`, `memory/`, `feedback/`) plus the shared blob store `~/.huggr/blobs`. Override these paths with `HUGGR_AGENT_HOME`, `HUGGR_HOME`, or `HUGGR_BLOB_STORE`. Custom `StorageOverrides` are trusted host code and must stay outside `huggr-core`.
 
@@ -109,6 +109,8 @@ Process access is an explicit operator grant. Restricted `[tools.shell]` execute
 
 When extending the host, keep capabilities uniform with no privileged built-ins. A model call is an effect provided by the host and registered like a capability. The adapter handles transport errors such as retries and 429s, while semantic errors return to the model as tool results.
 
+Model catalog resolution is host logic. For source definitions, concrete manifest entries take precedence over `HUGGR_MODEL_<TIER>`, then the global catalog. Builds embed a fully resolved catalog so artifacts remain self-contained; an existing runtime-host catalog replaces that embedded snapshot. Keep catalog IO and environment access outside `huggr-core`, keep the four public tier names synchronized across Rust, Python, TypeScript, docs, scaffolds, and skills, and expose effective mappings without exposing credential values.
+
 ## Commands
 
 ```bash
@@ -118,7 +120,6 @@ cargo clippy --all-targets  # lint (keep it clean)
 cargo fmt --all             # format before committing
 cargo tree -p huggr-core    # audit: must stay free of tokio/reqwest/fs
 huggr stats <agent-dir>      # aggregate trace costs/tokens/tools/feedback
-huggr cron <agent-dir>       # run configured [cron.<name>] recurring asks
 ```
 
 ## Conventions

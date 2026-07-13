@@ -2,8 +2,8 @@
 
 An end-to-end pipeline on Huggr's Python surface, in two scripts:
 
-- `pipeline.py` — the **huglet-datasmith** agent (called in-process through its typed Python wheel) mines this repo's `docs/` into grounded Q&A pairs, then **hf-librarian** (defined right in the script with `huggr-agents`) writes a dataset card and publishes everything to a Hugging Face dataset repo.
-- `eval.py` — downloads the published dataset, has the **huglet-docs** agent answer every question, and grades each answer with a **qa-judge** agent. The output is a score for `huglet-docs` on its own documentation.
+- `pipeline.py`: the **huglet-datasmith** agent (called in-process through its typed Python wheel) mines this repo's `docs/` into grounded Q&A pairs, then **hf-librarian** (defined right in the script with `huggr-agents`) writes a dataset card and publishes everything to a Hugging Face dataset repo.
+- `eval.py`: downloads the published dataset, has the **huglet-docs** agent answer every question, and grades each answer with a **qa-judge** agent. The output is a score for `huglet-docs` on its own documentation.
 
 The point of using Huggr specialists instead of one generic agent: the datasmith can read only the docs folder it is pointed at, the librarian's entire tool surface is three Python functions bound to one dataset repo (your Hub credentials never become a general-purpose capability), and every ask leaves a replayable trace with itemized cost.
 
@@ -20,7 +20,7 @@ uv venv --python 3.12
 uv pip install -r requirements.txt
 ```
 
-Build the three Huggr packages as wheels — the `huggr-agents` runtime package plus the two agents — and install them. Only these come from local builds; everything else is PyPI:
+Build the three Huggr packages as wheels (the `huggr-agents` runtime package plus the two agents) and install them. Only these come from local builds; everything else is PyPI:
 
 ```bash
 (cd ../../bindings/python && maturin build --release)
@@ -31,12 +31,12 @@ uv pip install ../../crates/huggr-python/target/wheels/*.whl \
                ../huglet-docs/dist/huglet-docs-python/target/wheels/*.whl
 ```
 
-Each agent wheel exposes an in-process `ask(docs_path, question) -> Answer` whose `response` is the agent's typed contract (`QaDataset`, `DocsResponse`) — no subprocess, no JSON parsing.
+Each agent wheel exposes an in-process `ask(docs_path, question) -> Answer` whose `response` is the agent's typed contract (`QaDataset`, `DocsResponse`), with no subprocess or JSON parsing.
 
 ## Run
 
 ```bash
-export HUGGR_API_KEY=...        # provider key for the HF router
+export HF_TOKEN=hf_...         # key for the default Hugging Face provider
 hf auth login                  # Hub credentials (librarian uploads, eval downloads)
 
 .venv/bin/python pipeline.py   # generate → publish to <you>/huglet-docs-qa

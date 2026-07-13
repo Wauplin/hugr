@@ -5,7 +5,7 @@ description: Define and run huglets in TypeScript or JavaScript through the hugg
 
 # Build Huggr agents with TypeScript
 
-Use the root package for platform-neutral types and in-memory stores. Use `huggr-agents/node` for filesystem-backed Node agents and `huggr-agents/browser` for IndexedDB-backed browser agents. Read [guide 06](../../../docs/guides/06-agent-entirely-in-typescript.md) for the complete surface.
+Use the root package for platform-neutral types and in-memory stores. Use `huggr-agents/node` for filesystem-backed Node agents and `huggr-agents/browser` for IndexedDB-backed browser agents. Read [Define an agent in TypeScript](../../../docs/tutorials/typescript-agent.md) for the complete surface.
 
 ## Build the package
 
@@ -26,12 +26,7 @@ import { createAgent } from "huggr-agents/node";
 const agent = createAgent({
   name: "policy-helper",
   system: "Use lookup_policy and return a JSON object.",
-  models: {
-    base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGGR_API_KEY",
-    default: "medium",
-    medium: { model: "google/gemma-4-31B-it:cerebras" },
-  },
+  models: { default: "balanced" },
   tools: [{
     name: "lookup_policy",
     description: "Search policy text by keyword.",
@@ -59,13 +54,15 @@ for await (const event of agent.run("What receipt is needed?", { traceId: answer
 }
 ```
 
+Model text deltas are buffered until each model call finishes; other events retain their order.
+
 Pass `extra` for trace metadata and an `AbortSignal` as `signal` for cancellation. A resumed ask writes a new trace with `depends_on`; it never mutates the parent.
 
 ## Choose Node or browser storage
 
 Node resolves `HUGGR_AGENT_HOME`, then `HUGGR_HOME/<name>`, then `~/.huggr/<name>`, and writes portable trace/feedback files. Browser agents use `createAgent` from `huggr-agents/browser`, load WASM over fetch, and persist through IndexedDB.
 
-Browsers have no environment variables: pass `models.api_key` at runtime and never bake a production secret into a published bundle. Supply custom `TraceStore` and `FeedbackStore` implementations through the runtime when the built-in fs, IndexedDB, or memory stores do not fit.
+The runtime resolves the fixed `fast`, `balanced`, `powerful`, and `max` tiers from its built-in catalog. Pass `modelCatalog` in the optional runtime object to override providers, model ids, and prices. Browsers have no environment variables, so put `api_key` on the runtime provider from a user-controlled settings store and never bake a production secret into a published bundle. Supply custom `TraceStore` and `FeedbackStore` implementations through the runtime when the built-in fs, IndexedDB, or memory stores do not fit.
 
 ## Context policy
 
@@ -94,5 +91,5 @@ npm test
 - Missing `pkg/`: run `npm run build:wasm` before `npm test` or browser packaging.
 - Missing target: run `rustup target add wasm32-unknown-unknown`.
 - `wasm-bindgen` schema mismatch: install the version required by the repository build script.
-- Provider auth in Node: set the variable named by `api_key_env`; in browsers, inject `api_key` from a user-controlled settings store.
-- Trace drift: call `agent.verify(id)` and then inspect the same file with `$huggr-debug-traces` or the Rust CLI.
+- Provider auth in Node: set the variable named by the resolved provider's `api_key_env` (`HF_TOKEN` for the built-in catalog); in browsers, inject `api_key` through a runtime `modelCatalog` from a user-controlled settings store.
+- Trace drift: call `agent.verify(id)`. Use `$huggr-debug-traces` or the Rust CLI when a matching manifest-defined agent resolves to the same Node trace store.

@@ -23,16 +23,7 @@ judge = huggr.Agent(
         "whether the candidate conveys the expected facts. Judge meaning, not wording; extra correct detail is fine. "
         "Respond only with the structured JSON response requested by the provider schema."
     ),
-    models={
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "default": "medium",
-        "medium": {
-            "model": "google/gemma-4-31B-it:cerebras",
-            "input_usd_per_m_tokens": 1.0,
-            "output_usd_per_m_tokens": 1.5,
-        },
-    },
+    models={"default": "powerful"},
     response_schema={
         "type": "object",
         "properties": {"correct": {"type": "boolean"}, "reasoning": {"type": "string"}},

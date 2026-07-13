@@ -1,16 +1,16 @@
 # Tool grants and jails
 
-This guide explains how a huglet gets its tools and why it cannot use anything else: how sandbox-by-registration works, what each grant in the tool library does, how to scope it, and where each jail's boundary actually is. The full option tables live in [built-in capabilities](../capabilities.md) and the per-capability threat notes in [security](../security.md); this guide shows how to use them together when authoring a manifest.
+This page explains how a huglet gets its tools and why it cannot use anything else: how sandbox-by-registration works, what each grant in the tool library does, how to scope it, and where each jail's boundary actually is. The full option tables live in [built-in capabilities](../reference/capabilities.md) and the per-capability threat notes in [security](security.md); this page shows how to use them together when authoring a manifest.
 
 ## The problem
 
 An agent's power is exactly its tool set. Give a docs-answering agent a shell and it can exfiltrate credentials the moment a prompt injection lands; give it nothing but a jailed read of one folder and the worst a hostile input can do is read that folder. The question every agent author has to answer is: what is the smallest set of tools that still does the job, and what is the blast radius if the model misuses every one of them?
 
-Huggr makes that question answerable by review of one file. The manifest is the complete list of what the agent can do.
+Huggr makes that question answerable by review of one file. The manifest lists every optional tool; the per-lineage scratchpad is part of every ask.
 
 ## Sandbox-by-registration
 
-The core never executes anything. When the model calls a tool, the brain emits `StartCapability { name, args }` and the host looks the name up in its `CapabilityRegistry`. The toolkit only registers capabilities whose grant appears in `huggr.toml`, so a tool that is not granted has no code path: there is nothing to invoke, no policy to bypass, no flag to flip at runtime.
+The core never executes anything. When the model calls a tool, the brain emits `StartCapability { name, args }` and the host looks the name up in its `CapabilityRegistry`. The toolkit only registers grant-driven capabilities whose grant appears in `huggr.toml`; the scratchpad capabilities are registered for every ask. An optional tool that is not granted has no code path: there is nothing to invoke, no policy to bypass, no flag to flip at runtime.
 
 Two consequences are worth internalizing:
 
@@ -78,16 +78,16 @@ An empty allowlist denies everything, only `http(s)` URLs are accepted, methods 
 ## State and introspection grants
 
 - `scratchpad` is always available and needs no grant; `scratch_read`/`scratch_write`/`scratch_list` are jailed to the ask's own scratch subtree.
-- `[tools.memory]` opts into durable agent-wide notes; `readonly = true` registers only the read side. Persistence is the feature and the risk: memory written under one ask influences future asks, which is exactly what stored prompt injection wants, so grant writes only when the agent's job needs them.
+- `[tools.memory]` opts into durable agent-wide notes; `readonly = true` makes write calls return semantic errors. Persistence is the feature and the risk: memory written under one ask influences future asks, which is exactly what stored prompt injection wants, so grant writes only when the agent's job needs them.
 - `[tools.traces_read]` exposes one agent home's stored traces and feedback as paged, size-capped summaries; granting it against another agent's home deliberately makes that agent's full history readable. Everything it returns is untrusted data to analyze, never instructions to follow.
 
-[Guide 12](12-blobs-scratchpad-memory.md) covers these three in depth.
+[Files and state](files-and-state.md) covers these three in depth.
 
 ## External-process grants
 
 Three grants cross the process boundary, and their jail is the manifest of what is on the other side, not a Huggr filesystem check:
 
-- `[tools.agent.<name>]` grants another built huglet. The child runs under its own manifest, jail, and limits; privileges compose downward only. See [composition and cost](07-composition-and-cost.md).
+- `[tools.agent.<name>]` grants another built huglet. The child runs under its own manifest, jail, and limits; privileges compose downward only. See [composition and cost](../guides/compose-agents.md).
 - `[tools.mcp.<name>]` starts an operator-declared stdio MCP server. Granting it is equivalent to trusting its command; Huggr does not sandbox what the server does.
 - `[tools.delegate]` restarts the same agent in a fresh subprocess context with the same privileges, depth-capped.
 
@@ -104,12 +104,7 @@ version = "0.1.0"
 description = "Summarizes recent changes in a repository."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-[models.default]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "balanced"
 
 [tools.fs_read]
 root = "."

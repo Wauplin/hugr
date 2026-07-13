@@ -2,9 +2,9 @@
 
 A Chrome Manifest V3 extension that runs the Huggr brain in WebAssembly and performs browser IO through extension JavaScript. It is one concrete host built from the reusable pieces:
 
-- `crates/huggr-wasm` — the generic WASM bindings around `huggr-core` (no Chrome APIs, nothing baked in).
-- `bindings/typescript` — the generic agent driver, OpenAI-compatible fetch adapter, and IndexedDB storage.
-- this folder — everything Chrome-specific: the capability dispatcher over `chrome.*` (`chrome_api.js`), the content script, the side-panel UI, the system prompt, and the MV3 manifest.
+- `crates/huggr-wasm`: the generic WASM bindings around `huggr-core` (no Chrome APIs, nothing baked in).
+- `bindings/typescript`: the generic agent driver, OpenAI-compatible fetch adapter, and IndexedDB storage.
+- this folder: everything Chrome-specific, including the capability dispatcher over `chrome.*` (`chrome_api.js`), the content script, the side-panel UI, the system prompt, and the MV3 manifest.
 
 To build a *different* extension (other layout, tools, policies), copy this folder, keep the `host.js` shape (`loadWasm`, `invokeCapability`, `loadSettings`, `saveSession`, `systemPrompt`), and swap any piece.
 

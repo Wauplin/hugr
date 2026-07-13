@@ -1,6 +1,6 @@
 # Context compaction and pruning
 
-This guide explains how a Huggr agent keeps its model context small as a conversation grows: what problem compaction solves, how the mechanism works, how it is implemented in the core, and every knob you can configure. It applies to all surfaces that accept a `[context]` block: the manifest, the Python and TypeScript runtime APIs, and browser hosts on the WASM brain.
+This page explains how a Huggr agent keeps its model context small as a conversation grows: what problem compaction solves, how the mechanism works, how it is implemented in the core, and every knob you can configure. It applies to all surfaces that accept a `[context]` block: the manifest, the Python and TypeScript runtime APIs, and browser hosts on the WASM brain.
 
 ## The problem
 
@@ -16,7 +16,7 @@ Compaction addresses all three by shrinking what is *sent* per turn. Pruning is 
 
 The key design fact: Huggr never shortens its history. The durable log in `huggr-core` is append-only, and the trace written from it is immutable. What shrinks is the **projection**: the per-turn rendering of the log into a `ModelRequest`.
 
-Projection is owned by the `TurnPolicy` (see [runtime](../runtime.md)). Each turn, the policy's pure `project_context(log, budget)` produces a `ContextPlan` that records, for every log entry, a disposition:
+Projection is owned by the `TurnPolicy` (see [runtime](runtime.md)). Each turn, the policy's pure `project_context(log, budget)` produces a `ContextPlan` that records, for every log entry, a disposition:
 
 - `Included`: sent verbatim.
 - `Truncated`: sent, but cut down to a token cap.
@@ -74,7 +74,7 @@ budget_tokens = 64000             # target projection size (default 128000)
 trigger_tokens = 56000            # start compacting past this (default: budget_tokens)
 keep_recent_tokens = 8000         # protected tail window (default: budget_tokens / 3)
 max_block_tokens = 2000           # per-block truncation cap (default: budget_tokens / 4)
-summary_model = "small"           # summarize only; defaults to the default tier
+summary_model = "fast"            # summarize only; defaults to the default tier
 
 [context.forget]
 tool_ttl = { web_fetch = 2 }
@@ -123,7 +123,7 @@ The log still contains every file read and every model reply; `huggr traces` and
 
 - The `ContextPlan` is the explanation: every entry carries its disposition and estimated tokens, and drops carry a note naming the rule that removed them (`dropped by deterministic forget rule`, `dropped by deterministic budget policy`, `dropped with paired tool transcript block`).
 - The injected compaction note and any `ContextSummary` blocks are visible in the trace, so a model that "forgot" something can be diagnosed by reading what it was actually sent.
-- Because policies are pure and the summary is a recorded event, `huggr verify` remains the gate: a trace recorded under compaction replays and verifies exactly like any other. See [traces, replay, and debugging](08-traces-replay-debugging.md).
+- Because policies are pure and the summary is a recorded event, `huggr verify` remains the gate: a trace recorded under compaction replays and verifies exactly like any other. See [traces, replay, and debugging](../guides/inspect-traces.md).
 
 ## Limitations
 

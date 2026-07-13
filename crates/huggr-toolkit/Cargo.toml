@@ -41,9 +41,6 @@ tokio = { workspace = true }
 clap = { workspace = true }
 # Trace tooling reuses the versioned replay/inspect machinery.
 huggr-replay = { workspace = true }
-# Cron scheduling is host-side; the core never reads a clock.
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-croner = "2"
 
 [dev-dependencies]
 tokio = { workspace = true }

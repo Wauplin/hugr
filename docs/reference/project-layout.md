@@ -31,7 +31,7 @@ huggr/
 │   │                       #   publisher, and a judge-graded eval of huglet-docs
 │   └── chrome-extension/   # a concrete browser host: chrome.* capability dispatcher, side-panel UI,
 │                           #   MV3 manifest; vendors the generic JS at build time
-├── docs/                   # reference documentation, per-surface guides, end-to-end tutorials
+├── docs/                   # tutorials, task guides, concepts, and reference
 └── .agents/skills/         # coding-agent cheat sheets kept in sync with the docs
 ```
 
@@ -53,4 +53,4 @@ Nothing reaches into `huggr-core` internals. These layers are all hosts.
 
   Session continuity uses the `trace_id` in tool arguments rather than MCP session state. Huggr does not use deprecated MCP sampling; the agent owns its provider.
 - **A2A** is the surviving agent↔agent standard for *remote* orchestration; an adapter is possible later (our `describe()` output is card-shaped) but is deliberately not a foundation.
-- **The gap Huggr fills**, verified unowned: (a) a cross-process **forkable session contract** (`trace_id`/`depends_on` with bit-for-bit deterministic replay), (b) **mandatory cost/duration metadata on every response**, and (c) **single-binary agent packaging**. Huggr provides this combination.
+- **The gap Huggr fills:** (a) a cross-process **forkable session contract** (`trace_id`/`depends_on` with bit-for-bit deterministic replay), (b) **mandatory cost/duration metadata on every response**, and (c) **single-binary agent packaging**. Huggr provides this combination.

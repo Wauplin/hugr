@@ -30,8 +30,26 @@ struct Entry {
 /// `exclude` (component-wise, so `data/traces` excludes exactly that subtree
 /// and `target` still excludes the whole top-level dir). Symlinks are skipped.
 pub fn pack(dir: &Path, exclude: &[&str]) -> io::Result<Vec<u8>> {
+    pack_with_files(dir, exclude, &[])
+}
+
+/// Pack a tree and replace or add the supplied in-memory files.
+pub fn pack_with_files(
+    dir: &Path,
+    exclude: &[&str],
+    files: &[(&str, &[u8])],
+) -> io::Result<Vec<u8>> {
     let mut entries = Vec::new();
     collect(dir, dir, exclude, &mut entries)?;
+    for (path, data) in files {
+        let rel = sanitized_rel(path)?;
+        let path = rel_to_forward_slash(&rel);
+        entries.retain(|entry| entry.path != path);
+        entries.push(Entry {
+            path,
+            data: data.to_vec(),
+        });
+    }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut out = Vec::new();

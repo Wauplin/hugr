@@ -19,12 +19,39 @@ class _TierConfigOptional(TypedDict, total=False):
 
 
 class TierConfig(_TierConfigOptional):
+    provider: str
     model: str
 
 
-# Tier selectors are deliberately open strings, so this one input cannot be a
-# closed TypedDict without rejecting valid user-defined tier names.
-ModelsConfig = Dict[str, Union[str, TierConfig]]
+ModelTier = Literal["fast", "balanced", "powerful", "max"]
+
+
+class ModelsConfig(TypedDict, total=False):
+    default: ModelTier
+    fast: TierConfig
+    balanced: TierConfig
+    powerful: TierConfig
+    max: TierConfig
+
+
+class ProviderConfig(TypedDict):
+    base_url: str
+    api_key_env: str
+
+
+ProvidersConfig = Dict[str, ProviderConfig]
+
+
+class CatalogModelsConfig(TypedDict, total=False):
+    fast: TierConfig
+    balanced: TierConfig
+    powerful: TierConfig
+    max: TierConfig
+
+
+class ModelCatalogConfig(TypedDict):
+    providers: ProvidersConfig
+    models: CatalogModelsConfig
 
 
 class LimitsConfig(TypedDict, total=False):
@@ -44,7 +71,7 @@ class ContextConfig(TypedDict, total=False):
     trigger_tokens: int
     keep_recent_tokens: int
     max_block_tokens: int
-    summary_model: str
+    summary_model: ModelTier
     forget: ContextForgetConfig
 
 
@@ -566,6 +593,18 @@ class ModelTierCard:
     selector: str
     default: bool
     pricing: Optional[TierPrice] = None
+    details: Optional["ModelDetails"] = None
+
+
+@dataclass
+class ModelDetails:
+    provider: str
+    model: str
+    base_url: str
+    api_key_env: str
+    api_key_resolved: bool
+    source: str
+    resolved_from: str
 
 
 class AgentLimitsDict(TypedDict, total=False):
@@ -599,6 +638,17 @@ class TierPriceDict(TypedDict):
 
 class _ModelTierCardDictOptional(TypedDict, total=False):
     pricing: TierPriceDict
+    details: "ModelDetailsDict"
+
+
+class ModelDetailsDict(TypedDict):
+    provider: str
+    model: str
+    base_url: str
+    api_key_env: str
+    api_key_resolved: bool
+    source: str
+    resolved_from: str
 
 
 class ModelTierCardDict(_ModelTierCardDictOptional):
@@ -656,6 +706,9 @@ class AgentCard:
                     default=tier["default"],
                     pricing=TierPrice(**tier["pricing"])
                     if tier.get("pricing") is not None
+                    else None,
+                    details=ModelDetails(**tier["details"])
+                    if tier.get("details") is not None
                     else None,
                 )
                 for tier in data["model_tiers"]

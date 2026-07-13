@@ -29,6 +29,7 @@ use serde_json::json;
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
+use crate::models::resolve_bundled_definition;
 use crate::runtime::{
     RuntimeOptions, agent_home_dir, build_agent_with_options, sanitize_agent_name,
 };
@@ -55,8 +56,6 @@ pub struct SurfaceArgs {
     feedback: Option<String>,
     feedback_payload: Option<String>,
     mcp_serve: bool,
-    cron_serve: bool,
-    allow_uncapped: bool,
     runtime: RuntimeValues,
 }
 
@@ -87,7 +86,7 @@ pub async fn run_cli(bundle_bytes: &'static [u8]) -> i32 {
 /// types. The surface remains universal; only the registry differs.
 pub async fn run_cli_with_options(bundle_bytes: &'static [u8], options: RuntimeOptions) -> i32 {
     let started = Instant::now();
-    match prepare_definition(bundle_bytes) {
+    match prepare_definition(bundle_bytes, options.model_catalog()) {
         Ok(def) => {
             run_definition_args_with_options(def, std::env::args_os().skip(1), started, options)
                 .await
@@ -148,14 +147,6 @@ where
         }
         return crate::mcp_serve::serve_definition_with_options(def, options).await;
     }
-    if args.cron_serve {
-        if let Err(err) = apply_optional_runtime_values(&mut def, &args.runtime) {
-            eprintln!("error: {err}");
-            return 1;
-        }
-        return crate::cron::serve_definition(def, options, args.allow_uncapped).await;
-    }
-
     let runtime_result = if mode == Mode::Ask {
         apply_runtime_values(&mut def, &args.runtime)
     } else {
@@ -226,9 +217,13 @@ where
     }
 }
 
-fn prepare_definition(bundle_bytes: &[u8]) -> Result<AgentDefinition, LoadError> {
+fn prepare_definition(
+    bundle_bytes: &[u8],
+    catalog: Option<&crate::models::ModelCatalog>,
+) -> Result<AgentDefinition, LoadError> {
     let home = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
-    Ok(AgentDefinition::load(&home)?)
+    let def = AgentDefinition::load(&home)?;
+    Ok(resolve_bundled_definition(&def, catalog)?)
 }
 
 fn parse_surface_args<I, T>(def: &AgentDefinition, argv: I) -> SurfaceArgs
@@ -270,8 +265,6 @@ where
         feedback: matches.get_one::<String>("feedback").cloned(),
         feedback_payload: matches.get_one::<String>("feedback-payload").cloned(),
         mcp_serve: matches.get_flag("mcp-serve"),
-        cron_serve: matches.get_flag("cron-serve"),
-        allow_uncapped: matches.get_flag("allow-uncapped"),
         runtime,
     }
 }
@@ -359,18 +352,6 @@ fn surface_command(def: &AgentDefinition) -> Command {
             Arg::new("mcp-serve")
                 .long("mcp-serve")
                 .help("Run as a stdio MCP server exposing an ask tool.")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("cron-serve")
-                .long("cron-serve")
-                .help("Run configured [cron.<name>] jobs until the process is stopped.")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("allow-uncapped")
-                .long("allow-uncapped")
-                .help("Allow cron jobs without max_cost_micro_usd.")
                 .action(ArgAction::SetTrue),
         );
 
@@ -543,7 +524,7 @@ pub async fn ask_bundle_with_options(
     runtime: &RuntimeValues,
 ) -> Answer {
     let started = Instant::now();
-    let mut def = match prepare_definition(bundle_bytes) {
+    let mut def = match prepare_definition(bundle_bytes, options.model_catalog()) {
         Ok(def) => def,
         Err(err) => return error_answer(err.to_string(), started),
     };
@@ -596,16 +577,48 @@ pub fn config_json_with_options(
     def: &AgentDefinition,
     options: &RuntimeOptions,
 ) -> serde_json::Value {
+    let tiers = def
+        .models
+        .tiers
+        .iter()
+        .map(|(name, tier)| {
+            let resolution = def.model_sources.get(name);
+            (
+                name.clone(),
+                serde_json::json!({
+                    "provider": tier.provider,
+                    "model": tier.model,
+                    "input_usd_per_m_tokens": tier.input_usd_per_m_tokens,
+                    "output_usd_per_m_tokens": tier.output_usd_per_m_tokens,
+                    "source": resolution.map(|value| value.source.as_str()),
+                    "resolved_from": resolution.map(|value| value.resolved_from.as_str()),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let providers = def
+        .providers
+        .iter()
+        .map(|(name, provider)| {
+            (
+                name.clone(),
+                serde_json::json!({
+                    "base_url": provider.base_url,
+                    "api_key_env": provider.api_key_env,
+                    "api_key_resolved": std::env::var(&provider.api_key_env)
+                        .map(|value| !value.is_empty())
+                        .unwrap_or(false),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
     let mut config = serde_json::json!({
         "agent": def.agent,
         "models": {
-            "base_url": def.models.base_url,
-            "api_key_env": def.models.api_key_env,
-            "api_key_resolved": def.models.api_key_env.as_deref()
-                .map(|var| std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false)),
             "default": def.default_tier(),
-            "tiers": def.models.tiers,
+            "tiers": tiers,
         },
+        "providers": providers,
         "tools": def.tools.iter().map(|grant| serde_json::json!({
             "name": grant.name,
             "kind": grant.kind,
@@ -614,7 +627,6 @@ pub fn config_json_with_options(
         "skills": def.skills,
         "runtime": def.runtime,
         "limits": def.limits,
-        "cron": def.cron,
         "scratchpad": def.scratchpad,
         "traces": def.traces,
     });
@@ -705,6 +717,8 @@ pub enum LoadError {
     Manifest(#[from] crate::manifest::ManifestError),
     #[error("assembling agent: {0}")]
     Build(#[from] crate::runtime::RuntimeError),
+    #[error("resolving models: {0}")]
+    Models(#[from] crate::models::ModelConfigError),
 }
 
 /// Unpack an embedded definition [`bundle`] into the per-agent home and assemble
@@ -721,6 +735,7 @@ pub async fn load_agent_with_options(
 ) -> Result<LoadedAgent, LoadError> {
     let definition = prepare_home(bundle_bytes).map_err(LoadError::Home)?;
     let def = AgentDefinition::load(&definition)?;
+    let def = resolve_bundled_definition(&def, options.model_catalog())?;
     let state_root = agent_home_dir(&def.agent.name);
     let options = options.clone().with_state_root(state_root);
     let (agent, warnings) = build_agent_with_options(&def, &options).await?;
@@ -862,18 +877,27 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, file.contents).unwrap();
         }
-        let bytes = bundle::pack(&root, &["traces", "scratch"]).unwrap();
+        let snapshot = crate::models::default_catalog().to_toml().unwrap();
+        let bytes = bundle::pack_with_files(
+            &root,
+            &["traces", "scratch"],
+            &[(crate::models::MODEL_SNAPSHOT_FILE, snapshot.as_bytes())],
+        )
+        .unwrap();
         (bytes, root)
     }
 
     #[test]
     fn config_json_shows_key_env_name_but_never_the_secret() {
         unsafe { std::env::set_var("HUGGR_CFG_TEST_KEY", "super-secret-value") };
-        let src = "[agent]\nname = \"x\"\n[models]\napi_key_env = \"HUGGR_CFG_TEST_KEY\"\n[models.medium]\nmodel = \"m\"\n[tools.fs_read]\nroot = \"./policies\"\n";
+        let src = "[agent]\nname = \"x\"\n[models]\ndefault = \"balanced\"\n[providers.test]\nbase_url = \"https://example.com/v1\"\napi_key_env = \"HUGGR_CFG_TEST_KEY\"\n[models.balanced]\nprovider = \"test\"\nmodel = \"test-model\"\n[tools.fs_read]\nroot = \"./policies\"\n";
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         let cfg = config_json(&def);
-        assert_eq!(cfg["models"]["api_key_env"], "HUGGR_CFG_TEST_KEY");
-        assert_eq!(cfg["models"]["api_key_resolved"], true);
+        assert_eq!(
+            cfg["providers"]["test"]["api_key_env"],
+            "HUGGR_CFG_TEST_KEY"
+        );
+        assert_eq!(cfg["providers"]["test"]["api_key_resolved"], true);
         assert_eq!(cfg["tools"][0]["name"], "fs_read");
         assert!(!cfg.to_string().contains("super-secret-value"));
         assert!(cfg.get("response").is_none());
@@ -887,7 +911,7 @@ mod tests {
 
     #[test]
     fn config_json_shows_actual_response_schema_when_registered() {
-        let src = "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n";
+        let src = "[agent]\nname = \"x\"\n[models]\ndefault = \"balanced\"\n";
         let def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         let options = RuntimeOptions::new().with_response_type::<ConfigResponse>(
             "test_agent::ConfigResponse",
@@ -910,8 +934,8 @@ mod tests {
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 [runtime.args.docs_path]
@@ -969,7 +993,7 @@ required = true
         };
 
         let def = AgentDefinition::parse(
-            "[agent]\nname = \"feedback-cli\"\n[models.medium]\nmodel = \"m\"\n",
+            "[agent]\nname = \"feedback-cli\"\n[models]\ndefault = \"balanced\"\n",
             "huggr.toml",
         )
         .unwrap();
