@@ -1,7 +1,7 @@
 //! Agent-wide durable memory tools.
 
 use std::fs::{self, OpenOptions};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -47,14 +47,7 @@ impl FsMemory {
             .root
             .canonicalize()
             .map_err(|e| format!("memory root is not available: {e}"))?;
-        let candidate = resolve_rel(&root, rel)?;
-        let canonical = candidate
-            .canonicalize()
-            .map_err(|e| format!("path does not exist inside memory root: {rel}: {e}"))?;
-        if !canonical.starts_with(&root) {
-            return Err(format!("path escapes memory root: {rel}"));
-        }
-        Ok(canonical)
+        crate::jail::resolve_existing(&root, rel, "memory")
     }
 
     fn resolve_for_write(&self, rel: &str) -> Result<PathBuf, String> {
@@ -64,26 +57,7 @@ impl FsMemory {
             .root
             .canonicalize()
             .map_err(|e| format!("memory root is not available: {e}"))?;
-        let candidate = resolve_rel(&root, rel)?;
-        if candidate == root {
-            return Err("path must name a file, not the memory root".to_string());
-        }
-        let file_name = candidate
-            .file_name()
-            .ok_or_else(|| format!("path must name a file: {rel}"))?
-            .to_owned();
-        let parent = candidate
-            .parent()
-            .ok_or_else(|| format!("path must name a file: {rel}"))?;
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create memory directory for {rel}: {e}"))?;
-        let canonical_parent = parent
-            .canonicalize()
-            .map_err(|e| format!("failed to resolve memory directory for {rel}: {e}"))?;
-        if !canonical_parent.starts_with(&root) {
-            return Err(format!("path escapes memory root: {rel}"));
-        }
-        Ok(canonical_parent.join(file_name))
+        crate::jail::resolve_for_write(&root, rel, "memory")
     }
 
     fn lock_file(&self) -> PathBuf {
@@ -148,7 +122,7 @@ impl Capability for MemoryWrite {
                 .root
                 .canonicalize()
                 .map_err(|e| format!("memory root is not available: {e}"))?;
-            Ok::<_, String>(rel_path_from(&root, &path))
+            Ok::<_, String>(crate::jail::rel_path_from(&root, &path))
         })();
         if let Some(path) = file_lock {
             let _ = fs::remove_file(path);
@@ -239,7 +213,7 @@ impl Capability for MemoryList {
                 let path = entry.path();
                 let metadata = entry.metadata().ok()?;
                 Some(json!({
-                    "path": rel_path_from(&root, &path),
+                    "path": crate::jail::rel_path_from(&root, &path),
                     "kind": if metadata.is_dir() { "dir" } else { "file" },
                     "bytes": metadata.is_file().then_some(metadata.len()),
                 }))
@@ -247,38 +221,6 @@ impl Capability for MemoryList {
             .collect::<Vec<_>>();
         Ok(json!({ "path": rel, "entries": entries }))
     }
-}
-
-fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    let rel = rel.trim();
-    if rel.is_empty() {
-        return Ok(root.to_path_buf());
-    }
-    let path = Path::new(rel);
-    if path.is_absolute() {
-        return Err("path must be relative to memory root".to_string());
-    }
-    for component in path.components() {
-        match component {
-            Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(format!("path escapes memory root: {rel}"));
-            }
-        }
-    }
-    Ok(root.join(path))
-}
-
-fn rel_path_from(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 pub fn memory_tool_schemas() -> Vec<ToolSchema> {

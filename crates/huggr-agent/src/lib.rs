@@ -24,6 +24,7 @@ mod analytics;
 mod blobs;
 mod contract;
 mod feedback;
+mod jail;
 mod limits;
 mod memory;
 mod scratch;

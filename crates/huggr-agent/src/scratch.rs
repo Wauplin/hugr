@@ -167,14 +167,7 @@ impl FsScratch {
             .working_path(handle)
             .canonicalize()
             .map_err(|e| format!("scratch root is not available: {e}"))?;
-        let candidate = resolve_rel(&root, rel)?;
-        let canonical = candidate
-            .canonicalize()
-            .map_err(|e| format!("path does not exist inside scratch root: {rel}: {e}"))?;
-        if !canonical.starts_with(&root) {
-            return Err(format!("path escapes scratch root: {rel}"));
-        }
-        Ok(canonical)
+        crate::jail::resolve_existing(&root, rel, "scratch")
     }
 
     fn resolve_for_write(&self, handle: &ScratchHandle, rel: &str) -> Result<PathBuf, String> {
@@ -182,26 +175,7 @@ impl FsScratch {
             .working_path(handle)
             .canonicalize()
             .map_err(|e| format!("scratch root is not available: {e}"))?;
-        let candidate = resolve_rel(&root, rel)?;
-        if candidate == root {
-            return Err("path must name a file, not the scratch root".to_string());
-        }
-        let file_name = candidate
-            .file_name()
-            .ok_or_else(|| format!("path must name a file: {rel}"))?
-            .to_owned();
-        let parent = candidate
-            .parent()
-            .ok_or_else(|| format!("path must name a file: {rel}"))?;
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create scratch directory for {rel}: {e}"))?;
-        let canonical_parent = parent
-            .canonicalize()
-            .map_err(|e| format!("failed to resolve scratch directory for {rel}: {e}"))?;
-        if !canonical_parent.starts_with(&root) {
-            return Err(format!("path escapes scratch root: {rel}"));
-        }
-        Ok(canonical_parent.join(file_name))
+        crate::jail::resolve_for_write(&root, rel, "scratch")
     }
 }
 
@@ -264,7 +238,7 @@ impl ScratchBackend for FsScratch {
             .working_path(handle)
             .canonicalize()
             .map_err(|e| format!("scratch root is not available: {e}"))?;
-        Ok(rel_path_from(&root, &path))
+        Ok(crate::jail::rel_path_from(&root, &path))
     }
 
     async fn read_bytes(&self, handle: &ScratchHandle, rel_path: &str) -> Result<Vec<u8>, String> {
@@ -296,7 +270,7 @@ impl ScratchBackend for FsScratch {
             .working_path(handle)
             .canonicalize()
             .map_err(|e| format!("scratch root is not available: {e}"))?;
-        Ok(rel_path_from(&root, &path))
+        Ok(crate::jail::rel_path_from(&root, &path))
     }
 
     async fn local_path(&self, handle: &ScratchHandle, rel_path: &str) -> Option<PathBuf> {
@@ -328,7 +302,7 @@ impl ScratchBackend for FsScratch {
                 continue;
             };
             entries.push(ScratchEntry {
-                path: rel_path_from(&root, &path),
+                path: crate::jail::rel_path_from(&root, &path),
                 kind: if metadata.is_dir() {
                     ScratchEntryKind::Dir
                 } else {
@@ -627,26 +601,6 @@ impl Capability for ScratchList {
     }
 }
 
-fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    let rel = rel.trim();
-    if rel.is_empty() {
-        return Ok(root.to_path_buf());
-    }
-    let path = Path::new(rel);
-    if path.is_absolute() {
-        return Err("path must be relative to scratch root".to_string());
-    }
-    for component in path.components() {
-        match component {
-            Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(format!("path escapes scratch root: {rel}"));
-            }
-        }
-    }
-    Ok(root.join(path))
-}
-
 fn normalize_rel(rel: &str, allow_empty: bool) -> Result<String, String> {
     let rel = rel.trim();
     if rel.is_empty() {
@@ -678,17 +632,6 @@ fn normalize_rel(rel: &str, allow_empty: bool) -> Result<String, String> {
         };
     }
     Ok(parts.join("/"))
-}
-
-fn rel_path_from(root: &Path, path: &Path) -> String {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    rel.components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn scratch_write_schema() -> ToolSchema {
