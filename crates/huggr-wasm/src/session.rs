@@ -305,6 +305,7 @@ impl AgentSession {
             .state()
             .log()
             .iter()
+            .skip(self.resume_baseline)
             .rev()
             .find_map(|entry| match &entry.record {
                 huggr_core::Record::ModelOutput { output, .. } if output.tool_calls.is_empty() => {

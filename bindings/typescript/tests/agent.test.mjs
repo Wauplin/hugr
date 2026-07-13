@@ -151,6 +151,19 @@ test("resume and fork with fs store; verify via wasm", async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test("failed resumed turns do not reuse the parent answer", async () => {
+  const agent = makeAgent();
+  server.scriptText('{"answer": "parent"}');
+  const parent = await agent.ask("first question");
+
+  const resumed = await agent.ask("follow-up", { traceId: parent.trace_id });
+
+  assert.equal(resumed.status, "error");
+  assert.match(String(resumed.response.error), /model did not produce a final answer/);
+  assert.notDeepEqual(resumed.response, parent.response);
+  await agent.verify(resumed.trace_id);
+});
+
 test("limits trip to error answers", async () => {
   const agent = makeAgent({ limits: { max_model_calls: 1 }, tools: [lookupTool([])] });
   server.scriptToolCall("lookup", { word: "x" });
