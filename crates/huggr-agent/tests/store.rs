@@ -184,3 +184,20 @@ fn pre_store_traces_load_and_stay_byte_stable() {
     // And round-trips to itself.
     assert_eq!(Trace::from_json(text.as_bytes()).unwrap(), empty_trace(5));
 }
+
+/// One corrupt file — an interrupted write's empty placeholder, junk JSON, or
+/// a mismatched header — must not hide the healthy traces from `list()`.
+#[test]
+fn list_skips_corrupt_entries_instead_of_aborting() {
+    let dir = TempDir::new("agent-store-corrupt");
+    let store = TraceStore::new(dir.path());
+
+    let good = store.put(empty_trace(1), header("healthy")).unwrap();
+    std::fs::write(dir.path().join("interrupted.json"), b"").unwrap();
+    std::fs::write(dir.path().join("junk.json"), b"{ not json").unwrap();
+    std::fs::write(dir.path().join("not a trace id.json"), b"{}").unwrap();
+
+    let heads = store.list().unwrap();
+    assert_eq!(heads.len(), 1);
+    assert_eq!(heads[0].trace_id, good);
+}

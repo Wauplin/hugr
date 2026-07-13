@@ -251,7 +251,7 @@ impl TraceStore {
     }
 
     /// Read the header of the trace stored under `id` **without** loading its
-    /// events: only `meta` is deserialized (see [`HeadOnly`]).
+    /// events: only the `meta` header is deserialized.
     pub fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError> {
         let path = self.path_of(id);
         if !path.exists() {
@@ -265,6 +265,10 @@ impl TraceStore {
     /// List the headers of every stored trace, sorted by id (deterministic
     /// order regardless of directory-entry order). Lineage — `depends_on`
     /// pointers — is fully visible from this listing alone.
+    ///
+    /// A corrupt entry (an interrupted write's empty placeholder, invalid
+    /// JSON, a mismatched header) is reported to stderr and skipped, so one
+    /// bad file never hides the healthy traces from the audit surface.
     pub fn list(&self) -> Result<Vec<TraceHead>, StoreError> {
         let mut heads = Vec::new();
         let entries = match std::fs::read_dir(&self.root) {
@@ -281,7 +285,15 @@ impl TraceStore {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            heads.push(self.head(&TraceId::new(stem))?);
+            let Ok(id) = TraceId::try_new(stem) else {
+                continue;
+            };
+            match self.head(&id) {
+                Ok(head) => heads.push(head),
+                Err(err) => {
+                    eprintln!("warning: skipping unreadable trace {}: {err}", id.as_str());
+                }
+            }
         }
         heads.sort_by(|a, b| a.trace_id.cmp(&b.trace_id));
         Ok(heads)

@@ -51,3 +51,26 @@ where
     }
     Ok(None)
 }
+
+/// Like [`read_json_line`], but skip lines that are not valid JSON instead of
+/// failing. For reading from processes we do not control (an MCP server that
+/// prints a banner or log line to stdout must not fail the whole session);
+/// our own `--mcp-serve` loop stays strict.
+pub async fn read_json_line_lenient<R, T>(lines: &mut Lines<R>) -> Result<Option<T>, FramingError>
+where
+    R: AsyncBufRead + Unpin,
+    T: DeserializeOwned,
+{
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str(&line) {
+            Ok(value) => return Ok(Some(value)),
+            Err(_) => {
+                eprintln!("mcp: ignoring non-JSON stdout line: {line}");
+            }
+        }
+    }
+    Ok(None)
+}

@@ -99,7 +99,13 @@ export class FsTraceStore implements TraceStore {
     const heads: TraceHead[] = [];
     for (const entry of entries.filter((name) => name.endsWith(".json")).sort()) {
       const id = entry.slice(0, -".json".length);
-      heads.push(headOf(id, await this.get(id)));
+      // One corrupt file (an interrupted write, stray junk) must not hide the
+      // healthy traces from the listing.
+      try {
+        heads.push(headOf(id, await this.get(id)));
+      } catch (error) {
+        console.warn(`skipping unreadable trace ${id}: ${(error as Error).message}`);
+      }
     }
     return heads;
   }

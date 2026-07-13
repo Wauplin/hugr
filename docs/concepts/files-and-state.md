@@ -67,12 +67,13 @@ That persistence is both the feature and the risk. A support agent that records 
 
 A report agent is asked to analyze a CSV. The caller runs `report-agent "Find the top regressions" --blob ./bench.csv`. Before the turn, `bench.csv` is materialized into the scratchpad. The model lists the scratchpad, reads the file, writes `notes/outliers.md` as working state and `out/regressions.md` as the deliverable. After the turn, the answer carries one blob handle named `regressions.md` with a `sha256` ref; the caller fetches it or forwards the ref to another agent unchanged.
 
-The user then asks a follow-up with the returned `trace_id`. The new ask's scratchpad starts as a copy of the previous one, so `notes/outliers.md` and `bench.csv` are still there; nothing is re-uploaded and nothing was hauled through the model context to survive the resume.
+The user then asks a follow-up with the returned `trace_id`. The new ask's scratchpad starts as a copy of the previous one minus `out/`, so `notes/outliers.md` and `bench.csv` are still there; nothing is re-uploaded and nothing was hauled through the model context to survive the resume. `out/` is not inherited: those files were already delivered as the previous answer's blobs, and each answer's `blobs` carries only what that ask produced.
 
 ## Limitations
 
 - `scratch_read`, `memory_read`, and skill files handle UTF-8 text; binary blobs can be materialized into the scratchpad and returned from `out/`, but the model cannot read their bytes through the scratch tools. Give binary formats to a capability that can parse them.
 - Outbound media types are guessed from file extensions, with `application/octet-stream` as the fallback.
 - `Bytes` refs do not forward across the agent-as-tool subprocess boundary; hand children `path` or `sha256` refs.
+- When the model fills in `blobs` for `agent_<name>`, `delegate`, or an MCP `ask`, `path` refs are accepted only for files inside the calling agent's `fs_read` roots and `sha256` refs must be well-formed content addresses. Orchestrator hand-ins (`--blob` on the CLI, `Ask` from host code) are trusted and unrestricted.
 - The blob store has no garbage collection or access control beyond the filesystem; it grows until the operator prunes it, and every local agent sharing the store can read any object by hash.
-- Copy-on-fork copies the whole finalized subtree at ask start; a scratchpad holding gigabytes makes every resume pay that copy.
+- Copy-on-fork copies the whole finalized subtree except `out/` at ask start; a scratchpad holding gigabytes makes every resume pay that copy.

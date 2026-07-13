@@ -1268,3 +1268,118 @@ async fn engine_without_recording_has_no_trace() {
             .is_err()
     );
 }
+
+/// A capability that panics — the engine must map the panic to a tool error
+/// instead of leaving the op in flight forever.
+struct Panicker;
+
+#[async_trait]
+impl Capability for Panicker {
+    fn name(&self) -> &str {
+        "panicker"
+    }
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new("panicker", "Always panics.", json!({ "type": "object" }))
+    }
+    async fn invoke(&self, _args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
+        panic!("boom");
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_capability_resolves_as_a_tool_error_instead_of_hanging() {
+    let capture = Capture::default();
+    let model = MockModel::new([
+        ModelOutput::tool_calls(vec![ToolCall::new("call-1", "panicker", json!({}))]),
+        ModelOutput::text("Recovered from the tool failure."),
+    ]);
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), model)
+        .capability(Arc::new(Panicker))
+        .frontend(Box::new(capture.clone()))
+        .clock(deterministic_clock())
+        .build();
+
+    // Must terminate: before the panic mapping this hung on rx.recv() forever.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        engine.user_turn("use the tool".into()),
+    )
+    .await
+    .expect("the turn must complete despite the panicking capability");
+
+    let tool_results = count_tool_results(engine.brain().state().log());
+    assert_eq!(tool_results.len(), 1);
+    let (name, result) = &tool_results[0];
+    assert_eq!(name, "panicker");
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("boom"),
+        "{result}"
+    );
+    let dones = capture.done.lock().unwrap();
+    assert!(matches!(dones.last(), Some(DoneReason::EndTurn)));
+}
+
+/// A panicking model adapter must likewise resolve the op as a model error.
+struct PanickingModel;
+
+#[async_trait]
+impl ModelAdapter for PanickingModel {
+    async fn call(
+        &self,
+        _request: ModelRequest,
+        _sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        panic!("adapter exploded");
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_model_adapter_resolves_as_a_model_error() {
+    let capture = Capture::default();
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("big"), Arc::new(PanickingModel))
+        .frontend(Box::new(capture.clone()))
+        .clock(deterministic_clock())
+        .build();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        engine.user_turn("hi".into()),
+    )
+    .await
+    .expect("the turn must complete despite the panicking adapter");
+    let dones = capture.done.lock().unwrap();
+    assert!(!dones.is_empty(), "the turn reached a Done command");
+}
+
+/// The registry advertises tools sorted by name, so the same agent definition
+/// projects an identical tool ordering across processes (no HashMap-order
+/// variance between runs).
+#[test]
+fn registry_schemas_are_sorted_by_name() {
+    use huggr_host::CapabilityRegistry;
+
+    struct Named(&'static str);
+    #[async_trait]
+    impl Capability for Named {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(self.0, "x", json!({ "type": "object" }))
+        }
+        async fn invoke(&self, _args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
+            Ok(json!({}))
+        }
+    }
+
+    let mut registry = CapabilityRegistry::new();
+    for name in ["zebra", "apple", "mango", "banana"] {
+        registry.register(Arc::new(Named(name)));
+    }
+    let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
+    assert_eq!(names, ["apple", "banana", "mango", "zebra"]);
+}

@@ -400,6 +400,15 @@ impl AgentDefinition {
     pub fn default_tier(&self) -> Option<&str> {
         self.models.default.as_deref()
     }
+
+    /// Re-check the `[context]` semantic invariants that `parse` enforces, for a
+    /// definition **built directly** (not from TOML) — e.g. the Python surface,
+    /// which constructs `AgentDefinition` through serde and would otherwise
+    /// carry an invalid compaction mode, an out-of-set summary tier, or a zero
+    /// forget value into the runtime. `label` names the source in diagnostics.
+    pub fn validate_semantics(&self, label: impl AsRef<Path>) -> Result<(), ManifestError> {
+        validate_context(&self.context, label.as_ref())
+    }
 }
 
 fn parse_agent(table: &toml::Table, path: &Path) -> Result<AgentMeta, ManifestError> {

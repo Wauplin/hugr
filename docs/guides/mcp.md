@@ -18,7 +18,7 @@ Register that command (binary plus its runtime args, then `--mcp-serve`) as a st
 
 The server exposes exactly two tools.
 
-**`ask`** mirrors the CLI contract: a required `question`, an optional `trace_id` to resume or fork a stored trace, optional inbound `blobs` (handle objects), and optional `skills` (local skill folder paths for this ask). Every `[runtime.args.<name>]` from the manifest is also added to the schema as a string property, required ones included, so a client can re-point the same docs binary at a different folder per call. The result carries the full `Answer` as structured content plus a text rendering of the response, so both schema-aware and plain-text clients get something useful.
+**`ask`** mirrors the CLI contract: a required `question`, an optional `trace_id` to resume or fork a stored trace, optional inbound `blobs` (handle objects with `bytes` or `sha256` refs; `path` refs are rejected because the MCP client counts as an untrusted caller), and optional `skills` (local skill folder paths for this ask). Every `[runtime.args.<name>]` from the manifest is also added to the schema as a string property, required ones included, so a client can re-point the same docs binary at a different folder per call. The result carries the full `Answer` as structured content plus a text rendering of the response, so both schema-aware and plain-text clients get something useful.
 
 **`feedback`** takes a `trace_id` and an opaque `payload` and appends caller feedback for that trace, the same back-channel as `--feedback` on the CLI.
 

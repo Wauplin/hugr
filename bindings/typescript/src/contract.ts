@@ -118,7 +118,11 @@ export interface LimitsConfig {
   timeout_s?: number;
 }
 
-/// The `[context]`-shaped block, passed through to the core `BudgetPolicy`.
+/// Context config passed to the WASM brain's `SessionContextConfig`. The forget
+/// maps are flat here (`tool_ttl`, `keep_last_per_tool`) to match that decoder,
+/// which is deliberately different from the Rust TOML manifest, where they nest
+/// under `[context.forget]`. The two shapes feed different decoders; do not
+/// assume the TOML layout on this surface.
 export interface ContextConfig {
   compaction?: "none" | "truncate" | "summarize";
   budget_tokens?: number;

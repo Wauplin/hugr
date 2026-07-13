@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 from dataclasses import is_dataclass
 
 import pytest
@@ -282,11 +283,29 @@ def test_inferred_schema_optional_list_and_dict():
     assert report.schema["required"] == ["tags", "meta"]
 
 
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="PEP 604 unions need Python 3.10")
+def test_inferred_schema_pep604_union():
+    @huggr.tool
+    def report(note: str | None = None):
+        return {"note": note}
+
+    assert report.schema["properties"]["note"] == {"type": "string", "default": None}
+    assert "required" not in report.schema
+
+
 def test_inferred_schema_rejects_unannotated_params():
     with pytest.raises(TypeError, match="no type annotation"):
 
         @huggr.tool
         def bad(word):
+            return word
+
+
+def test_inferred_schema_rejects_positional_only_params():
+    with pytest.raises(TypeError, match="`word` is positional-only"):
+
+        @huggr.tool
+        def bad(word: str, /):
             return word
 
 

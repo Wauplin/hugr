@@ -47,10 +47,13 @@ async fn stats_fold_models_tools_child_cost_and_feedback() {
 
     assert_eq!(stats.ask_count, 1);
     assert_eq!(stats.feedback_count, 1);
-    assert_eq!(stats.totals.model_calls, 1);
-    assert_eq!(stats.totals.tool_calls, 2);
-    assert_eq!(stats.totals.tokens_in, 10);
-    assert_eq!(stats.totals.tokens_out, 4);
+    // Totals fold the child in, matching the `AnswerMeta` the trace returned:
+    // own model call (1) + child's (1); own tool calls (fs_read + agent_child =
+    // 2) + child's (3); own tokens (10/4) + child's (100/50).
+    assert_eq!(stats.totals.model_calls, 2);
+    assert_eq!(stats.totals.tool_calls, 5);
+    assert_eq!(stats.totals.tokens_in, 110);
+    assert_eq!(stats.totals.tokens_out, 54);
     assert_eq!(stats.totals.cost_own_micro_usd, 40);
     assert_eq!(stats.totals.cost_delegated_micro_usd, 17);
     assert_eq!(stats.totals.cost_micro_usd, 57);
@@ -66,6 +69,40 @@ async fn stats_fold_models_tools_child_cost_and_feedback() {
     );
     assert_eq!(stats.children[0].name, "child");
     assert_eq!(stats.children[0].cost_delegated_micro_usd, 17);
+}
+
+#[tokio::test]
+async fn provider_reported_cost_wins_over_the_pricing_table() {
+    let traces = Arc::new(MemTraceStore::new());
+    let feedback = Arc::new(MemFeedbackStore::new());
+    // The table would price this call at 1000 in + 1000 out µUSD = 2 µUSD…
+    let pricing = Pricing::new().with_tier("medium", 1.0, 1.0);
+
+    let trace_id = traces
+        .put(
+            // …but the router reported an actual $0.000123 = 123 µUSD.
+            Trace::new(
+                Vec::new(),
+                vec![model_end_with_reported_cost(
+                    0, 1, "medium", 1000, 1000, 0.000123,
+                )],
+                Some(1),
+            ),
+            TraceHeader::new("stats", "0.1.0", "q", STATUS_SUCCESS),
+        )
+        .await
+        .unwrap();
+
+    let stats = collect_stats(
+        traces,
+        feedback,
+        &pricing,
+        StatsOptions::new().trace(trace_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stats.totals.cost_own_micro_usd, 123);
+    assert_eq!(stats.totals.cost_micro_usd, 123);
 }
 
 #[tokio::test]
@@ -151,6 +188,39 @@ fn tool_end(seq: u64, op: u64, started: u64, ended: u64, outcome: OpOutcome) -> 
     )
 }
 
+/// A model OpEnded whose usage carries a provider-reported cost (USD) in
+/// `extra`, the way the OpenAI adapter records a router's actual bill.
+fn model_end_with_reported_cost(
+    seq: u64,
+    op: u64,
+    selector: &str,
+    input: u64,
+    output: u64,
+    reported_usd: f64,
+) -> LogEntry {
+    let meta: OpMeta = serde_json::from_value(json!({
+        "started_at": seq * 10,
+        "ended_at": seq * 10 + 3,
+        "model": selector,
+        "usage": {
+            "input_tokens": input,
+            "output_tokens": output,
+            "extra": { "cost": reported_usd, "cost_source": "router" }
+        },
+        "extra": null
+    }))
+    .unwrap();
+    LogEntry::new(
+        Seq(seq),
+        Timestamp(seq),
+        Record::OpEnded {
+            op: OpId(op),
+            outcome: OpOutcome::Ok,
+            meta,
+        },
+    )
+}
+
 fn op_meta(
     started_at: u64,
     ended_at: u64,
@@ -179,7 +249,10 @@ fn child_answer(id: &str, cost_micro_usd: u64) -> Answer {
         blobs: Vec::new(),
         metadata: AnswerMeta {
             cost_micro_usd,
+            tokens_in: 100,
+            tokens_out: 50,
             model_calls: 1,
+            tool_calls: 3,
             ..AnswerMeta::default()
         },
         extra: Value::Null,

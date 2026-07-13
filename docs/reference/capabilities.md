@@ -21,7 +21,7 @@ Absolute tool paths, `..`, and symlink escapes are rejected. A full-disk grant u
 
 ## Filesystem writes
 
-`[tools.fs_write]` accepts `root` (default `.`) and registers `fs_write`, `fs_create_dir`, and `fs_remove`. `fs_write` creates, replaces, or appends to one file whose parent already exists. `fs_create_dir` creates one directory whose parent exists. `fs_remove` removes one file or one empty directory and never removes recursively.
+`[tools.fs_write]` accepts `root` (default `.`) and registers `fs_write`, `fs_create_dir`, and `fs_remove`. `fs_write` creates, replaces, or appends to one file whose parent already exists. `fs_create_dir` creates one directory whose parent exists. `fs_remove` removes one file or one empty directory, never removes recursively, and refuses to remove the configured root itself (including via `.` or `a/..` spellings).
 
 Write targets and their canonicalized parents must remain under the configured root, including through symlinks. Use `root = "/"` only when the operator intends to grant full-disk writes.
 
@@ -46,7 +46,7 @@ cwd = "."
 max_output_bytes = 1000000
 ```
 
-Full mode is arbitrary process and filesystem access under the agent's operating-system identity. Huggr does not sandbox it; use an outer container, VM, OS sandbox, or a trusted agent when isolation is required. `cwd` is optional in either mode. Stdout and stderr are returned separately and capped independently.
+Full mode is arbitrary process and filesystem access under the agent's operating-system identity. Huggr does not sandbox it; use an outer container, VM, OS sandbox, or a trusted agent when isolation is required. `cwd` is optional in either mode. Stdout and stderr are captured with bounded reads and returned separately, capped independently at `max_output_bytes`; the pipes keep draining past the cap so a chatty child never blocks. `timeout_s` (default 300) kills the process when it runs too long, and a command that outlives its ask is killed rather than orphaned.
 
 ## Web fetch
 
@@ -56,7 +56,7 @@ Set `markdown = true` in the manifest to convert every returned HTML body to Mar
 
 ## Web search
 
-`[tools.web_search]` registers `web_search` backed by Exa's search API. `api_key_env` defaults to `EXA_API_KEY`; the secret is read from that environment variable. `max_results` defaults to 10 and is capped at 100. Calls accept a query, an optional result count, and `contents = true` to request extracted page text. Grant `web_fetch` separately when the agent must fetch result URLs.
+`[tools.web_search]` registers `web_search` backed by Exa's search API. `api_key_env` defaults to `EXA_API_KEY`; the secret is read from that environment variable. `max_results` defaults to 10 and is capped at 100; `max_bytes` (default 4 MB) bounds the Exa response body. Calls accept a query, an optional result count, and `contents = true` to request extracted page text. Grant `web_fetch` separately when the agent must fetch result URLs.
 
 ## Delegation
 

@@ -43,7 +43,7 @@ def lookup_policy(query: str, limit: int = 5) -> dict:
     return {"matches": search_policy_text(query)[:limit]}
 ```
 
-This advertises `{"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"], "additionalProperties": false}`, and the model's arguments arrive as keyword arguments. Supported annotations: `str`, `int`, `float`, `bool`, `list[...]`, `dict`, and `Optional[...]`; parameters without defaults are required. An unannotated parameter is an error; the advertised surface must stay auditable, so Huggr refuses to guess.
+This advertises `{"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"], "additionalProperties": false}`, and the model's arguments arrive as keyword arguments. Supported annotations: `str`, `int`, `float`, `bool`, `list[...]`, `dict`, and `Optional[...]` (or the equivalent `X | None`); parameters without defaults are required. An unannotated parameter is an error; the advertised surface must stay auditable, so Huggr refuses to guess.
 
 The decorator signature is `tool(fn=None, *, name=None, description="", schema=None, requires_permission=False, background=False)`. It works bare (`@huggr.tool`), called (`huggr.tool(fn, ...)`), or as a decorator factory (`@huggr.tool(...)`), and `name`/`description` override the inferred values.
 
@@ -72,7 +72,7 @@ async def lookup(word: str) -> dict:
     return {"definition": "async ok"}
 ```
 
-Sync and async tools are interchangeable from the agent's perspective, but async callables run on a new event loop and cannot reuse objects bound to the caller's loop. A tool that raises an exception does not crash the run. The exception message is sent back to the model as a tool error result, allowing the model to recover and try again or finish the answer.
+Sync and async tools are interchangeable from the agent's perspective, so choose the form that fits your I/O. An async tool runs on a fresh event loop on a worker thread (via `asyncio.run`), not on your program's running loop, so it must be self-contained: create its own clients and await its own I/O. A coroutine that depends on objects bound to another loop (a loop-scoped client, task, lock, or `contextvars` state created elsewhere) will fail. A tool that raises an exception does not crash the run. The exception message is sent back to the model as a tool error result, allowing the model to recover and try again or finish the answer.
 
 ### The `requires_permission` and `background` flags
 

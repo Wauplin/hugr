@@ -56,7 +56,11 @@ impl Capability for PyCapability {
 }
 
 /// Call the Python function with the decoded args; a returned coroutine is
-/// driven to completion with `asyncio.run` on this blocking thread.
+/// driven to completion with `asyncio.run` on this blocking thread — a *fresh*
+/// event loop, not the caller's. A coroutine bound to another running loop (a
+/// loop-scoped client, task, lock, or `contextvars` state created elsewhere)
+/// will fail; supported async tools must be self-contained (`await` their own
+/// I/O, create their own clients). Simple `async def` tools work.
 fn call_python(callable: &Py<PyAny>, args_json: &str) -> Result<String, String> {
     Python::with_gil(|py| {
         let run = || -> PyResult<String> {

@@ -268,6 +268,12 @@ fn fold_trace(
     let mut totals = StatsTotals::default();
     let mut tool_names: BTreeMap<OpId, String> = BTreeMap::new();
     let mut child_cost = 0;
+    // Children's internal tokens/calls, folded into totals so `huggr stats`
+    // matches the `AnswerMeta` this trace returned (both count children in).
+    let mut child_tokens_in = 0u64;
+    let mut child_tokens_out = 0u64;
+    let mut child_model_calls = 0u32;
+    let mut child_tool_calls = 0u32;
     let mut first_started = None;
     let mut last_ended = None;
 
@@ -280,11 +286,16 @@ fn fold_trace(
             if let Some(child_name) = child_agent_name(name)
                 && let Ok(answer) = serde_json::from_value::<Answer>(result.clone())
             {
-                child_cost += answer.metadata.cost_micro_usd;
+                let meta = &answer.metadata;
+                child_cost += meta.cost_micro_usd;
+                child_tokens_in += meta.tokens_in;
+                child_tokens_out += meta.tokens_out;
+                child_model_calls += meta.model_calls;
+                child_tool_calls += meta.tool_calls;
                 let child = children.entry(child_name.to_string()).or_default();
                 child.name = child_name.to_string();
                 child.calls += 1;
-                child.cost_delegated_micro_usd += answer.metadata.cost_micro_usd;
+                child.cost_delegated_micro_usd += meta.cost_micro_usd;
             }
         }
     }
@@ -302,7 +313,7 @@ fn fold_trace(
 
         if let (Some(selector), Some(usage)) = (&meta.model, &meta.usage) {
             let selector = selector.0.clone();
-            let cost = pricing.cost_micro_usd(&selector, usage.input_tokens, usage.output_tokens);
+            let cost = model_call_cost_micro_usd(pricing, &selector, usage);
             totals.model_calls += 1;
             totals.tokens_in += usage.input_tokens;
             totals.tokens_out += usage.output_tokens;
@@ -338,6 +349,11 @@ fn fold_trace(
     };
     totals.cost_delegated_micro_usd = child_cost;
     totals.cost_micro_usd = totals.cost_own_micro_usd + totals.cost_delegated_micro_usd;
+    // Fold children's tokens/calls in, matching `AnswerMeta::merge_child`.
+    totals.tokens_in += child_tokens_in;
+    totals.tokens_out += child_tokens_out;
+    totals.model_calls += child_model_calls;
+    totals.tool_calls += child_tool_calls;
     totals
 }
 
@@ -347,6 +363,25 @@ fn child_agent_name(tool_name: &str) -> Option<&str> {
         return None;
     }
     Some(child)
+}
+
+/// The cost of one model call in micro-USD, applying the authoritative
+/// accounting rule: a provider-reported cost carried in `Usage.extra` (the
+/// router's actual bill) wins over the manifest tier price, which is itself a
+/// fallback for a call whose provider reported nothing. An unpriced tier with
+/// no reported cost contributes zero (explicitly unknown, never a wrong guess).
+pub(crate) fn model_call_cost_micro_usd(
+    pricing: &Pricing,
+    selector: &str,
+    usage: &huggr_core::Usage,
+) -> u64 {
+    if let Some(usd) = usage.extra.get("cost").and_then(serde_json::Value::as_f64)
+        && usd.is_finite()
+        && usd >= 0.0
+    {
+        return (usd * 1_000_000.0).round() as u64;
+    }
+    pricing.cost_micro_usd(selector, usage.input_tokens, usage.output_tokens)
 }
 
 fn duration_stats(mut durations: Vec<u64>) -> DurationStats {

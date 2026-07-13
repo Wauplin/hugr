@@ -219,7 +219,10 @@ impl ScratchBackend for FsScratch {
         if let Some(parent_id) = parent {
             let parent_scratch = self.final_path(parent_id);
             if parent_scratch.exists() {
-                copy_tree(&parent_scratch, &working)?;
+                // Seed working state but not `out/`: those files were already
+                // delivered as the parent's outbound blobs, and re-seeding them
+                // would make every follow-up re-emit its ancestors' outputs.
+                copy_tree_excluding_top(&parent_scratch, &working, crate::blobs::OUT_DIRNAME)?;
             } else {
                 fs::create_dir_all(&working)?;
             }
@@ -356,9 +359,14 @@ impl ScratchBackend for MemScratch {
     async fn prepare(&self, parent: Option<&TraceId>) -> Result<ScratchHandle, std::io::Error> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         let handle = ScratchHandle::new(format!("mem-{n}"));
-        let seed = parent
+        let out_prefix = format!("{}/", crate::blobs::OUT_DIRNAME);
+        // Same rule as `FsScratch`: never seed `out/` into a follow-up.
+        let seed: BTreeMap<String, Vec<u8>> = parent
             .and_then(|id| self.finalized.lock().unwrap().get(id.as_str()).cloned())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(&out_prefix))
+            .collect();
         self.working
             .lock()
             .unwrap()
@@ -480,6 +488,25 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else if file_type.is_file() {
+            fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_tree_excluding_top(from: &Path, to: &Path, exclude: &str) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        if entry.file_name() == exclude {
+            continue;
+        }
         let file_type = entry.file_type()?;
         let src = entry.path();
         let dst = to.join(entry.file_name());

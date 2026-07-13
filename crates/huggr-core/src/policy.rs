@@ -547,7 +547,20 @@ impl TurnPolicy for BudgetPolicy {
             &self.keep_last_per_tool,
         );
         plan.totals = totals_for(&plan.entries);
+        // Forget rules alone may have brought the plan back under the trigger;
+        // summarizing or dropping on top of that would be pure waste.
+        if plan.totals.used_tokens <= u64::from(self.trigger_tokens) {
+            return plan;
+        }
         let recent = recent_indices(&plan.entries, self.keep_recent_tokens);
+        // The active summary stands in for everything it replaced (those
+        // entries are Omitted); dropping it would silently lose the whole
+        // summarized history, so it is as protected as the system prompt.
+        let summary_source = active_summary(log).map(|(seq, _)| ContextSource::log_entry(seq));
+        let protected = |entry: &ContextPlanEntry| {
+            matches!(entry.source, ContextSource::System)
+                || summary_source.as_ref() == Some(&entry.source)
+        };
         if let Some(selector) = &self.summary_selector
             && let Some(up_to) = summary_cutoff(&plan.entries, &recent)
             && !has_summary_covering(log, up_to)
@@ -564,7 +577,7 @@ impl TurnPolicy for BudgetPolicy {
             if used <= target {
                 break;
             }
-            if recent.contains(&idx) || matches!(entry.source, ContextSource::System) {
+            if recent.contains(&idx) || protected(entry) {
                 continue;
             }
             let est = u64::from(entry.est_tokens);
@@ -598,7 +611,7 @@ impl TurnPolicy for BudgetPolicy {
                 if used <= target {
                     break;
                 }
-                if recent.contains(&idx) || matches!(entry.source, ContextSource::System) {
+                if recent.contains(&idx) || protected(entry) {
                     continue;
                 }
                 if matches!(
@@ -897,8 +910,101 @@ fn find_tool_result_for_call<'a>(
 }
 
 #[cfg(test)]
-mod truncation_tests {
+mod budget_tests {
     use super::*;
+    use crate::primitives::{OpId, Seq, Timestamp};
+    use crate::record::LogEntry;
+
+    fn user(seq: u64, est_tokens: u32) -> LogEntry {
+        LogEntry::new(
+            Seq(seq),
+            Timestamp(0),
+            Record::UserMessage {
+                text: format!("message {seq}"),
+                est_tokens,
+            },
+        )
+    }
+
+    fn summary(seq: u64, replaces_up_to: u64, est_tokens: u32) -> LogEntry {
+        LogEntry::new(
+            Seq(seq),
+            Timestamp(0),
+            Record::ContextSummary {
+                op: OpId(seq),
+                replaces_up_to: Seq(replaces_up_to),
+                text: "summarized history".to_string(),
+                est_tokens,
+            },
+        )
+    }
+
+    #[test]
+    fn budget_drop_loop_never_drops_the_active_summary() {
+        // Old entries the summary replaces, the summary itself, then enough
+        // fresh bulk to force the hard-drop pass past the summary.
+        let mut log = vec![user(0, 100), user(1, 100), summary(2, 1, 500)];
+        for seq in 3..40 {
+            log.push(user(seq, 900));
+        }
+        let policy = BudgetPolicy::new(2_000)
+            .with_trigger_tokens(1_000)
+            .with_keep_recent_tokens(500)
+            .with_max_block_tokens(10_000);
+        let plan = policy.project_context(&log, TokenBudget::new(2_000));
+        let summary_entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.source == ContextSource::log_entry(Seq(2)))
+            .expect("summary entry is in the plan");
+        assert!(
+            matches!(
+                summary_entry.disposition,
+                ContextDisposition::Included { .. }
+            ),
+            "active summary must survive the budget passes: {:?}",
+            summary_entry.disposition
+        );
+    }
+
+    #[test]
+    fn forget_rules_that_clear_the_trigger_skip_summary_and_drops() {
+        // One stale tool result is the only reason the raw plan exceeds the
+        // trigger; the forget rule removes it, so nothing may be dropped and
+        // no summary requested.
+        let mut log = vec![user(0, 200)];
+        for round in 0..3u64 {
+            let base = 1 + round * 2;
+            log.push(LogEntry::new(
+                Seq(base),
+                Timestamp(0),
+                Record::ToolResult {
+                    op: OpId(base),
+                    name: "search".to_string(),
+                    call_id: format!("call-{round}"),
+                    result: Value::String("x".repeat(100)),
+                    est_tokens: 2_000,
+                },
+            ));
+            log.push(user(base + 1, 100));
+        }
+        let policy = BudgetPolicy::new(20_000)
+            .with_trigger_tokens(3_000)
+            .with_keep_recent_tokens(200)
+            .with_max_block_tokens(10_000)
+            .with_tool_ttl(BTreeMap::from([("search".to_string(), 1u32)]))
+            .with_summary_selector(ModelSelector::named("medium"));
+        let plan = policy.project_context(&log, TokenBudget::new(20_000));
+        assert!(plan.wants_summary.is_none(), "forgetting already sufficed");
+        assert!(
+            plan.entries.iter().all(|entry| !matches!(
+                &entry.disposition,
+                ContextDisposition::Dropped { note: Some(note) }
+                    if note.contains("budget policy")
+            )),
+            "nothing may be budget-dropped once forgetting clears the trigger"
+        );
+    }
 
     #[test]
     fn truncation_reduces_non_text_tool_payloads() {

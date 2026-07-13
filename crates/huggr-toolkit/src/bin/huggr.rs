@@ -448,17 +448,37 @@ fn run_typed_definition(
     let status = std::process::Command::new(&outcome.binary)
         .args(argv)
         .status();
-    if let Err(err) = status {
-        print_answer(
-            &error_answer(
-                format!(
-                    "running typed response shim {}: {err}",
-                    outcome.binary.display()
+    match status {
+        Err(err) => {
+            print_answer(
+                &error_answer(
+                    format!(
+                        "running typed response shim {}: {err}",
+                        outcome.binary.display()
+                    ),
+                    started,
                 ),
-                started,
-            ),
-            pretty,
-        );
+                pretty,
+            );
+        }
+        // The shim inherits stdout and prints its own Answer on the success
+        // path (exit 0). A non-zero exit means it crashed before or instead of
+        // printing one, so surface an infrastructure error answer and exit
+        // non-zero rather than silently reporting success with no Answer.
+        Ok(code) if !code.success() => {
+            print_answer(
+                &error_answer(
+                    format!(
+                        "typed response shim {} exited with {code}",
+                        outcome.binary.display()
+                    ),
+                    started,
+                ),
+                pretty,
+            );
+            std::process::exit(code.code().unwrap_or(1));
+        }
+        Ok(_) => {}
     }
 }
 

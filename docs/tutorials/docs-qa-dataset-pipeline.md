@@ -197,11 +197,13 @@ generated = huglet_datasmith.ask(str(DOCS), f"Generate {COUNT} question/answer p
 dataset = generated.response
 STAGED.write_text("".join(json.dumps(asdict(item)) + "\n" for item in dataset.items))
 
-api.create_repo(REPO_ID, repo_type="dataset", exist_ok=True)
+api.create_repo(REPO_ID, repo_type="dataset", exist_ok=True, private=True)
 published = librarian.ask(f"Publish the staged docs-QA dataset to {REPO_ID}.")
 
 cost = generated.metadata.cost_micro_usd + published.metadata.cost_micro_usd
 ```
+
+The repo is created private by default. The synthesized Q&A includes source file names, so a run against internal docs would otherwise publish them publicly; set `private=False` deliberately when the dataset is meant to be public.
 
 ## Run the pipeline
 

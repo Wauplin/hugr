@@ -133,8 +133,16 @@ impl Capability for MemoryWrite {
         let file_lock = self.0.acquire_file_lock();
         let result = (|| {
             let path = self.0.resolve_for_write(rel)?;
-            fs::write(&path, content.as_bytes())
+            // Write atomically: a unique temp file then rename over the target,
+            // so a concurrent reader sees either the old or the new content,
+            // never a torn write (the cross-process lock can fail open).
+            let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+            fs::write(&tmp, content.as_bytes())
                 .map_err(|e| format!("failed to write memory file {rel}: {e}"))?;
+            if let Err(e) = fs::rename(&tmp, &path) {
+                let _ = fs::remove_file(&tmp);
+                return Err(format!("failed to install memory file {rel}: {e}"));
+            }
             let root = self
                 .0
                 .root

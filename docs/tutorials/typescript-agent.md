@@ -46,7 +46,7 @@ const config: AgentConfig = {
 - `name` names the agent's state home (`~/.huggr/<name>/` by default), just like `[agent]` name.
 - `models` chooses a default from the fixed `fast`, `balanced`, `powerful`, and `max` tiers, and may contain concrete author overrides.
 - `limits` (`LimitsConfig`) is optional and caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`. An agent has no limits by default; each unset key is unbounded.
-- `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host.
+- `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host. The forget maps `tool_ttl` and `keep_last_per_tool` sit directly on `ContextConfig` here, matching the WASM brain's decoder; this is intentionally flatter than the TOML manifest, which nests them under `[context.forget]`.
 - The built-in catalog uses the Hugging Face router and `HF_TOKEN`. Pass `{ modelCatalog: { providers, models } }` as the second argument to `createAgent` for an explicit Node or browser host override. A browser provider may include `api_key` directly; Node normally resolves `api_key_env` from `process.env`. Key values never appear in output.
 
 The `default` tier is what the brain selects when no component requests another tier. `Agent.resolvedModels()` returns the effective four-tier mapping after runtime and `HUGGR_MODEL_<TIER>` overrides. See [Models, providers, and pricing](../concepts/models-and-pricing.md).
@@ -105,7 +105,7 @@ console.log(answer.metadata.model_calls);      // number
 
 The `Answer` has the same shape on every surface. It contains `status` (`"success"` or `"error"`), `response` (a `Record<string, Json>` object), `trace_id`, optional `blobs`, and `metadata: AnswerMeta`. Metadata contains `duration_ms`, `cost_micro_usd`, `tokens_in`, `tokens_out`, `model_calls`, and `tool_calls`.
 
-Turn failures such as a blown limit, missing final model text, or timeout return an error answer with `response.error` set. Configuration, storage, WASM loading, and runaway-session failures throw exceptions.
+Run errors are answers, not exceptions: a blown limit, missing final model text, or timeout ends `ask`/`run` with an error answer (`status: "error"`, `response.error` set) rather than throwing. Failures outside a run still throw as ordinary exceptions: an invalid config, storage or WASM-loading errors, a runaway session, a `feedback` call for an unknown trace, and `verify` on a drifting trace.
 
 ## Stream with `agent.run`
 

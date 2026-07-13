@@ -87,8 +87,11 @@ def main() -> None:
     print(f"      {len(dataset.items)} pairs, coverage: {dataset.coverage}")
     STAGED.write_text("".join(json.dumps(asdict(item)) + "\n" for item in dataset.items))
 
-    print(f"[2/2] hf-librarian: publishing to {REPO_ID}...")
-    api.create_repo(REPO_ID, repo_type="dataset", exist_ok=True)
+    print(f"[2/2] hf-librarian: publishing to {REPO_ID} (private)...")
+    # Private by default: the synthesized Q&A echoes source file names, so a
+    # run against internal docs must not publish publicly. Flip to
+    # private=False deliberately when the dataset is meant to be public.
+    api.create_repo(REPO_ID, repo_type="dataset", exist_ok=True, private=True)
     published = librarian.ask(f"Publish the staged docs-QA dataset to {REPO_ID}.")
     if not published.ok:
         sys.exit(f"librarian failed (trace {published.trace_id}): {published.response.get('error')}")

@@ -63,6 +63,13 @@ impl ChunkSink {
     pub fn chunk(&self, chunk: Value) {
         let _ = self.tx.send(Event::CapabilityChunk { op: self.op, chunk });
     }
+
+    /// A sink that drops every chunk — for invoking a capability outside an
+    /// engine (tests, one-off host calls).
+    pub fn noop() -> Self {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        Self { op: OpId(0), tx }
+    }
 }
 
 /// Maps capability names to their implementations.
@@ -79,9 +86,18 @@ impl CapabilityRegistry {
         Self::default()
     }
 
-    /// Register a capability under its own [`Capability::name`].
+    /// Register a capability under its own [`Capability::name`]. A duplicate
+    /// name shadows the earlier registration (last-wins); this is warned about
+    /// because it silently changes the advertised runtime (e.g. a Python tool
+    /// masking a manifest-granted library tool).
     pub fn register(&mut self, capability: Arc<dyn Capability>) {
-        self.map.insert(capability.name().to_string(), capability);
+        let name = capability.name().to_string();
+        if self.map.contains_key(&name) {
+            eprintln!(
+                "warning: capability `{name}` registered twice; the later one shadows the earlier"
+            );
+        }
+        self.map.insert(name, capability);
     }
 
     /// Look a capability up by name.
@@ -106,27 +122,37 @@ impl CapabilityRegistry {
         }
     }
 
-    /// The schemas of all registered capabilities (advertised to the model).
+    /// The schemas of all registered capabilities (advertised to the model),
+    /// sorted by name so the tool ordering is identical across processes for
+    /// the same agent definition.
     pub fn schemas(&self) -> Vec<ToolSchema> {
-        self.map.values().map(|c| c.schema()).collect()
+        let mut caps: Vec<_> = self.map.values().collect();
+        caps.sort_by(|a, b| a.name().cmp(b.name()));
+        caps.into_iter().map(|c| c.schema()).collect()
     }
 
-    /// The names of capabilities that require a permission round-trip.
+    /// The names of capabilities that require a permission round-trip, sorted.
     pub fn permissioned_names(&self) -> Vec<String> {
-        self.map
+        let mut names: Vec<String> = self
+            .map
             .values()
             .filter(|c| c.requires_permission())
             .map(|c| c.name().to_string())
-            .collect()
+            .collect();
+        names.sort();
+        names
     }
 
     /// The names of capabilities that run in the background (do not block the
-    /// model turn).
+    /// model turn), sorted.
     pub fn background_names(&self) -> Vec<String> {
-        self.map
+        let mut names: Vec<String> = self
+            .map
             .values()
             .filter(|c| c.runs_in_background())
             .map(|c| c.name().to_string())
-            .collect()
+            .collect();
+        names.sort();
+        names
     }
 }

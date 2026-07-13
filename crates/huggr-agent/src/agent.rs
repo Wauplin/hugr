@@ -1103,7 +1103,7 @@ fn meta_from_trace(
             meta.tokens_in += usage.input_tokens;
             meta.tokens_out += usage.output_tokens;
             meta.cost_micro_usd +=
-                pricing.cost_micro_usd(&selector.0, usage.input_tokens, usage.output_tokens);
+                crate::analytics::model_call_cost_micro_usd(pricing, &selector.0, usage);
         } else if op.model.is_none() {
             meta.tool_calls += 1;
         }

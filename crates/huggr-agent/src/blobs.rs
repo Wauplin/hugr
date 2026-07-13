@@ -155,6 +155,52 @@ pub enum BlobError {
     Scratch(String),
 }
 
+/// Screen blob handles arriving from a model-controlled boundary (agent-as-tool,
+/// `delegate`, MCP `ask`) before they are forwarded or materialized.
+///
+/// `Bytes` is always accepted: inline data grants nothing the caller did not
+/// already have. `Sha256` must be a well-formed content address so it cannot
+/// traverse the blob store. `Path` names an orchestrator-local file; a model
+/// may only use it for files under `readable_roots` (the jails the calling
+/// agent's own read grants cover), so delegation never widens read access.
+pub fn validate_model_blobs(
+    blobs: &[BlobHandle],
+    readable_roots: &[std::path::PathBuf],
+) -> Result<(), String> {
+    for handle in blobs {
+        match &handle.blob_ref {
+            BlobRef::Bytes { .. } => {}
+            BlobRef::Sha256 { sha256 } => {
+                if !is_content_address(sha256) {
+                    return Err(format!(
+                        "invalid blob content address `{sha256}` (expected `sha256:` followed by 64 hex digits)"
+                    ));
+                }
+            }
+            BlobRef::Path { path } => {
+                let resolved = std::fs::canonicalize(path)
+                    .map_err(|e| format!("blob path `{path}` is not readable: {e}"))?;
+                let allowed = readable_roots.iter().any(|root| {
+                    std::fs::canonicalize(root).is_ok_and(|root| resolved.starts_with(&root))
+                });
+                if !allowed {
+                    return Err(format!(
+                        "blob path `{path}` is outside this agent's readable roots; pass the content as a `bytes` or `sha256` blob instead"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `sha256:` followed by exactly 64 hex digits — the only shape the store emits.
+fn is_content_address(address: &str) -> bool {
+    address
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Materialize every inbound blob into `working` (the ask's scratch working
 /// directory) before the turn starts.
 pub(crate) async fn materialize_inbound(

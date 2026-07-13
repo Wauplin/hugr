@@ -98,14 +98,14 @@ There is no per-request HTTP timeout in the adapter; wall-clock bounds belong to
 
 ## Cost accounting
 
-`AnswerMeta` is mandatory on every answer, and its `cost_micro_usd` comes from arithmetic over the trace: for each ended model op, `input_tokens × input_usd_per_m_tokens + output_tokens × output_usd_per_m_tokens`, using the resolved tier prices embedded in the running configuration, rounded to the nearest micro-USD. Tokens come from the provider's returned usage, not estimates.
+`AnswerMeta` is mandatory on every answer, and its `cost_micro_usd` is folded over the trace's ended model ops using one authoritative rule per call, in order: a provider-reported cost (the router's actual bill, when the response carries one), then the resolved tier price (`input_tokens × input_usd_per_m_tokens + output_tokens × output_usd_per_m_tokens`) embedded in the running configuration, rounded to the nearest micro-USD. A call with neither contributes zero (explicitly unknown, never a wrong guess). Tokens come from the provider's returned usage, not estimates.
 
 Consequences worth knowing:
 
-- **Omitted prices mean zero cost**, not an error. Tokens and call counts are still reported; only the dollars are missing. Set both prices on every tier you care to account for.
+- **A provider-reported cost wins over the table.** When the upstream router returns a cost (stashed in the usage `extra` with `cost_source: "router"`), that actual figure is billed; the resolved tier price is the fallback for a call the provider did not price. `huggr stats` and `AnswerMeta` apply the same rule, so they agree.
+- **Omitted prices with no reported cost mean zero cost**, not an error. Tokens and call counts are still reported; only the dollars are missing. Set both prices on every tier you care to account for.
 - **A resumed ask bills only its new work.** The fold starts at the resume baseline, so re-asking an old trace never re-bills its ancestry.
-- **Delegated cost folds up.** A child agent's `AnswerMeta` merges into the parent's cost, tokens, and call counts (not duration, which the parent's wall clock already covers), so an orchestrator's cost line is complete. `huggr stats` separates own from delegated cost when reporting.
-- The upstream router may also report its own cost figure; it is kept as host-side metrics in the usage `extra` and never feeds `AnswerMeta`. The resolved catalog prices are the accounting source of truth for that run.
+- **Delegated cost folds up.** A child agent's `AnswerMeta` merges into the parent's cost, tokens, and call counts (not duration, which the parent's wall clock already covers), so an orchestrator's cost line is complete. `huggr stats` separates own from delegated cost when reporting, and its token and call totals fold the child in the same way.
 
 Micro-USD (1 USD = 1,000,000) keeps the arithmetic in integers; user-facing reports print USD and show `<$0.01` for nonzero dust.
 

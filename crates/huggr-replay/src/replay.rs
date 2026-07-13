@@ -29,7 +29,7 @@ pub struct Replay {
 /// (`needs_permission`, `is_background`), so reconstructing the exact
 /// command/log sequence requires the *same* policy, not just the recorded
 /// events. If the trace captured its policy ([`Trace::with_policy`]), this
-/// decodes it via [`decode_policy`]; otherwise it falls back to the default.
+/// decodes it via [`policy_from_trace`]; otherwise it falls back to the default.
 /// Use [`replay_with_policy`] to supply a custom one.
 pub fn replay(trace: &Trace) -> Replay {
     replay_with_policy(trace, policy_from_trace(trace))
@@ -40,7 +40,7 @@ pub fn replay_with_registry(trace: &Trace, registry: &PolicyRegistry) -> Replay 
 }
 
 /// Reconstruct the [`TurnPolicy`] a trace was recorded under: decode the
-/// captured [`StaticPolicy`] config if present (via [`decode_policy`]), else
+/// captured [`StaticPolicy`] config if present (via [`policy_from_trace`]), else
 /// the default.
 ///
 /// This is the policy a faithful replay or resume must run under — the brain

@@ -80,8 +80,12 @@ impl FeedbackBackend for FsFeedbackStore {
 
     async fn list(&self, trace_id: &TraceId) -> Result<Vec<Feedback>, FeedbackError> {
         let path = self.path(trace_id);
-        let Ok(src) = fs::read_to_string(path) else {
-            return Ok(Vec::new());
+        // A missing sidecar is "no feedback yet"; any other read error
+        // (permissions, corruption) is surfaced rather than hidden as empty.
+        let src = match fs::read_to_string(&path) {
+            Ok(src) => src,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(FeedbackError::Store(err.to_string())),
         };
         src.lines()
             .filter(|line| !line.trim().is_empty())

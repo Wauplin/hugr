@@ -380,8 +380,11 @@ pub(crate) async fn run_model_op(
     tx: UnboundedSender<Event>,
 ) {
     let sink = ModelSink::new(op, tx.clone());
-    let event = match adapter.call(request, &sink).await {
-        Ok((output, usage)) => {
+    // A panicking adapter must still resolve its op — otherwise the op stays
+    // in flight forever and `drive_to_idle` never returns.
+    let call = std::panic::AssertUnwindSafe(adapter.call(request, &sink));
+    let event = match futures_util::FutureExt::catch_unwind(call).await {
+        Ok(Ok((output, usage))) => {
             let est_tokens = model_output_est_tokens(&output, &usage);
             Event::ModelDone {
                 op,
@@ -390,12 +393,27 @@ pub(crate) async fn run_model_op(
                 est_tokens,
             }
         }
-        Err(error) => Event::ModelError {
+        Ok(Err(error)) => Event::ModelError {
             op,
             error: json!({ "message": error.to_string() }),
         },
+        Err(panic) => Event::ModelError {
+            op,
+            error: json!({ "message": format!("model adapter panicked: {}", panic_message(&*panic)) }),
+        },
     };
     let _ = tx.send(event);
+}
+
+/// Best-effort text of a caught panic payload.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        message
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message
+    } else {
+        "<non-string panic payload>"
+    }
 }
 
 /// The error event for a model selector with no registered adapter.
@@ -416,17 +434,27 @@ pub(crate) async fn run_capability_op(
     tx: UnboundedSender<Event>,
 ) {
     let sink = ChunkSink::new(op, tx.clone());
-    let event = match capability.invoke(args, &sink).await {
-        Ok(result) => Event::CapabilityDone {
+    let invoke = std::panic::AssertUnwindSafe(capability.invoke(args, &sink));
+    let event = match futures_util::FutureExt::catch_unwind(invoke).await {
+        Ok(Ok(result)) => Event::CapabilityDone {
             op,
             est_tokens: estimate_value_tokens(&result),
             result,
         },
-        Err(error) => Event::CapabilityError {
+        Ok(Err(error)) => Event::CapabilityError {
             op,
             est_tokens: estimate_value_tokens(&error),
             error,
         },
+        Err(panic) => {
+            let error =
+                json!({ "error": format!("capability panicked: {}", panic_message(&*panic)) });
+            Event::CapabilityError {
+                op,
+                est_tokens: estimate_value_tokens(&error),
+                error,
+            }
+        }
     };
     let _ = tx.send(event);
 }
@@ -603,7 +631,8 @@ impl EngineBuilder {
     /// Resuming implies recording (so the continued session can be re-saved as a
     /// trace that still verifies bit-for-bit): the recorder is pre-loaded with
     /// the trace's events, and any new events are appended after them. The
-    /// session's `TurnPolicy` is restored from the trace ([`policy_from_trace`])
+    /// session's `TurnPolicy` is restored from the trace
+    /// ([`policy_from_trace`](huggr_replay::policy_from_trace))
     /// so the continued session branches identically; a trace without a captured
     /// policy falls back to the default.
     pub fn resume(mut self, trace: Trace) -> Self {

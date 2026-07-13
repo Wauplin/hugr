@@ -260,6 +260,55 @@ async fn identical_outbound_blobs_dedupe_by_hash() {
     assert_eq!(count, 2, "two distinct objects for three files (dedup)");
 }
 
+#[tokio::test]
+async fn a_resumed_ask_does_not_re_emit_the_parents_outbound_blobs() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let parent_agent = agent(
+        store.clone(),
+        vec![
+            ModelOutput::tool_calls(vec![
+                write_call("c1", "notes/working.md", "keep me"),
+                write_call("c2", "out/report.md", "deliverable"),
+            ]),
+            ModelOutput::text("done"),
+        ],
+    );
+    let parent = parent_agent
+        .ask(Ask::new("produce a report"))
+        .await
+        .unwrap();
+    assert_eq!(parent.blobs.len(), 1);
+
+    // The follow-up writes one new output; working state is inherited but the
+    // parent's delivered `out/` files must not come back on this answer.
+    let child_agent = agent(
+        store.clone(),
+        vec![
+            ModelOutput::tool_calls(vec![
+                read_call("c1", "notes/working.md"),
+                write_call("c2", "out/second.md", "new deliverable"),
+            ]),
+            ModelOutput::text("done"),
+        ],
+    );
+    let ask = Ask {
+        trace_id: Some(parent.trace_id.clone()),
+        ..Ask::new("follow up")
+    };
+    let child = child_agent.ask(ask).await.unwrap();
+
+    let reads = tool_results(&store, &child.trace_id, "scratch_read");
+    assert_eq!(reads[0]["content"], serde_json::json!("keep me"));
+    assert_eq!(
+        child.blobs.len(),
+        1,
+        "only this ask's own output is swept: {:?}",
+        child.blobs
+    );
+    assert_eq!(child.blobs[0].name.as_deref(), Some("second.md"));
+}
+
 #[cfg(unix)]
 fn assert_same_inode(a: &std::path::Path, b: &std::path::Path) {
     use std::os::unix::fs::MetadataExt;

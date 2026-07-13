@@ -16,6 +16,7 @@
 //! `AnswerMeta` — the orchestrator's cost line stays complete.
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -41,6 +42,10 @@ pub struct AgentToolSpec {
     pub name: String,
     pub description: String,
     pub resolver: AgentToolResolver,
+    /// Directory roots the *calling* agent may already read. A model-supplied
+    /// `Path` blob ref outside these is rejected before the child runs, so
+    /// delegation never widens filesystem access (empty = no `Path` refs).
+    pub readable_roots: Vec<PathBuf>,
 }
 
 impl AgentToolSpec {
@@ -53,7 +58,15 @@ impl AgentToolSpec {
             name: name.into(),
             description: description.into(),
             resolver,
+            readable_roots: Vec::new(),
         }
+    }
+
+    /// Allow model-supplied `Path` blob refs under these roots (the caller's
+    /// own read jails).
+    pub fn with_readable_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.readable_roots = roots;
+        self
     }
 
     /// The tool schema the calling model sees — shared by the runtime capability
@@ -76,8 +89,20 @@ fn agent_tool_schema(name: &str, description: &str) -> ToolSchema {
                 "trace_id": { "type": "string", "description": "Resume/fork the huglet's prior trace (from an earlier Answer)." },
                 "blobs": {
                     "type": "array",
-                    "description": "Blob handles to forward to the huglet.",
-                    "items": { "type": "object" }
+                    "description": "Blob handles to forward to the huglet. A `path` ref is only accepted for files this agent can already read; use `bytes` or `sha256` otherwise.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "ref": {
+                                "type": "object",
+                                "description": "One of {\"kind\":\"bytes\",\"base64\":\"…\"}, {\"kind\":\"sha256\",\"sha256\":\"sha256:<64 hex>\"}, or {\"kind\":\"path\",\"path\":\"…\"} (path must be inside a readable root)."
+                            },
+                            "media_type": { "type": "string", "description": "IANA media type of the payload." },
+                            "name": { "type": "string", "description": "Suggested file name inside the huglet's scratchpad." }
+                        },
+                        "required": ["ref", "media_type"],
+                        "additionalProperties": false
+                    }
                 }
             },
             "required": ["question"],
@@ -92,6 +117,7 @@ pub(crate) struct AgentTool {
     name: String,
     description: String,
     resolver: AgentToolResolver,
+    readable_roots: Vec<PathBuf>,
     /// Child answer metas from this ask's invocations, folded into the parent's
     /// `AnswerMeta` after the turn.
     spend: Arc<Mutex<Vec<AnswerMeta>>>,
@@ -103,6 +129,7 @@ impl AgentTool {
             name: spec.name.clone(),
             description: spec.description.clone(),
             resolver: spec.resolver.clone(),
+            readable_roots: spec.readable_roots.clone(),
             spend,
         }
     }
@@ -127,6 +154,8 @@ impl Capability for AgentTool {
     async fn invoke(&self, args: Value, _sink: &ChunkSink) -> Result<Value, Value> {
         let ask: Ask = serde_json::from_value(args)
             .map_err(|e| json!({ "error": format!("invalid ask for agent tool: {e}") }))?;
+        crate::blobs::validate_model_blobs(&ask.blobs, &self.readable_roots)
+            .map_err(|e| json!({ "error": e }))?;
         match (self.resolver)(ask).await {
             Ok(answer) => {
                 self.spend.lock().unwrap().push(answer.metadata.clone());
@@ -148,4 +177,119 @@ pub fn depth_exceeded_resolver(child: String) -> AgentToolResolver {
             ))
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::{BlobHandle, BlobRef};
+
+    fn echo_resolver(calls: Arc<Mutex<u32>>) -> AgentToolResolver {
+        Arc::new(move |_ask: Ask| {
+            let calls = calls.clone();
+            Box::pin(async move {
+                *calls.lock().unwrap() += 1;
+                Ok(Answer::default())
+            })
+        })
+    }
+
+    fn ask_args_with_blob(blob_ref: BlobRef) -> Value {
+        serde_json::to_value(Ask {
+            question: "q".into(),
+            blobs: vec![BlobHandle {
+                blob_ref,
+                media_type: "text/plain".into(),
+                name: None,
+            }],
+            ..Ask::default()
+        })
+        .unwrap()
+    }
+
+    async fn invoke_with(roots: Vec<PathBuf>, blob_ref: BlobRef) -> (Result<Value, Value>, u32) {
+        let calls = Arc::new(Mutex::new(0));
+        let spec = AgentToolSpec::new("agent_x", "child", echo_resolver(calls.clone()))
+            .with_readable_roots(roots);
+        let tool = AgentTool::new(&spec, Arc::new(Mutex::new(Vec::new())));
+        let sink = ChunkSink::noop();
+        let result = tool.invoke(ask_args_with_blob(blob_ref), &sink).await;
+        let count = *calls.lock().unwrap();
+        (result, count)
+    }
+
+    #[tokio::test]
+    async fn path_blob_outside_readable_roots_is_rejected_before_the_child_runs() {
+        let (result, calls) = invoke_with(
+            Vec::new(),
+            BlobRef::Path {
+                path: "/etc/passwd".into(),
+            },
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert!(err["error"].as_str().unwrap().contains("outside"), "{err}");
+        assert_eq!(calls, 0);
+    }
+
+    #[tokio::test]
+    async fn path_blob_inside_a_readable_root_is_forwarded() {
+        let dir = std::env::temp_dir().join(format!("huggr-agent-tool-in-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("input.txt");
+        std::fs::write(&file, b"data").unwrap();
+        let (result, calls) = invoke_with(
+            vec![dir.clone()],
+            BlobRef::Path {
+                path: file.display().to_string(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(calls, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn traversal_out_of_a_readable_root_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("huggr-agent-tool-esc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let jail = dir.join("jail");
+        std::fs::create_dir_all(&jail).unwrap();
+        std::fs::write(dir.join("secret.txt"), b"s").unwrap();
+        let escape = format!("{}/../secret.txt", jail.display());
+        let (result, calls) = invoke_with(vec![jail], BlobRef::Path { path: escape }).await;
+        assert!(result.is_err());
+        assert_eq!(calls, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_sha256_is_rejected() {
+        let (result, calls) = invoke_with(
+            Vec::new(),
+            BlobRef::Sha256 {
+                sha256: "sha256:../../outside".into(),
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(calls, 0);
+    }
+
+    #[tokio::test]
+    async fn valid_sha256_and_bytes_blobs_pass() {
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let (result, _) = invoke_with(Vec::new(), BlobRef::Sha256 { sha256: hash }).await;
+        assert!(result.is_ok());
+        let (result, _) = invoke_with(
+            Vec::new(),
+            BlobRef::Bytes {
+                base64: "aGk=".into(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
 }

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use huggr_toolkit::manifest::{
     AgentDefinition, AgentMeta, ModelsConfig, ScratchpadConfig, TierConfig, ToolGrant, ToolKind,
-    TracesConfig, MODEL_TIERS,
+    TracesConfig,
 };
 use huggr_toolkit::models::{
     default_catalog, load_global_catalog_if_exists, resolve_runtime_definition,
@@ -49,19 +49,18 @@ pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
         source_dir: None,
     };
     let mut def = def;
-    if let Some(summary_model) = def.context.summary_model.as_deref() {
-        if !MODEL_TIERS.contains(&summary_model) {
-            return Err(format!(
-                "unknown context summary model `{summary_model}`; expected fast, balanced, powerful, or max"
-            ));
-        }
-    }
     if let Some(store) = obj.get("traces").and_then(Value::as_str) {
         def.traces.store = Some(store.to_string());
     }
     if let Some(root) = obj.get("scratchpad").and_then(Value::as_str) {
         def.scratchpad.root = Some(root.to_string());
     }
+    // Run the same [context] semantic checks parse() applies to a TOML
+    // manifest (compaction mode, forget values, and the summary tier against
+    // the fixed set), so an invalid config is rejected here rather than at
+    // runtime. This subsumes the standalone summary-tier check.
+    def.validate_semantics("python agent config")
+        .map_err(|err| err.to_string())?;
     let explicit = obj
         .get("model_overrides")
         .filter(|value| !value.is_null())

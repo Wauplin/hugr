@@ -4,11 +4,14 @@ use huggr_core::{ToolSchema, Value};
 use huggr_host::{Capability, ChunkSink};
 use serde_json::json;
 
+const DEFAULT_MAX_RESPONSE_BYTES: usize = 4_000_000;
+
 /// Exa-backed web search configured with an environment-owned API key.
 pub struct WebSearch {
     client: reqwest::Client,
     api_key_env: String,
     max_results: u64,
+    max_bytes: usize,
 }
 
 impl WebSearch {
@@ -26,6 +29,11 @@ impl WebSearch {
                 .and_then(Value::as_u64)
                 .unwrap_or(10)
                 .clamp(1, 100),
+            max_bytes: config
+                .get("max_bytes")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES),
         })
     }
     async fn search(&self, args: Value) -> Result<Value> {
@@ -49,7 +57,7 @@ impl WebSearch {
         {
             body["contents"] = json!({"text":true});
         }
-        let response = self
+        let mut response = self
             .client
             .post("https://api.exa.ai/search")
             .header("x-api-key", key)
@@ -58,10 +66,21 @@ impl WebSearch {
             .await
             .context("Exa search request failed")?;
         let status = response.status();
-        let value: Value = response
-            .json()
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .context("decoding Exa search response")?;
+            .context("reading Exa search response")?
+        {
+            anyhow::ensure!(
+                bytes.len() + chunk.len() <= self.max_bytes,
+                "Exa search response exceeded {} bytes; lower `num_results` or disable `contents`",
+                self.max_bytes
+            );
+            bytes.extend_from_slice(&chunk);
+        }
+        let value: Value =
+            serde_json::from_slice(&bytes).context("decoding Exa search response")?;
         anyhow::ensure!(status.is_success(), "Exa search returned {status}: {value}");
         Ok(value)
     }

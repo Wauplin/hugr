@@ -549,7 +549,6 @@ dependencies = [
  "futures-util",
  "huggr-core",
  "huggr-replay",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -566,7 +565,6 @@ dependencies = [
  "huggr-core",
  "huggr-host",
  "reqwest",
- "serde",
  "serde_json",
  "tokio",
 ]
