@@ -47,10 +47,13 @@ async fn stats_fold_models_tools_child_cost_and_feedback() {
 
     assert_eq!(stats.ask_count, 1);
     assert_eq!(stats.feedback_count, 1);
-    assert_eq!(stats.totals.model_calls, 1);
-    assert_eq!(stats.totals.tool_calls, 2);
-    assert_eq!(stats.totals.tokens_in, 10);
-    assert_eq!(stats.totals.tokens_out, 4);
+    // Totals fold the child in, matching the `AnswerMeta` the trace returned:
+    // own model call (1) + child's (1); own tool calls (fs_read + agent_child =
+    // 2) + child's (3); own tokens (10/4) + child's (100/50).
+    assert_eq!(stats.totals.model_calls, 2);
+    assert_eq!(stats.totals.tool_calls, 5);
+    assert_eq!(stats.totals.tokens_in, 110);
+    assert_eq!(stats.totals.tokens_out, 54);
     assert_eq!(stats.totals.cost_own_micro_usd, 40);
     assert_eq!(stats.totals.cost_delegated_micro_usd, 17);
     assert_eq!(stats.totals.cost_micro_usd, 57);
@@ -179,7 +182,10 @@ fn child_answer(id: &str, cost_micro_usd: u64) -> Answer {
         blobs: Vec::new(),
         metadata: AnswerMeta {
             cost_micro_usd,
+            tokens_in: 100,
+            tokens_out: 50,
             model_calls: 1,
+            tool_calls: 3,
             ..AnswerMeta::default()
         },
         extra: Value::Null,

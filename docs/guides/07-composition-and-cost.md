@@ -97,6 +97,7 @@ The built binary has the same fold behind `--stats`. The thing to know is the **
 - A child's cost is attributed to the direct `agent_<name>` tool call that produced it, read from the recorded child `Answer.metadata`, and reported as `cost_delegated` per child name.
 - The orchestrator's **own** line reports `cost_own`; grandchildren are already folded into the child's number and are **not** re-walked.
 - So `cost_micro_usd == cost_own + cost_delegated`: one level of delegation, accounted where it was spent. This keeps the orchestrator's bill complete without recursive walks through arbitrary subtrees.
+- The token and call totals fold the child in the same way, so `huggr stats` totals match the `AnswerMeta` the trace returned (both count children); only cost keeps the own-vs-delegated split.
 
 Accounting is kept in micro-USD (`cost_micro_usd` in `AnswerMeta` and the `--json` output) for precision; the pretty table displays USD, rendering a nonzero amount under a penny as `<$0.01`.
 

@@ -268,6 +268,12 @@ fn fold_trace(
     let mut totals = StatsTotals::default();
     let mut tool_names: BTreeMap<OpId, String> = BTreeMap::new();
     let mut child_cost = 0;
+    // Children's internal tokens/calls, folded into totals so `huggr stats`
+    // matches the `AnswerMeta` this trace returned (both count children in).
+    let mut child_tokens_in = 0u64;
+    let mut child_tokens_out = 0u64;
+    let mut child_model_calls = 0u32;
+    let mut child_tool_calls = 0u32;
     let mut first_started = None;
     let mut last_ended = None;
 
@@ -280,11 +286,16 @@ fn fold_trace(
             if let Some(child_name) = child_agent_name(name)
                 && let Ok(answer) = serde_json::from_value::<Answer>(result.clone())
             {
-                child_cost += answer.metadata.cost_micro_usd;
+                let meta = &answer.metadata;
+                child_cost += meta.cost_micro_usd;
+                child_tokens_in += meta.tokens_in;
+                child_tokens_out += meta.tokens_out;
+                child_model_calls += meta.model_calls;
+                child_tool_calls += meta.tool_calls;
                 let child = children.entry(child_name.to_string()).or_default();
                 child.name = child_name.to_string();
                 child.calls += 1;
-                child.cost_delegated_micro_usd += answer.metadata.cost_micro_usd;
+                child.cost_delegated_micro_usd += meta.cost_micro_usd;
             }
         }
     }
@@ -338,6 +349,11 @@ fn fold_trace(
     };
     totals.cost_delegated_micro_usd = child_cost;
     totals.cost_micro_usd = totals.cost_own_micro_usd + totals.cost_delegated_micro_usd;
+    // Fold children's tokens/calls in, matching `AnswerMeta::merge_child`.
+    totals.tokens_in += child_tokens_in;
+    totals.tokens_out += child_tokens_out;
+    totals.model_calls += child_model_calls;
+    totals.tool_calls += child_tool_calls;
     totals
 }
 
