@@ -209,14 +209,12 @@ pub(crate) async fn materialize_inbound(
     store: &dyn BlobBackend,
 ) -> Result<(), BlobError> {
     for (index, handle) in blobs.iter().enumerate() {
-        let store_path = match &handle.blob_ref {
-            BlobRef::Sha256 { sha256 } => store.local_path(sha256).await,
-            _ => None,
-        };
-        let bytes = if store_path.is_some() {
-            Vec::new()
-        } else {
-            load_bytes(handle, store).await?
+        let (store_path, bytes) = match &handle.blob_ref {
+            BlobRef::Sha256 { sha256 } => {
+                let bytes = store.get(sha256).await?;
+                (store.local_path(sha256).await, bytes)
+            }
+            _ => (None, load_bytes(handle, store).await?),
         };
         let name = inbound_name(handle, index, &bytes)?;
         if let Some(path) = store_path {

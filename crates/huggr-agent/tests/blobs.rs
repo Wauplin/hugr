@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use huggr_agent::{Agent, Ask, BlobHandle, BlobRef, TraceStore};
+use huggr_agent::{Agent, Ask, AskError, BlobError, BlobHandle, BlobRef, TraceStore};
 use huggr_core::{ModelOutput, ModelRequest, ModelSelector, ToolCall, Usage};
 use huggr_host::{Clock, ModelAdapter, ModelSink};
 
@@ -223,6 +223,40 @@ async fn sha256_blob_hardlinks_into_scratch_when_filesystem_backed() {
 }
 
 #[tokio::test]
+async fn corrupted_sha256_blob_is_rejected_before_hardlinking() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let agent = agent(store, vec![ModelOutput::text("must not run")]);
+    let stored = agent
+        .blob_store()
+        .put(b"trusted bytes", "text/plain")
+        .unwrap();
+    let object = agent.blob_store().path_of(&stored.hash);
+    make_writable(&object);
+    std::fs::write(&object, b"corrupted bytes").unwrap();
+
+    let result = agent
+        .ask(Ask {
+            blobs: vec![handle(
+                BlobRef::Sha256 {
+                    sha256: stored.hash.clone(),
+                },
+                "text/plain",
+                "shared.txt",
+            )],
+            ..Ask::new("read shared")
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(AskError::Blob(BlobError::Store(
+            huggr_replay::TraceError::InvalidBlobHash { hash }
+        ))) if hash == stored.hash
+    ));
+}
+
+#[tokio::test]
 async fn identical_outbound_blobs_dedupe_by_hash() {
     let dir = tempdir();
     let store = TraceStore::new(dir.path());
@@ -400,6 +434,25 @@ fn restore_writable(path: &std::path::Path) {
                 restore_writable(&entry.path());
             }
         }
+    }
+}
+
+fn make_writable(path: &std::path::Path) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = meta.permissions();
+        perms.set_mode(perms.mode() | 0o200);
+        std::fs::set_permissions(path, perms).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        let mut perms = meta.permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(path, perms).unwrap();
     }
 }
 
