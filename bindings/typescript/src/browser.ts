@@ -58,14 +58,17 @@ export class IndexedDbTraceStore implements TraceStore {
     let id = base;
     let counter = 1;
     for (;;) {
-      const existing = await requestAsPromise(db.transaction(TRACES).objectStore(TRACES).getKey(id));
-      if (existing === undefined) break;
-      id = `${base}-${counter}`;
-      counter += 1;
+      (stamped.meta as Record<string, Json>).trace_id = id;
+      try {
+        const store = db.transaction(TRACES, "readwrite").objectStore(TRACES);
+        await requestAsPromise(store.add(stamped as Json, id));
+        return id;
+      } catch (error) {
+        if (!isConstraintError(error)) throw error;
+        id = `${base}-${counter}`;
+        counter += 1;
+      }
     }
-    (stamped.meta as Record<string, Json>).trace_id = id;
-    await requestAsPromise(db.transaction(TRACES, "readwrite").objectStore(TRACES).add(stamped as Json, id));
-    return id;
   }
 
   async get(id: string): Promise<Json> {
@@ -86,6 +89,10 @@ export class IndexedDbTraceStore implements TraceStore {
       .map((key, index) => headOf(String(key), values[index] as Json))
       .sort((a, b) => a.trace_id.localeCompare(b.trace_id));
   }
+}
+
+function isConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "ConstraintError";
 }
 
 export class IndexedDbFeedbackStore implements FeedbackStore {

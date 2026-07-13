@@ -204,7 +204,7 @@ import { createAgent, IndexedDbTraceStore } from "huggr-agents/browser";
 const agent = createAgent(config, { traces: new IndexedDbTraceStore("my-agent") });
 ```
 
-This wires `loadWasm(pkgUrl?)` (imports `huggr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so point at `models.api_key` directly.
+This wires `loadWasm(pkgUrl?)` (imports `huggr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so point at `models.api_key` directly. Trace writes claim their content-derived key with an atomic IndexedDB `add`; concurrent tabs that collide retry with `-N` suffixes without overwriting or failing the ask.
 
 The root export's in-memory stores (`MemTraceStore`, `MemFeedbackStore`) are the reference implementation of the storage seam and double as the "how to write a backend" example; if you want to store traces somewhere neither fs nor IndexedDB covers (a remote service, your app's database), implement `TraceStore`:
 

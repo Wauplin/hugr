@@ -3,10 +3,14 @@ import { after, before, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
 
 import { Agent, MemTraceStore, MemFeedbackStore } from "../dist/index.js";
+import { IndexedDbTraceStore } from "../dist/browser.js";
 import { loadWasm, FsTraceStore, FsFeedbackStore, createAgent } from "../dist/node.js";
 import { MockOpenAi } from "./mock_openai.mjs";
+
+globalThis.indexedDB = fakeIndexedDb;
 
 let server;
 before(async () => {
@@ -257,6 +261,29 @@ test("fs stores reject trace path traversal", async () => {
   await assert.rejects(() => traces.get("../outside"), /invalid trace id/);
   await assert.rejects(() => feedback.list("../outside"), /invalid trace id/);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("indexeddb trace collision suffixes are allocated atomically", async () => {
+  const agentName = `indexeddb-collision-${Date.now()}-${Math.random()}`;
+  const firstStore = new IndexedDbTraceStore(agentName);
+  const secondStore = new IndexedDbTraceStore(agentName);
+  const trace = { meta: {}, events: [], commands: [], log: [], blobs: { refs: [] } };
+  const header = {
+    agent_name: "browser-test",
+    agent_version: "0.0.0",
+    question: "same question",
+    status: "success",
+  };
+
+  const ids = await Promise.all([
+    firstStore.put(trace, header),
+    secondStore.put(trace, header),
+  ]);
+
+  assert.equal(new Set(ids).size, 2);
+  const [base, suffixed] = [...ids].sort((a, b) => a.length - b.length);
+  assert.equal(suffixed, `${base}-1`);
+  assert.deepEqual((await firstStore.list()).map((head) => head.trace_id).sort(), ids.sort());
 });
 
 test("timeout interrupts a running tool and records cancellation", async () => {
