@@ -137,9 +137,7 @@ impl LimitState {
 
     /// Fold a completed call's cost into the running total.
     fn record_cost(&self, selector: &str, usage: &Usage) {
-        let cost = self
-            .pricing
-            .cost_micro_usd(selector, usage.input_tokens, usage.output_tokens);
+        let cost = crate::analytics::model_call_cost_micro_usd(&self.pricing, selector, usage);
         if cost > 0 {
             self.cost_micro_usd.fetch_add(cost, Ordering::SeqCst);
         }

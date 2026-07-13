@@ -31,6 +31,13 @@ impl LoopingModel {
             calls: AtomicU64::new(0),
         })
     }
+
+    fn with_reported_cost(cost_usd: f64) -> Arc<ReportedCostLoopingModel> {
+        Arc::new(ReportedCostLoopingModel {
+            calls: AtomicU64::new(0),
+            cost_usd,
+        })
+    }
 }
 
 #[async_trait]
@@ -45,6 +52,30 @@ impl ModelAdapter for LoopingModel {
         sink.tool_call_start(id.clone(), "noop");
         let output = ModelOutput::tool_calls(vec![ToolCall::new(id, "noop", json!({}))]);
         Ok((output, Usage::new(7, 3)))
+    }
+}
+
+struct ReportedCostLoopingModel {
+    calls: AtomicU64,
+    cost_usd: f64,
+}
+
+#[async_trait]
+impl ModelAdapter for ReportedCostLoopingModel {
+    async fn call(
+        &self,
+        _request: ModelRequest,
+        sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        let id = format!("call-{n}");
+        sink.tool_call_start(id.clone(), "noop");
+        let output = ModelOutput::tool_calls(vec![ToolCall::new(id, "noop", json!({}))]);
+        let usage = Usage::new(7, 3).with_extra(json!({
+            "cost": self.cost_usd,
+            "cost_source": "router",
+        }));
+        Ok((output, usage))
     }
 }
 
@@ -169,6 +200,35 @@ async fn max_cost_trips_after_the_running_total_crosses_the_bound() {
     );
     assert_eq!(answer.metadata.model_calls, 2);
     assert_eq!(answer.metadata.cost_micro_usd, 58);
+    huggr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn max_cost_uses_provider_reported_cost_for_an_unpriced_tier() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let agent = {
+        let mut agent = Agent::new("reported-cost-agent", "0.1.0", store.clone());
+        agent.models.push((
+            ModelSelector::named("medium"),
+            LoopingModel::with_reported_cost(0.000_050),
+        ));
+        agent.capabilities.push(Arc::new(NoopTool));
+        agent.system_prompt = Some("You loop.".into());
+        agent.clock = Some(deterministic_clock());
+        agent.limits = AgentLimits::new().with_max_cost_micro_usd(40);
+        agent
+    };
+
+    let answer = agent.ask(Ask::new("go")).await.unwrap();
+
+    assert_eq!(answer.status, STATUS_ERROR);
+    assert_eq!(
+        limit_reason(&answer),
+        ("max_cost_micro_usd".to_string(), 40)
+    );
+    assert_eq!(answer.metadata.model_calls, 1);
+    assert_eq!(answer.metadata.cost_micro_usd, 50);
     huggr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
 }
 
