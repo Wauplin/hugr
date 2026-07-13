@@ -274,7 +274,10 @@ async fn a_resumed_ask_does_not_re_emit_the_parents_outbound_blobs() {
             ModelOutput::text("done"),
         ],
     );
-    let parent = parent_agent.ask(Ask::new("produce a report")).await.unwrap();
+    let parent = parent_agent
+        .ask(Ask::new("produce a report"))
+        .await
+        .unwrap();
     assert_eq!(parent.blobs.len(), 1);
 
     // The follow-up writes one new output; working state is inherited but the

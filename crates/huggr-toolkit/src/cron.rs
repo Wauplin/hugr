@@ -89,7 +89,15 @@ fn parse_cron(schedule: &str) -> Result<Cron, String> {
 
 async fn run_job_loop(agent: huggr_agent::Agent, job: CronJobConfig, schedule: Cron) {
     let running = Arc::new(AtomicBool::new(false));
-    let chain_parent = Arc::new(Mutex::new(None));
+    let recovered = if job.lineage == "chain" {
+        recover_chain_parent(&agent, &job.name).await
+    } else {
+        None
+    };
+    if let Some(parent) = &recovered {
+        eprintln!("cron `{}` resuming chain from trace {parent}", job.name);
+    }
+    let chain_parent = Arc::new(Mutex::new(recovered));
     loop {
         let now = Utc::now();
         let next = match schedule.find_next_occurrence(&now, false) {
@@ -120,6 +128,48 @@ async fn run_job_loop(agent: huggr_agent::Agent, job: CronJobConfig, schedule: C
     }
 }
 
+/// Recover the chain anchor after a scheduler restart: the tip of this job's
+/// successful chain (traces tagged `extra.cron`). The tip is the successful
+/// trace no other successful trace of the job depends on, so it follows the
+/// `depends_on` lineage rather than `created_at` (a resumed trace inherits the
+/// parent's `created_at`, so timestamps tie along a chain and cannot order it).
+async fn recover_chain_parent(
+    agent: &huggr_agent::Agent,
+    job_name: &str,
+) -> Option<huggr_agent::TraceId> {
+    let heads = match agent.traces.list().await {
+        Ok(heads) => heads,
+        Err(err) => {
+            eprintln!("cron `{job_name}` could not list traces to recover the chain: {err}");
+            return None;
+        }
+    };
+    let mut successes = Vec::new();
+    let mut parents = std::collections::HashSet::new();
+    for head in heads {
+        if head.status != huggr_agent::STATUS_SUCCESS || head.agent_name != agent.name {
+            continue;
+        }
+        // `extra` is not part of the head projection, so the job tag requires
+        // loading the candidate trace. This runs once per job at startup.
+        let Ok(trace) = agent.traces.get(&head.trace_id).await else {
+            continue;
+        };
+        if trace.meta.extra["cron"] != job_name {
+            continue;
+        }
+        if let Some(parent) = &head.depends_on {
+            parents.insert(parent.clone());
+        }
+        successes.push(head.trace_id);
+    }
+    // The tip is the one success not depended on by another success. Ties are
+    // impossible on a linear chain; the id sort only makes an unexpected fork
+    // deterministic.
+    successes.sort();
+    successes.into_iter().find(|id| !parents.contains(id))
+}
+
 async fn run_one_fire(
     agent: &mut huggr_agent::Agent,
     job: &CronJobConfig,
@@ -146,7 +196,7 @@ async fn run_one_fire(
                 "cron `{}` wrote trace {} status={}",
                 job.name, answer.trace_id, answer.status
             );
-            if job.lineage == "chain" {
+            if job.lineage == "chain" && answer.status == huggr_agent::STATUS_SUCCESS {
                 *chain_parent.lock().await = Some(answer.trace_id);
             }
         }
@@ -248,15 +298,25 @@ mod tests {
         (TraceStore::new(&dir), dir)
     }
 
-    fn test_agent(store: TraceStore) -> Agent {
+    fn test_agent(store: TraceStore, replies: impl IntoIterator<Item = &'static str>) -> Agent {
         let mut agent = Agent::new("cron-test", "0.1.0", store);
         agent.models.push((
             ModelSelector::named("medium"),
-            Arc::new(MockModel::new(["first", "second"])),
+            Arc::new(MockModel::new(replies)),
         ));
         agent.system_prompt = Some("Answer tersely.".into());
         agent.clock = Some(deterministic_clock());
         agent
+    }
+
+    fn chain_job(name: &str) -> CronJobConfig {
+        CronJobConfig {
+            name: name.to_string(),
+            schedule: "0 8 * * *".to_string(),
+            question: "daily question".to_string(),
+            lineage: "chain".to_string(),
+            limits: LimitsConfig::default(),
+        }
     }
 
     #[test]
@@ -284,14 +344,8 @@ mod tests {
     #[tokio::test]
     async fn one_fire_persists_trace_and_chain_parent() {
         let (store, dir) = temp_store("one-fire");
-        let mut agent = test_agent(store.clone());
-        let job = CronJobConfig {
-            name: "daily".to_string(),
-            schedule: "0 8 * * *".to_string(),
-            question: "daily question".to_string(),
-            lineage: "chain".to_string(),
-            limits: LimitsConfig::default(),
-        };
+        let mut agent = test_agent(store.clone(), ["first", "second"]);
+        let job = chain_job("daily");
         let chain_parent = Arc::new(Mutex::new(None));
         let fired_at = Utc.with_ymd_and_hms(2026, 7, 10, 8, 0, 0).unwrap();
 
@@ -309,6 +363,66 @@ mod tests {
         let second = chain_parent.lock().await.clone().expect("second trace id");
         let second_head = store.head(&second).unwrap();
         assert_eq!(second_head.depends_on, Some(first));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn chain_parent_recovers_last_successful_trace_across_restart() {
+        let (store, dir) = temp_store("recover");
+        let mut agent = test_agent(store.clone(), ["first", "second"]);
+        let job = chain_job("daily");
+        let chain_parent = Arc::new(Mutex::new(None));
+        let fired_at = Utc.with_ymd_and_hms(2026, 7, 10, 8, 0, 0).unwrap();
+
+        run_one_fire(&mut agent, &job, fired_at, &chain_parent).await;
+        run_one_fire(&mut agent, &job, fired_at, &chain_parent).await;
+        let latest = chain_parent.lock().await.clone().expect("second trace id");
+
+        assert_eq!(
+            recover_chain_parent(&agent, "daily").await,
+            Some(latest.clone())
+        );
+        assert_eq!(recover_chain_parent(&agent, "other").await, None);
+
+        // The mock is out of replies: the next fire persists an error trace,
+        // which recovery must skip in favor of the last successful one.
+        run_one_fire(&mut agent, &job, fired_at, &chain_parent).await;
+        assert!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .any(|head| head.status != STATUS_SUCCESS)
+        );
+        assert_eq!(recover_chain_parent(&agent, "daily").await, Some(latest));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn error_answer_does_not_advance_chain_parent() {
+        let (store, dir) = temp_store("error-chain");
+        let mut agent = test_agent(store.clone(), ["only"]);
+        let job = chain_job("daily");
+        let chain_parent = Arc::new(Mutex::new(None));
+        let fired_at = Utc.with_ymd_and_hms(2026, 7, 10, 8, 0, 0).unwrap();
+
+        run_one_fire(&mut agent, &job, fired_at, &chain_parent).await;
+        let first = chain_parent.lock().await.clone().expect("first trace id");
+        assert_eq!(store.head(&first).unwrap().status, STATUS_SUCCESS);
+
+        // The mock is out of replies: the fire yields an error answer, which
+        // must not become the next fire's parent.
+        run_one_fire(&mut agent, &job, fired_at, &chain_parent).await;
+        assert_eq!(chain_parent.lock().await.clone(), Some(first.clone()));
+        let error_head = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|head| head.status != STATUS_SUCCESS)
+            .expect("error trace");
+        assert_eq!(error_head.depends_on, Some(first));
 
         let _ = std::fs::remove_dir_all(dir);
     }

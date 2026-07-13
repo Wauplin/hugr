@@ -65,7 +65,7 @@ Scheduling behavior is deliberately simple:
 - If a fire is still running when the next occurrence arrives, the new fire is **skipped**, not queued; long runs shed fires rather than pile up.
 - Every cron trace is tagged in its metadata with the job name and fire time (`extra.cron`, `extra.fired_at`), so `huggr traces` and `huggr stats` can slice by job.
 
-**Lineage** decides what each fire remembers. `fresh` starts every fire from nothing, which fits idempotent reports. `chain` passes the previous fire's `trace_id` as the next fire's parent, so the job is one growing conversation: a daily summarizer that chains can see what it already reported. The chain anchor is held in memory by the scheduler; after a restart the next fire starts a new chain, while the durable `depends_on` links between the already-written traces remain. Chained jobs also grow context over time, which is exactly the case [context compaction](09-context-compaction.md) exists for.
+**Lineage** decides what each fire remembers. `fresh` starts every fire from nothing, which fits idempotent reports. `chain` passes the previous **successful** fire's `trace_id` as the next fire's parent, so the job is one growing conversation: a daily summarizer that chains can see what it already reported. An error fire does not advance the chain; the next fire resumes from the last success. At startup the scheduler recovers the anchor from the trace store (the most recent success tagged with the job name in `extra.cron`), so a restart continues the chain instead of starting a new one. Chained jobs also grow context over time, which is exactly the case [context compaction](09-context-compaction.md) exists for.
 
 ## The uncapped-job refusal
 
@@ -102,5 +102,5 @@ Each fire resumes the previous one, so the model sees the incident log it has be
 - The cost cap is enforced between model calls, so the final spend can exceed the cap by the cost of the call in flight when it tripped. Size the cap with that margin.
 - Limits do not bound tool work: there is no `max_tool_calls`, and a tool that runs long is only caught by `timeout_s`.
 - A `timeout_s` abort drops the turn mid-flight; the trace is self-consistent up to the abort, but whatever the model was mid-way through is gone.
-- The cron scheduler is in-process: no persistence of the chain anchor, no catch-up for fires missed while the process was down, and no distributed locking; running two schedulers for the same agent double-fires every job.
+- The cron scheduler is in-process: no catch-up for fires missed while the process was down, and no distributed locking; running two schedulers for the same agent double-fires every job.
 - Limits bound one ask. A caller that retries in a loop re-arms them each time; budget across asks belongs to the orchestrator (the caller can sum `AnswerMeta`, which is why it is mandatory).
