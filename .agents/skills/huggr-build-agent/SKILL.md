@@ -118,7 +118,7 @@ The CLI creates `~/.huggr/models.toml` on first run. That file maps fixed tiers 
 ## Choose grants deliberately
 
 - `fs_read` adds list, literal search, regex grep, glob, read, range, batch, and outline capabilities under `root`; `root = "/"` is an explicit full-disk read grant.
-- `fs_write` creates or appends files, edits an exact text match in place (`fs_edit`), creates one directory, and removes one file or empty directory under `root`; `root = "/"` is an explicit full-disk write grant.
+- `fs_write` creates or appends files, edits an exact text match in place (`fs_edit`), creates one directory, and removes one file or empty directory under `root`; it also grants the `fs_read` family on the same `root` (write implies read), so grant `fs_write` alone for full read+write access to a folder and add `[tools.fs_read]` only for read-only or a different read root; `root = "/"` is an explicit full-disk write grant.
 - `shell` requires either `allow_commands` for direct execution without shell syntax or `full_access = true` for `<shell> -lc`; full mode relies on the operator's OS sandbox.
 - `web_fetch` is GET-only by default, has no automatic redirects, fails closed unless `allow_hosts` permits the destination, and supports HTML-to-Markdown conversion.
 - `web_search` uses Exa and reads its key from `api_key_env` (`EXA_API_KEY` by default).

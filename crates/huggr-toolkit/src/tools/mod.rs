@@ -60,8 +60,23 @@ pub const CATALOG: &[LibraryToolSpec] = &[
     LibraryToolSpec {
         id: "fs_write",
         privilege: "write",
-        tools: &["fs_write", "fs_edit", "fs_create_dir", "fs_remove"],
-        summary: "Root-jailed filesystem writes, targeted edits, directory creation, and removal.",
+        // Write implies read on the same root: the `fs_read` family is registered
+        // too (unless an explicit `fs_read` grant owns the read jail).
+        tools: &[
+            "fs_write",
+            "fs_edit",
+            "fs_create_dir",
+            "fs_remove",
+            "fs_list",
+            "fs_search",
+            "fs_grep",
+            "fs_glob",
+            "fs_read",
+            "fs_read_range",
+            "fs_read_many",
+            "fs_outline",
+        ],
+        summary: "Root-jailed filesystem writes, targeted edits, directory creation, removal, and read access to the same root.",
     },
     LibraryToolSpec {
         id: "shell",
@@ -117,6 +132,13 @@ pub const CATALOG: &[LibraryToolSpec] = &[
 /// Look up a library tool's spec by grant id.
 pub fn spec(id: &str) -> Option<&'static LibraryToolSpec> {
     CATALOG.iter().find(|s| s.id == id)
+}
+
+/// Whether `name` is one of the `fs_read` read-only capabilities. The `fs_write`
+/// grant registers this family too (write implies read); the host uses this to
+/// drop the overlap when an explicit `fs_read` grant is also present.
+pub fn is_read_family(name: &str) -> bool {
+    spec("fs_read").is_some_and(|s| s.tools.contains(&name))
 }
 
 /// Failure to construct a granted library tool.
@@ -182,7 +204,13 @@ pub fn build_library_grant(
             } else {
                 base_dir.join(p)
             };
-            Ok(FsWriteRoot::new(&resolved).map_err(cfg)?.capabilities())
+            let mut caps = FsWriteRoot::new(&resolved).map_err(cfg)?.capabilities();
+            // Writing a folder implies reading it: `fs_edit` needs the current
+            // bytes, and a writer that cannot read is rarely useful. An explicit
+            // `fs_read` grant owns the read jail instead; the host suppresses this
+            // overlapping read family when one is present (see `runtime`).
+            caps.extend(FsRoot::new(&resolved).map_err(cfg)?.capabilities());
+            Ok(caps)
         }
         "shell" => {
             let mut config = grant.config.clone();
@@ -294,19 +322,26 @@ mod tests {
     }
 
     #[test]
-    fn fs_write_grant_registers_the_edit_capability() {
-        let dir =
-            std::env::temp_dir().join(format!("huggr-fs-write-grant-{}", std::process::id()));
+    fn fs_write_grant_registers_edit_and_the_read_family() {
+        let dir = std::env::temp_dir().join(format!("huggr-fs-write-grant-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir(&dir).unwrap();
         let caps = build_library_grant(&grant("fs_write", json!({ "root": "." })), &dir).unwrap();
         let names: Vec<_> = caps.iter().map(|c| c.name().to_string()).collect();
         assert!(names.contains(&"fs_edit".to_string()), "{names:?}");
+        // Write implies read: the read family rides along on the same grant.
+        assert!(names.contains(&"fs_read".to_string()), "{names:?}");
+        assert!(names.contains(&"fs_grep".to_string()), "{names:?}");
+        assert!(
+            names
+                .iter()
+                .all(|n| is_read_family(n) || n.starts_with("fs_"))
+        );
         // The catalog and the built capabilities agree on the registered set.
         let mut cataloged: Vec<_> = spec("fs_write").unwrap().tools.to_vec();
         cataloged.sort_unstable();
-        let mut built = names.clone();
-        built.sort();
+        let mut built: Vec<&str> = names.iter().map(String::as_str).collect();
+        built.sort_unstable();
         assert_eq!(built, cataloged);
         std::fs::remove_dir_all(dir).unwrap();
     }

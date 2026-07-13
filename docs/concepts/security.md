@@ -22,8 +22,9 @@ The operator is responsible for the process and OS boundary when running an untr
 - **Symlink escape.** A symlink inside the root that points outside passes the component check. The defense is the **post-canonicalize `starts_with(root)` re-check** on every resolved target; recursive walks apply the same filter per entry. The root itself is canonicalized at construction. Test: `jail_rejects_symlink_that_escapes_the_root` (unix).
 - **TOCTOU on canonicalize.** The window between canonicalization and read is accepted because the tool is read-only. The worst case is reading a swapped file, not writing outside the jail. This is documented but not prevented.
 
-**`fs_write`** (write access, one canonicalized root):
+**`fs_write`** (write and read access, one canonicalized root):
 
+- **Read is included.** Write implies read: the grant also registers the `fs_read` family on the same root, so `fs_write` exposes the folder's contents to the model as well as letting it write. There is no write-only mode; if an agent must not read a folder it writes, do not grant `fs_write` on it. A separate `[tools.fs_read]` grant, when present, owns the read jail instead.
 - **Traversal and symlink escape.** Paths reject absolute and parent components. New targets canonicalize and re-check the existing parent; existing removal targets are canonicalized and re-checked before mutation.
 - **Destructive scope.** Replacement, in-place editing, and removal are intentional powers of the grant. `fs_edit` canonicalizes and re-checks the existing target like removal does. Removal is limited to one file or empty directory, but `root = "/"` still grants writes across the process-visible disk.
 - **TOCTOU on canonicalize.** A privileged concurrent process can swap a checked path before mutation. Use an outer OS sandbox when the agent or other local processes are untrusted.

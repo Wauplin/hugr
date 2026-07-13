@@ -23,6 +23,8 @@ Absolute tool paths, `..`, and symlink escapes are rejected. A full-disk grant u
 
 `[tools.fs_write]` accepts `root` (default `.`) and registers `fs_write`, `fs_edit`, `fs_create_dir`, and `fs_remove`. `fs_write` creates, replaces, or appends to one file whose parent already exists. `fs_edit` replaces an exact text occurrence in one existing file; `old` must match verbatim and, unless `replace_all` is set, must occur exactly once. `fs_create_dir` creates one directory whose parent exists. `fs_remove` removes one file or one empty directory, never removes recursively, and refuses to remove the configured root itself (including via `.` or `a/..` spellings).
 
+Write implies read on the same root: `[tools.fs_write]` also registers the full `fs_read` family (see below) jailed to its `root`, so granting write alone gives an agent both read and write access to a folder. Add a separate `[tools.fs_read]` only for read-only access or to read a different root; when both grants are present the explicit `fs_read` owns the read jail and the write grant does not register the read family a second time.
+
 Write targets and their canonicalized parents must remain under the configured root, including through symlinks. Use `root = "/"` only when the operator intends to grant full-disk writes.
 
 ## Shell

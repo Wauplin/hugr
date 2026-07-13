@@ -31,7 +31,7 @@ root = "./policies"        # relative roots resolve from the agent crate
 root = "./output"
 ```
 
-`fs_read` registers the read-only family: `fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`, each with fixed size and match caps (200 KB default reads, 1 MB hard cap, 2,000 entries per listing). `fs_write` registers `fs_write`, `fs_edit`, `fs_create_dir`, and `fs_remove`; `fs_edit` replaces an exact, by-default-unique text match in one existing file, and removal takes one file or one empty directory and is never recursive.
+`fs_read` registers the read-only family: `fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`, each with fixed size and match caps (200 KB default reads, 1 MB hard cap, 2,000 entries per listing). `fs_write` registers `fs_write`, `fs_edit`, `fs_create_dir`, and `fs_remove`; `fs_edit` replaces an exact, by-default-unique text match in one existing file, and removal takes one file or one empty directory and is never recursive. Write implies read on the same root, so `fs_write` also registers the `fs_read` family jailed to its own `root`; a separate `[tools.fs_read]` grant, when present, owns the read jail and the write grant does not register those read tools twice.
 
 The jail works the same way in both: tool paths must be relative, `..` and absolute paths are rejected before any filesystem touch, and every resolved target is canonicalized and re-checked against the root, so a symlink inside the root that points outside does not escape. `root = "/"` is an explicit full-disk grant, not a misconfiguration the jail softens; if you write it, you mean it.
 

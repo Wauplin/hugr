@@ -271,7 +271,7 @@ In short: you grant tools in the manifest and the model calls tools; the host re
 The tool library provides vetted, parameterized capabilities selected by manifest grant. Each is jailed to its declared scope and covered by a [threat-model note](../concepts/security.md#capability-threat-notes):
 
 - **`fs_read`:** root-jailed read-only family including list, literal search, regular-expression grep, glob, reads, and outlines.
-- **`fs_write`:** root-jailed file creation/replacement/append, exact-match single-file editing, single-directory creation, and non-recursive removal.
+- **`fs_write`:** root-jailed file creation/replacement/append, exact-match single-file editing, single-directory creation, and non-recursive removal; also grants the `fs_read` family on the same root (write implies read), unless a separate `fs_read` grant owns the read jail.
 - **`shell`:** either direct execution of an operator allowlist without shell syntax or explicit full access through `<shell> -lc`.
 - **`scratchpad`:** ungated `scratch_read` / `scratch_write` / `scratch_list`, jailed to the ask's scratch subtree (provided by the runtime and always enabled).
 - **`memory`:** optional `memory_read` / `memory_write` / `memory_list`, jailed to durable agent-wide memory at `<agent-home>/memory` by default. `readonly = true` makes writes semantic errors.

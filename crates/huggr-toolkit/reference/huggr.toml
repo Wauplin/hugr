@@ -41,7 +41,7 @@ output_usd_per_m_tokens = 0.17
 root = "./policies"              # read/list/search/grep/glob jailed to this folder
 
 # [tools.fs_write]
-# root = "./generated"             # use "/" only for an explicit full-disk grant
+# root = "./generated"             # write+edit+read on this folder (write implies read); "/" is full-disk
 
 # [tools.shell]
 # allow_commands = ["git", "cargo"] # direct execution; no shell operators

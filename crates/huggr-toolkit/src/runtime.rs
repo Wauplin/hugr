@@ -421,7 +421,11 @@ pub async fn build_agent_with_options(
     // Granted tools — sandbox-by-registration. Library grants build in-process;
     // MCP grants connect their external process and register the discovered
     // tools.
-    let readable_roots = fs_read_roots(def, &base_dir);
+    let readable_roots = readable_roots(def, &base_dir);
+    let explicit_fs_read = def
+        .tools
+        .iter()
+        .any(|g| g.kind == ToolKind::Library && g.name == "fs_read");
     for grant in &def.tools {
         match grant.kind {
             ToolKind::Library => {
@@ -432,6 +436,15 @@ pub async fn build_agent_with_options(
                     );
                 }
                 for capability in tools::build_library_grant(grant, &base_dir)? {
+                    // `fs_write` implies read on its own root, but an explicit
+                    // `fs_read` grant owns the read jail — drop the overlapping
+                    // read family so the two don't collide on tool names.
+                    if explicit_fs_read
+                        && grant.name == "fs_write"
+                        && tools::is_read_family(capability.name())
+                    {
+                        continue;
+                    }
                     agent.capabilities.push(capability);
                 }
             }
@@ -506,21 +519,37 @@ pub async fn build_agent_with_options(
     Ok((agent, warnings))
 }
 
-/// The canonical `fs_read` jail roots of this definition — the only local
-/// files a model-supplied `Path` blob ref may name when delegating, so a
-/// child never reads what its caller could not.
-fn fs_read_roots(def: &AgentDefinition, base_dir: &Path) -> Vec<PathBuf> {
+/// The canonical read-jail roots of this definition — the only local files a
+/// model-supplied `Path` blob ref may name when delegating, so a child never
+/// reads what its caller could not. An explicit `fs_read` grant defines the
+/// jail; without one, a granted `fs_write` root counts because write implies
+/// read on the same root.
+fn readable_roots(def: &AgentDefinition, base_dir: &Path) -> Vec<PathBuf> {
+    let read_grant = |name: &'static str| {
+        let name = name.to_string();
+        move |grant: &&ToolGrant| grant.kind == ToolKind::Library && grant.name == name
+    };
+    let root_of = |grant: &ToolGrant| {
+        let root = grant
+            .config
+            .get("root")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        std::fs::canonicalize(resolve(base_dir, root)).ok()
+    };
+    let explicit: Vec<PathBuf> = def
+        .tools
+        .iter()
+        .filter(read_grant("fs_read"))
+        .filter_map(root_of)
+        .collect();
+    if !explicit.is_empty() {
+        return explicit;
+    }
     def.tools
         .iter()
-        .filter(|grant| grant.kind == ToolKind::Library && grant.name == "fs_read")
-        .filter_map(|grant| {
-            let root = grant
-                .config
-                .get("root")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-            std::fs::canonicalize(resolve(base_dir, root)).ok()
-        })
+        .filter(read_grant("fs_write"))
+        .filter_map(root_of)
         .collect()
 }
 
@@ -921,11 +950,13 @@ fn runtime_guidance(def: &AgentDefinition) -> String {
         "- Inbound blobs are materialized as files in the scratchpad. Inspect the scratchpad when the user refers to an attached file. Write caller-facing files under `out/`; Huggr returns them as outbound blobs.".to_string(),
         "- The caller may resume this answer by trace id. Keep reusable working state in the scratchpad instead of relying only on chat history.".to_string(),
     ];
-    if grants.contains("fs_read") {
+    // `fs_write` implies read on the same root, so the read family is available
+    // whenever either grant is present.
+    if grants.contains("fs_read") || grants.contains("fs_write") {
         lines.push("- Read-only filesystem tools are scoped to their configured root. Use `fs_list`, `fs_search`, `fs_grep`, or `fs_glob` to locate relevant files, then `fs_read`, `fs_read_range`, or `fs_read_many` to inspect only what the task needs. Use `fs_outline` to understand large source files without reading them in full.".to_string());
     }
     if grants.contains("fs_write") {
-        lines.push("- Filesystem write tools are scoped to their configured root. Use `fs_write` for requested persistent files, `fs_create_dir` for one directory, and `fs_remove` only when removal is part of the task. These files are separate from caller-facing blob output under the scratchpad's `out/` directory.".to_string());
+        lines.push("- Filesystem write tools are scoped to their configured root and can read it too (write implies read). Use `fs_write` for requested persistent files, `fs_edit` to replace an exact snippet in an existing file instead of rewriting it whole, `fs_create_dir` for one directory, and `fs_remove` only when removal is part of the task. These files are separate from caller-facing blob output under the scratchpad's `out/` directory.".to_string());
     }
     if grants.contains("shell") {
         lines.push("- Process execution is an explicit operator grant. Use `shell` when an allowed command is the most direct way to inspect, build, test, or transform the scoped work; report failures from the command output and do not assume unavailable programs or shell syntax.".to_string());
@@ -1051,10 +1082,13 @@ allow_hosts = ["example.com"]
         .unwrap();
         let prompt = render_system_prompt(&def);
         assert!(prompt.contains("Use `fs_write` for requested persistent files"));
+        assert!(prompt.contains("`fs_edit` to replace an exact snippet"));
         assert!(prompt.contains("Use `shell` when an allowed command"));
         assert!(prompt.contains("Use `web_search` to find current"));
         assert!(prompt.contains("Use `web_fetch` to retrieve"));
-        assert!(!prompt.contains("Use `fs_list`, `fs_search`, `fs_grep`, or `fs_glob`"));
+        // `fs_write` implies read, so the read-family guidance appears without a
+        // separate `fs_read` grant.
+        assert!(prompt.contains("Use `fs_list`, `fs_search`, `fs_grep`, or `fs_glob`"));
         assert!(!prompt.contains("Durable memory is shared"));
     }
 
@@ -1209,6 +1243,83 @@ readonly = true
         assert!(tools.contains(&"memory_read".to_string()), "{tools:?}");
         assert!(tools.contains(&"memory_write".to_string()), "{tools:?}");
         assert!(tools.contains(&"memory_list".to_string()), "{tools:?}");
+    }
+
+    #[tokio::test]
+    async fn fs_write_grant_alone_also_exposes_reads() {
+        let src = r#"
+[agent]
+name = "x"
+
+[models]
+default = "balanced"
+
+[tools.fs_write]
+root = "."
+"#;
+        let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
+        def.source_dir = Some(std::env::temp_dir());
+        let (agent, _warnings) = build_agent(&def).await.unwrap();
+        let tools: Vec<_> = agent
+            .describe()
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        for name in ["fs_write", "fs_edit", "fs_read", "fs_grep", "fs_list"] {
+            assert!(
+                tools.contains(&name.to_string()),
+                "missing {name}: {tools:?}"
+            );
+        }
+        // No duplicate names: write and read families each register once.
+        let mut sorted = tools.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), tools.len(), "duplicate tools: {tools:?}");
+    }
+
+    #[tokio::test]
+    async fn explicit_fs_read_owns_the_read_jail_when_both_granted() {
+        // fs_read on the temp dir, fs_write on a subdir: read tools must be the
+        // fs_read ones (no double-registration), and both families present once.
+        let base = std::env::temp_dir().join(format!("huggr-both-{}", std::process::id()));
+        let sub = base.join("out");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&sub).unwrap();
+        let src = r#"
+[agent]
+name = "x"
+
+[models]
+default = "balanced"
+
+[tools.fs_read]
+root = "."
+
+[tools.fs_write]
+root = "out"
+"#;
+        let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
+        def.source_dir = Some(base.clone());
+        let (agent, _warnings) = build_agent(&def).await.unwrap();
+        let tools: Vec<_> = agent
+            .describe()
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let mut sorted = tools.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), tools.len(), "duplicate tools: {tools:?}");
+        for name in ["fs_read", "fs_write", "fs_edit"] {
+            assert!(
+                tools.contains(&name.to_string()),
+                "missing {name}: {tools:?}"
+            );
+        }
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     /// Write a minimal agent crate folder and return its path.
