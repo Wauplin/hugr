@@ -11,6 +11,8 @@ import type {
   Feedback,
   FeedbackStore,
   Json,
+  ModelCatalog,
+  ModelTier,
   ModelsConfig,
   TierConfig,
   ToolSpec,
@@ -54,11 +56,26 @@ export interface AgentRuntime {
   loadWasm(): Promise<WasmModule>;
   traces: TraceStore;
   feedback?: FeedbackStore;
-  /// Resolve `models.api_key_env` (Node: process.env; browsers have no env).
+  /// Resolve provider key and HUGGR_MODEL_<TIER> variables (Node: process.env; browsers have no env).
   env?: (name: string) => string | undefined;
+  /// Trusted host override for all model mappings.
+  modelCatalog?: ModelCatalog;
 }
 
-const MODEL_KNOBS = new Set(["base_url", "api_key", "api_key_env", "default"]);
+const MODEL_TIERS: ModelTier[] = ["fast", "balanced", "powerful", "max"];
+
+// Keep this browser-safe bootstrap catalog in sync with huggr-toolkit's DEFAULT_MODELS_TOML.
+const DEFAULT_MODEL_CATALOG: ModelCatalog = {
+  providers: {
+    hf: { base_url: "https://router.huggingface.co/v1", api_key_env: "HF_TOKEN" },
+  },
+  models: {
+    fast: { provider: "hf", model: "Qwen/Qwen3-4B-Instruct-2507:nscale", input_usd_per_m_tokens: 0.01, output_usd_per_m_tokens: 0.03 },
+    balanced: { provider: "hf", model: "openai/gpt-oss-20b:deepinfra", input_usd_per_m_tokens: 0.03, output_usd_per_m_tokens: 0.14 },
+    powerful: { provider: "hf", model: "openai/gpt-oss-120b:deepinfra", input_usd_per_m_tokens: 0.037, output_usd_per_m_tokens: 0.17 },
+    max: { provider: "hf", model: "zai-org/GLM-5.2:deepinfra", input_usd_per_m_tokens: 0.93, output_usd_per_m_tokens: 3.0 },
+  },
+};
 
 export class Agent {
   readonly config: AgentConfig;
@@ -85,7 +102,8 @@ export class Agent {
   async *run(question: string, options: AskOptions = {}): AsyncGenerator<AgentEvent> {
     const startedAt = Date.now();
     const wasm = await this.runtime.loadWasm();
-    const session = new wasm.AgentSession(JSON.stringify(this.sessionConfig()));
+    const models = this.resolveModels();
+    const session = new wasm.AgentSession(JSON.stringify(this.sessionConfig(models)));
     yield { type: "ask_started", trace_parent: options.traceId ?? null };
 
     if (options.traceId) {
@@ -138,7 +156,7 @@ export class Agent {
           yield { type: "model_started", op, tier: selector };
           const deltas: AgentEvent[] = [];
           try {
-            const result = await callOpenAiCompatible(payload.request as Json, this.settingsFor(selector), {
+            const result = await callOpenAiCompatible(payload.request as Json, this.settingsFor(selector, models), {
               onText: (text) => deltas.push({ type: "text_delta", op, text }),
               signal: effectController.signal,
             });
@@ -146,7 +164,7 @@ export class Agent {
             meta.model_calls += 1;
             meta.tokens_in += result.usage.input_tokens;
             meta.tokens_out += result.usage.output_tokens;
-            meta.cost_micro_usd += this.costMicroUsd(selector, result.usage.input_tokens, result.usage.output_tokens);
+            meta.cost_micro_usd += this.costMicroUsd(selector, result.usage.input_tokens, result.usage.output_tokens, models);
             yield { type: "model_ended", op, usage: result.usage };
             queue.push(
               ...(JSON.parse(
@@ -261,7 +279,7 @@ export class Agent {
     wasm.verify_trace_json(JSON.stringify(trace));
   }
 
-  private sessionConfig(): Json {
+  private sessionConfig(models: ModelCatalog): Json {
     return {
       system_prompt: this.config.system ?? "",
       tools: (this.config.tools ?? []).map((tool) => ({
@@ -269,31 +287,60 @@ export class Agent {
         description: tool.description,
         parameters: tool.schema,
       })),
-      default_model: defaultTier(this.config.models),
+      default_model: this.config.models.default,
       context: (this.config.context as Json) ?? null,
     };
   }
 
-  private tierConfig(selector: string): TierConfig {
-    const tier = this.config.models[selector];
-    if (!tier || typeof tier === "string") throw new Error(`unknown model tier: ${selector}`);
+  private tierConfig(selector: string, models: ModelCatalog): TierConfig {
+    if (!isModelTier(selector)) throw new Error(`unknown model tier: ${selector}`);
+    const tier = models.models[selector];
+    if (!tier) throw new Error(`unresolved model tier: ${selector}`);
     return tier;
   }
 
-  private settingsFor(selector: string) {
-    const models = this.config.models;
-    const apiKey = models.api_key ?? (models.api_key_env ? (this.runtime.env?.(models.api_key_env) ?? "") : "");
+  private settingsFor(selector: string, models: ModelCatalog) {
+    const tier = this.tierConfig(selector, models);
+    const provider = models.providers[tier.provider];
+    if (!provider) throw new Error(`model tier ${selector} references unknown provider ${tier.provider}`);
+    const apiKey = provider.api_key ?? (provider.api_key_env ? (this.runtime.env?.(provider.api_key_env) ?? "") : "");
     return {
-      baseUrl: models.base_url ?? "https://router.huggingface.co/v1",
+      baseUrl: provider.base_url,
       apiKey,
-      tier: this.tierConfig(selector),
+      tier,
     };
   }
 
-  private costMicroUsd(selector: string, tokensIn: number, tokensOut: number): number {
-    const tier = this.tierConfig(selector);
+  private costMicroUsd(selector: string, tokensIn: number, tokensOut: number, models: ModelCatalog): number {
+    const tier = this.tierConfig(selector, models);
     const cost = tokensIn * (tier.input_usd_per_m_tokens ?? 0) + tokensOut * (tier.output_usd_per_m_tokens ?? 0);
     return Math.round(cost);
+  }
+
+  /// Return the effective four-tier mapping after runtime and environment overrides.
+  resolvedModels(): ModelCatalog {
+    return this.resolveModels();
+  }
+
+  private resolveModels(): ModelCatalog {
+    const runtime = this.runtime.modelCatalog;
+    const providers = runtime
+      ? { ...runtime.providers }
+      : { ...DEFAULT_MODEL_CATALOG.providers, ...(this.config.providers ?? {}) };
+    const sourceModels: Partial<Record<ModelTier, TierConfig>> = runtime
+      ? runtime.models
+      : Object.fromEntries(MODEL_TIERS.flatMap((tier) => this.config.models[tier] ? [[tier, this.config.models[tier]]] : []));
+    const fallbackModels = runtime ? runtime.models : { ...DEFAULT_MODEL_CATALOG.models, ...sourceModels };
+    const resolved: Partial<Record<ModelTier, TierConfig>> = {};
+    for (const tier of MODEL_TIERS) {
+      const base = closestTier(fallbackModels, tier);
+      const envModel = this.runtime.env?.(`HUGGR_MODEL_${tier.toUpperCase()}`);
+      resolved[tier] = envModel ? { ...base, model: envModel } : { ...base };
+      if (!providers[resolved[tier]!.provider]) {
+        throw new Error(`model tier ${tier} references unknown provider ${resolved[tier]!.provider}`);
+      }
+    }
+    return { providers, models: resolved };
   }
 }
 
@@ -306,13 +353,19 @@ function abortable<T>(effect: Promise<T> | T, signal: AbortSignal): Promise<T> {
   });
 }
 
-function defaultTier(models: ModelsConfig): string {
-  if (models.default) return models.default;
-  const tiers = Object.keys(models).filter((key) => !MODEL_KNOBS.has(key));
-  if (tiers.includes("medium")) return "medium";
-  if (tiers.length === 0) throw new Error("models config declares no tier");
-  tiers.sort();
-  return tiers[0];
+function isModelTier(value: string): value is ModelTier {
+  return MODEL_TIERS.includes(value as ModelTier);
+}
+
+function closestTier(models: Partial<Record<ModelTier, TierConfig>>, requested: ModelTier): TierConfig {
+  const index = MODEL_TIERS.indexOf(requested);
+  for (let distance = 0; distance < MODEL_TIERS.length; distance += 1) {
+    const lower = index - distance;
+    if (lower >= 0 && models[MODEL_TIERS[lower]]) return models[MODEL_TIERS[lower]]!;
+    const upper = index + distance;
+    if (distance > 0 && upper < MODEL_TIERS.length && models[MODEL_TIERS[upper]]) return models[MODEL_TIERS[upper]]!;
+  }
+  throw new Error("model catalog defines no fixed tier");
 }
 
 function selectorName(selector: Json): string {

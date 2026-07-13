@@ -162,12 +162,7 @@ version = "0.1.0"
 description = "Answers questions about the company travel policy."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-[models.default]                      # tier names are free-form strings; one tier is the common case
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"                 # "fast" | "balanced" | "powerful" | "max"
 
 [tools.fs_read]                       # a grant from the predefined library
 root = "./policies"                   # scope; jailed by the capability
@@ -199,7 +194,7 @@ budget_tokens = 64000
 trigger_tokens = 56000
 keep_recent_tokens = 8000
 max_block_tokens = 2000
-summary_model = "small"              # optional; defaults to the manifest's default tier
+summary_model = "fast"               # optional; defaults to the manifest's default tier
 
 [context.forget.keep_last_per_tool]
 page_snapshot = 1                    # open tool-name map; keep only the latest snapshot result

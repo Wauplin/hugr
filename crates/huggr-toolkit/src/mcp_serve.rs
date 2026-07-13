@@ -442,8 +442,8 @@ mod tests {
             r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [runtime.args.docs_path]
 target = "tools.fs_read.root"
 required = true
@@ -506,7 +506,7 @@ help = "Docs root."
         .unwrap();
         std::fs::write(
             home.join("huggr.toml"),
-            "[agent]\nname = \"mcpsrv\"\nversion = \"0.2.0\"\n[models.medium]\nmodel = \"m\"\n",
+            "[agent]\nname = \"mcpsrv\"\nversion = \"0.2.0\"\n[models]\ndefault = \"balanced\"\n",
         )
         .unwrap();
         let def = AgentDefinition::load(&home).unwrap();

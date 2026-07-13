@@ -98,7 +98,7 @@ The hook is unit-testable like any function; build an `Answer`, apply `answer_ho
 From the repo root:
 
 ```bash
-export HUGGR_API_KEY=hf_...
+export HF_TOKEN=hf_...
 huggr run examples/huglet-docs ./docs "What is the narrow-waist rule?"
 ```
 

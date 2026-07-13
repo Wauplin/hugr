@@ -39,12 +39,7 @@ def lookup_policy(query: str) -> dict:
 agent = huggr.Agent(
     name="policy-helper",
     system="Use lookup_policy, then return a JSON object with an answer field.",
-    models={
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
-    },
+    models={"default": "balanced"},
     tools=[lookup_policy],
     response_schema={
         "type": "object",
@@ -75,7 +70,7 @@ async def stream():
             answer = event.answer
 ```
 
-Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Tier selectors and external grant instance names remain typed mappings because they are open strings.
+Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog.
 
 Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`. Turn failures are answers with mandatory metadata; configuration and infrastructure failures raise exceptions.
 
@@ -99,4 +94,4 @@ huggr verify <matching-agent-dir> <trace-id>
 huggr replay <matching-agent-dir> <trace-id> --step
 ```
 
-Read [Define an agent in Python](../../../docs/tutorials/python-agent.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by `api_key_env`. If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.
+Read [Define an agent in Python](../../../docs/tutorials/python-agent.md) for the full API. If native import fails, rerun `maturin develop --release` inside the active venv. If model auth fails, set the variable named by the resolved provider's `api_key_env` (`HF_TOKEN` for the built-in catalog). If a callable throws, fix the tool's input validation or implementation; do not turn a semantic error into a process crash.

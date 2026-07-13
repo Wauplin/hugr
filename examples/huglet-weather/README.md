@@ -5,7 +5,7 @@ A tiny, self-contained Huggr weather agent. It uses only the allowlisted `web_fe
 ## Run it
 
 ```bash
-export HUGGR_API_KEY=...            # your model provider key
+export HF_TOKEN=hf_...             # key for the default Hugging Face provider
 huggr run . "what's the weather in Paris?"
 ```
 

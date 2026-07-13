@@ -146,6 +146,8 @@ pub struct Agent {
     /// `Ask.skills` without mutating the reusable agent.
     pub skill_paths: Vec<PathBuf>,
     pub models: Vec<(ModelSelector, Arc<dyn ModelAdapter>)>,
+    /// Effective non-secret provider/model provenance for introspection.
+    pub model_details: BTreeMap<String, ModelDetails>,
     pub default_model: Option<ModelSelector>,
     pub capabilities: Vec<Arc<dyn Capability>>,
     pub context_policy: Option<BudgetPolicy>,
@@ -179,6 +181,7 @@ impl Clone for Agent {
             system_prompt: self.system_prompt.clone(),
             skill_paths: self.skill_paths.clone(),
             models: self.models.clone(),
+            model_details: self.model_details.clone(),
             default_model: self.default_model.clone(),
             capabilities: self.capabilities.clone(),
             context_policy: self.context_policy.clone(),
@@ -233,6 +236,7 @@ impl Agent {
             system_prompt: None,
             skill_paths: Vec::new(),
             models: Vec::new(),
+            model_details: BTreeMap::new(),
             default_model: None,
             capabilities: Vec::new(),
             context_policy: None,
@@ -625,11 +629,23 @@ impl Agent {
                 ModelTierCard {
                     default: default.as_ref() == Some(&selector),
                     pricing: self.pricing.price_for(&selector),
+                    details: self.model_details.get(&selector).cloned(),
                     selector,
                 }
             })
             .collect();
-        tiers.sort_by(|a, b| a.selector.cmp(&b.selector));
+        tiers.sort_by(|a, b| {
+            let rank = |tier: &str| match tier {
+                "fast" => 0,
+                "balanced" => 1,
+                "powerful" => 2,
+                "max" => 3,
+                _ => 4,
+            };
+            rank(&a.selector)
+                .cmp(&rank(&b.selector))
+                .then_with(|| a.selector.cmp(&b.selector))
+        });
         tiers
     }
 }
@@ -734,6 +750,20 @@ pub struct ModelTierCard {
     pub default: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pricing: Option<TierPrice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ModelDetails>,
+}
+
+/// Effective model mapping exposed by introspection without credential values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelDetails {
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub api_key_resolved: bool,
+    pub source: String,
+    pub resolved_from: String,
 }
 
 /// Declared runtime limits, enforced host-side on every ask and exposed on the introspection card. Each `None` field is unbounded.

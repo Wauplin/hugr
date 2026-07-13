@@ -29,8 +29,26 @@ struct Entry {
 /// skipping any entry whose first path component is listed in `exclude_top`
 /// (e.g. the trace/scratch dirs, `target`, `.git`). Symlinks are skipped.
 pub fn pack(dir: &Path, exclude_top: &[&str]) -> io::Result<Vec<u8>> {
+    pack_with_files(dir, exclude_top, &[])
+}
+
+/// Pack a tree and replace or add the supplied in-memory files.
+pub fn pack_with_files(
+    dir: &Path,
+    exclude_top: &[&str],
+    files: &[(&str, &[u8])],
+) -> io::Result<Vec<u8>> {
     let mut entries = Vec::new();
     collect(dir, dir, exclude_top, &mut entries)?;
+    for (path, data) in files {
+        let rel = sanitized_rel(path)?;
+        let path = rel_to_forward_slash(&rel);
+        entries.retain(|entry| entry.path != path);
+        entries.push(Entry {
+            path,
+            data: data.to_vec(),
+        });
+    }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut out = Vec::new();

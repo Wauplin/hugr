@@ -13,6 +13,10 @@ use std::process::Command;
 
 use crate::bundle;
 use crate::manifest::AgentDefinition;
+use crate::models::{
+    MODEL_SNAPSHOT_FILE, ModelConfigError, catalog_from_resolved, load_or_create_global_catalog,
+    resolve_source_definition,
+};
 use crate::runtime::{DEFAULT_SCRATCH_DIRNAME, DEFAULT_TRACE_DIRNAME};
 
 /// Options controlling a build.
@@ -75,6 +79,8 @@ pub enum BuildError {
     Maturin { code: i32 },
     #[error("could not run `maturin`: {0}")]
     MaturinSpawn(std::io::Error),
+    #[error(transparent)]
+    Models(#[from] ModelConfigError),
 }
 
 /// Generate a shim crate embedding `def` and compile it into a standalone
@@ -107,7 +113,14 @@ pub(crate) fn write_bundle(def: &AgentDefinition, crate_dir: &Path) -> Result<()
     std::fs::create_dir_all(crate_dir.join("src"))?;
     let excludes = bundle_excludes(def);
     let exclude_refs: Vec<&str> = excludes.iter().map(String::as_str).collect();
-    let blob = bundle::pack(source_dir, &exclude_refs)?;
+    let global = load_or_create_global_catalog()?;
+    let resolved = resolve_source_definition(def, &global)?;
+    let snapshot = catalog_from_resolved(&resolved).to_toml()?;
+    let blob = bundle::pack_with_files(
+        source_dir,
+        &exclude_refs,
+        &[(MODEL_SNAPSHOT_FILE, snapshot.as_bytes())],
+    )?;
     std::fs::write(crate_dir.join("bundle.bin"), &blob)?;
     Ok(())
 }
@@ -450,8 +463,8 @@ mod tests {
         let src = r#"
 [agent]
 name = "x"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [traces]
 store = "state/traces"
 [scratchpad]
@@ -480,8 +493,8 @@ root = "work"
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 "#;
         let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         def.source_dir =
@@ -514,7 +527,7 @@ pub fn storage() -> huggr_agent::StorageOverrides { todo!() }
 "#,
         )
         .unwrap();
-        let src = "[agent]\nname = \"storage\"\n[models.medium]\nmodel = \"m\"\n";
+        let src = "[agent]\nname = \"storage\"\n[models]\ndefault = \"balanced\"\n";
         let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         def.source_dir = Some(root.clone());
 
@@ -537,7 +550,7 @@ pub fn storage() -> huggr_agent::StorageOverrides { todo!() }
         )
         .unwrap();
         std::fs::write(root.join("src/lib.rs"), "").unwrap();
-        let src = "[agent]\nname = \"missing\"\n[models.medium]\nmodel = \"m\"\n";
+        let src = "[agent]\nname = \"missing\"\n[models]\ndefault = \"balanced\"\n";
         let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         def.source_dir = Some(root.clone());
 

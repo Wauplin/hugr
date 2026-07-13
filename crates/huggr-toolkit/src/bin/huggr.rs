@@ -11,6 +11,7 @@ use huggr_agent::{StatsOptions, TraceId};
 use huggr_toolkit::AgentDefinition;
 use huggr_toolkit::build::{BuildOptions, build as run_build};
 use huggr_toolkit::build_python::build_python;
+use huggr_toolkit::models::{load_or_create_global_catalog, resolve_source_definition};
 use huggr_toolkit::runtime::{build_agent, trace_store_for};
 use huggr_toolkit::scaffold::{Template, write_scaffold};
 use huggr_toolkit::stats::render_stats;
@@ -129,6 +130,10 @@ struct RunArgs {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    if let Err(err) = load_or_create_global_catalog() {
+        eprintln!("error: {err}");
+        std::process::exit(1);
+    }
     match cli.command {
         Command::Run(args) => run(args).await,
         Command::New(args) => new(args),
@@ -153,8 +158,14 @@ fn load_store(agent_dir: &std::path::Path) -> huggr_agent::TraceStore {
     }
 }
 
+fn load_resolved_definition(agent_dir: &Path) -> Result<AgentDefinition, String> {
+    let def = AgentDefinition::load(agent_dir).map_err(|error| error.to_string())?;
+    let catalog = load_or_create_global_catalog().map_err(|error| error.to_string())?;
+    resolve_source_definition(&def, &catalog).map_err(|error| error.to_string())
+}
+
 async fn traces(args: TracesArgs) {
-    let def = match AgentDefinition::load(&args.agent_dir) {
+    let def = match load_resolved_definition(&args.agent_dir) {
         Ok(def) => def,
         Err(err) => {
             eprintln!("error: {err}");
@@ -182,7 +193,7 @@ async fn traces(args: TracesArgs) {
 }
 
 async fn stats(args: StatsArgs) {
-    let def = match AgentDefinition::load(&args.agent_dir) {
+    let def = match load_resolved_definition(&args.agent_dir) {
         Ok(def) => def,
         Err(err) => {
             eprintln!("error: {err}");
@@ -304,7 +315,7 @@ fn new(args: NewArgs) {
         Ok(dir) => {
             eprintln!("created {} ({} template)", dir.display(), template.as_str());
             eprintln!(
-                "next: export your provider key, then `huggr run {} \"<question>\"`",
+                "next: inspect your models.toml, export its provider key, then `huggr run {} \"<question>\"`",
                 dir.display()
             );
         }
@@ -318,7 +329,7 @@ fn new(args: NewArgs) {
 /// `huggr build` is a developer command (like `new`): progress on stderr,
 /// non-zero exit on failure — not the ask/answer contract surface.
 fn build(args: BuildArgs) {
-    let def = match AgentDefinition::load(&args.agent_dir) {
+    let def = match load_resolved_definition(&args.agent_dir) {
         Ok(def) => def,
         Err(err) => {
             eprintln!("error: {err}");
@@ -396,7 +407,7 @@ async fn run(args: RunArgs) {
 
     // A bad manifest is an error answer, not a panic — shared with the
     // built binary via `surface::error_answer`/`print_answer`.
-    let def = match AgentDefinition::load(&args.agent_dir) {
+    let def = match load_resolved_definition(&args.agent_dir) {
         Ok(def) => def,
         Err(err) => {
             print_answer(&error_answer(err.to_string(), started), pretty);

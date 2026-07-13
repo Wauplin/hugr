@@ -38,14 +38,7 @@ version = "0.1.0"
 description = "Answers current-weather questions via the Open-Meteo API."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "medium"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "balanced"
 
 # GET-only HTTP, jailed to an allowlist of hosts (the sandbox boundary).
 [tools.web_fetch]
@@ -53,7 +46,7 @@ allow_hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"]
 ```
 
 - `[agent]` is the identity: the name also names the agent's state home (`~/.huggr/<name>/` by default, where traces and the scratchpad live).
-- `[models]` points at any OpenAI-compatible endpoint; `api_key_env` names the environment variable that holds the key (the value itself never appears in any output). Tiers like `[models.medium]` carry the model id and its per-million-token prices, which is how every answer gets a cost.
+- `[models]` chooses one of the fixed `fast`, `balanced`, `powerful`, or `max` tiers. The CLI creates `~/.huggr/models.toml` with the concrete provider, model ids, and prices on first run, so all local huglets share one operator-owned mapping.
 - `[tools.web_fetch]` is a *grant*: it registers the library's GET-only HTTP tool, jailed to those two Open-Meteo hosts. Delete the section and the agent has no network at all.
 - There is no `[limits]` block and none is required: an agent has no caps by default. Add `[limits]` (`max_model_calls`, `max_cost_micro_usd`, `timeout_s`) when you want to bound an ask; every unset key is unbounded.
 
@@ -79,10 +72,10 @@ pub struct Response {
 
 ## Ask a question
 
-Set the provider key named by `api_key_env`, then run one ask from inside (or pointing at) the folder:
+The generated global catalog uses the Hugging Face router and reads `HF_TOKEN`. Set that key, then run one ask from inside (or pointing at) the folder:
 
 ```bash
-export HUGGR_API_KEY=...   # e.g. an hf_... token for router.huggingface.co
+export HF_TOKEN=hf_...
 huggr run my-agent "what's the weather in Paris?"
 ```
 
@@ -116,7 +109,7 @@ A resumed ask never mutates the old trace. It writes a **new** trace with `depen
 
 ## Inspect the agent card
 
-Every agent surface answers `--describe` with its agent card, including its name, tools, context policy, priced model tiers, and limits. `--config` returns the effective identity, models, grants, skills, runtime arguments, limits, state paths, and response schema as JSON, including the API key environment variable name and whether it resolves, but never the secret:
+Every agent surface answers `--describe` with its agent card, including its name, tools, context policy, resolved model tiers, pricing, and limits. `--config` returns the effective identity, model providers and provenance, grants, skills, runtime arguments, limits, state paths, and response schema as JSON, including the API key environment variable name and whether it resolves, but never the secret:
 
 ```bash
 huggr run my-agent -- --describe

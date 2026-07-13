@@ -6,7 +6,7 @@ Guidance for working in the Huggr repository.
 
 Huggr is a **toolkit for building small, self-contained, domain-specific huglets** on a runtime-free, sans-IO Rust core.
 
-A huglet is a small Rust crate plus a system prompt and a set of tools with declared privileges. Huggr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in.
+A huglet is a small Rust crate plus a system prompt and a set of tools with declared privileges. Huggr turns that folder into one standalone binary that exposes the ask/answer contract and serves MCP through `--mcp-serve`. Traces, forking, a scratchpad, blob exchange, and cost accounting are built in. Authors select the fixed `fast`, `balanced`, `powerful`, or `max` model tier per component; hosts map those tiers to providers, concrete models, and prices through `~/.huggr/models.toml`.
 
 The documentation under `docs/` contains the design, architecture, and threat model. Read it before non-trivial changes and keep it in sync with reality.
 
@@ -108,6 +108,8 @@ A built Huggr agent can be granted as a tool with `[tools.agent.<name>]` and a s
 Process access is an explicit operator grant. Restricted `[tools.shell]` executes allowlisted programs directly without shell syntax; `full_access = true`, `[tools.mcp.<name>]`, and agent delegation are external-process escape hatches whose operating-system sandbox belongs to the host. Never register them without the matching manifest grant.
 
 When extending the host, keep capabilities uniform with no privileged built-ins. A model call is an effect provided by the host and registered like a capability. The adapter handles transport errors such as retries and 429s, while semantic errors return to the model as tool results.
+
+Model catalog resolution is host logic. For source definitions, concrete manifest entries take precedence over `HUGGR_MODEL_<TIER>`, then the global catalog. Builds embed a fully resolved catalog so artifacts remain self-contained; an existing runtime-host catalog replaces that embedded snapshot. Keep catalog IO and environment access outside `huggr-core`, keep the four public tier names synchronized across Rust, Python, TypeScript, docs, scaffolds, and skills, and expose effective mappings without exposing credential values.
 
 ## Commands
 

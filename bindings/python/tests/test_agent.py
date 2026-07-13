@@ -26,10 +26,11 @@ def make_agent(server, tools=(), **kwargs):
     return huggr.Agent(
         name="py-test-agent",
         system="Answer as JSON.",
+        providers={"test": {"base_url": server.base_url, "api_key_env": "TEST_KEY"}},
         models={
-            "base_url": server.base_url,
-            "default": "medium",
-            "medium": {
+            "default": "balanced",
+            "balanced": {
+                "provider": "test",
                 "model": "mock-model",
                 "input_usd_per_m_tokens": 1.0,
                 "output_usd_per_m_tokens": 2.0,
@@ -77,6 +78,33 @@ def test_sync_tool_round_trip(server, huggr_home):
     # Traces land under HUGGR_HOME/<agent>/traces (idea 17 layout).
     traces_dir = huggr_home / "huggr-home" / "py-test-agent" / "traces"
     assert any(traces_dir.glob("*.json"))
+
+
+def test_runtime_model_catalog_overrides_author_mapping(server):
+    agent = make_agent(
+        server,
+        model_overrides={
+            "providers": {
+                "runtime": {
+                    "base_url": server.base_url,
+                    "api_key_env": "RUNTIME_KEY",
+                }
+            },
+            "models": {
+                "powerful": {
+                    "provider": "runtime",
+                    "model": "runtime-model",
+                    "input_usd_per_m_tokens": 0.5,
+                    "output_usd_per_m_tokens": 1.0,
+                }
+            },
+        },
+    )
+    tiers = {tier.selector: tier for tier in agent.describe().model_tiers}
+    assert tiers["balanced"].details is not None
+    assert tiers["balanced"].details.model == "runtime-model"
+    assert tiers["balanced"].details.source == "runtime"
+    assert tiers["balanced"].details.resolved_from == "powerful"
 
 
 def test_async_tool(server):
@@ -304,5 +332,13 @@ def test_describe_lists_tools_and_tiers(server):
     names = [tool.name for tool in card.tools]
     assert "lookup" in names and "scratch_write" in names
     assert all(is_dataclass(tool) and is_dataclass(tool.schema) for tool in card.tools)
-    assert card.model_tiers[0].selector == "medium"
-    assert card.model_tiers[0].default is True
+    assert [tier.selector for tier in card.model_tiers] == [
+        "fast",
+        "balanced",
+        "powerful",
+        "max",
+    ]
+    balanced = card.model_tiers[1]
+    assert balanced.details is not None
+    assert balanced.details.model == "mock-model"
+    assert balanced.default is True

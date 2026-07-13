@@ -18,19 +18,21 @@ name = "policy-docs"
 version = "0.1.0"
 description = "Answers questions about the company travel policy."
 
-# [models] — provider settings + one nested table per logical tier
-# (small / medium / big). At least one tier is required. The secret is never in
-# the manifest: `api_key_env` names the environment variable to read. `default`
-# picks the tier the turn policy calls.
+# [models] selects one of the fixed fast / balanced / powerful / max tiers.
+# Concrete mappings normally come from ~/.huggr/models.toml. A manifest may
+# override a tier and provider when the huglet must pin one concrete model.
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "medium"
+default = "powerful"
 
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0     # optional: feeds AnswerMeta.cost_micro_usd
-output_usd_per_m_tokens = 1.5
+[providers.hf]
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HF_TOKEN"
+
+[models.powerful]
+provider = "hf"
+model = "openai/gpt-oss-120b:deepinfra"
+input_usd_per_m_tokens = 0.037   # optional: feeds AnswerMeta.cost_micro_usd
+output_usd_per_m_tokens = 0.17
 
 # [tools.<name>] — grants from the predefined tool library. The scope keys are
 # tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard
@@ -76,14 +78,14 @@ root = "./policies"              # read/list/search/grep/glob jailed to this fol
 
 # [context] — context projection and deterministic compaction. Optional;
 # without it the full log is projected every turn. See
-# docs/guides/09-context-compaction.md.
+# docs/concepts/context-management.md.
 # [context]
 # compaction = "summarize"          # "none" (default) | "truncate" | "summarize"
 # budget_tokens = 64000             # target size of the projected context
 # trigger_tokens = 56000            # start compacting once the projection crosses this
 # keep_recent_tokens = 8000         # never compact the most recent blocks
 # max_block_tokens = 2000           # truncate any single block above this
-# summary_model = "medium"          # tier used for summarize; defaults to `default`
+# summary_model = "fast"            # fixed tier used for summarize; defaults to `default`
 # [context.forget]
 # tool_ttl = { web_fetch = 2 }      # drop a tool's results N user turns later
 # keep_last_per_tool = { fs_read = 1 } # keep only the newest N results per tool

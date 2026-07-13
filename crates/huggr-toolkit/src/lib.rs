@@ -9,6 +9,7 @@ pub mod build_python;
 pub mod bundle;
 pub mod manifest;
 pub mod mcp_serve;
+pub mod models;
 pub mod runtime;
 pub mod runtime_args;
 pub mod scaffold;
@@ -19,6 +20,8 @@ pub mod tools;
 pub mod traces;
 
 pub use manifest::{
-    AgentDefinition, AgentMeta, LimitsConfig, ManifestError, ModelsConfig, ResponseConfig,
-    RuntimeArg, RuntimeConfig, ScratchpadConfig, TierConfig, ToolGrant, ToolKind, TracesConfig,
+    AgentDefinition, AgentMeta, LimitsConfig, MODEL_TIERS, ManifestError, ModelResolution,
+    ModelsConfig, ProviderConfig, ResponseConfig, RuntimeArg, RuntimeConfig, ScratchpadConfig,
+    TierConfig, ToolGrant, ToolKind, TracesConfig,
 };
+pub use models::{ModelCatalog, ModelConfigError};

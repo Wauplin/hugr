@@ -31,14 +31,7 @@ version = "0.1.0"
 description = "Mines a documentation folder and synthesizes grounded Q&A evaluation pairs."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "medium"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.fs_read]
 root = "."
@@ -102,7 +95,7 @@ uv pip install -r requirements.txt
 Then build the three Huggr packages as wheels (the `huggr-agents` runtime package plus the two agents) and install them. Only these come from local builds; everything else is PyPI:
 
 ```bash
-export HUGGR_API_KEY=...                              # provider key for the HF router
+export HF_TOKEN=hf_...                               # key for the default Hugging Face provider
 (cd ../../bindings/python && maturin build --release)
 huggr build ../huglet-datasmith --surface python --release
 huggr build ../huglet-docs --surface python --release
@@ -185,10 +178,7 @@ librarian = huggr.Agent(
         "limitations. Finally call `publish_data`. Respond only with the structured JSON response."
     ),
     models={
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
+        "default": "powerful",
     },
     tools=[dataset_summary, upload_readme, publish_data],
     response_schema={
@@ -249,10 +239,7 @@ judge = huggr.Agent(
         "wording; extra correct detail is fine."
     ),
     models={
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "default": "medium",
-        "medium": {"model": "google/gemma-4-31B-it:cerebras"},
+        "default": "powerful",
     },
     response_schema={
         "type": "object",
@@ -331,7 +318,7 @@ tokens: in=82598 out=2170  calls: models=5 tools=4
 duration_ms: mean=4883 median=4883 p95=4883
 
 models:
-  medium calls=5 tokens_in=82598 tokens_out=2170 cost=$0.09
+  powerful calls=5 tokens_in=82598 tokens_out=2170 cost=$0.09
 
 tools:
   fs_list calls=1 errors=0 total_latency_ms=1 mean_latency_ms=1

@@ -4,7 +4,7 @@ In this tutorial, you will define a huglet entirely in TypeScript, with config a
 
 Topics include the `Agent` class, the `ToolSpec` shape, the `ask`/`run` pair and event stream, Node and browser entry points, and cross-compatible trace verification with the Rust CLI.
 
-The config keys correspond to `huggr.toml`, with flattened context forget maps and a browser-only inline `api_key`; the `Answer` contract uses the same wire fields as the Rust and Python surfaces. The [runtime documentation](../concepts/runtime.md) explains why the brain is sans-IO and every effect is injected. This tutorial covers assembly.
+The config keys correspond to `huggr.toml`, with flattened context forget maps; the `Answer` contract uses the same wire fields as the Rust and Python surfaces. The [runtime documentation](../concepts/runtime.md) explains why the brain is sans-IO and every effect is injected. This tutorial covers assembly.
 
 ## What the package is
 
@@ -39,23 +39,17 @@ const config: AgentConfig = {
   name: "policy-helper",
   version: "0.1.0",
   system: "Answer from the policy tools. Return JSON.",
-  models: {
-    base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGGR_API_KEY",
-    default: "medium",
-    medium: { model: "moonshotai/Kimi-K2-Instruct",
-              input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
-  },
+  models: { default: "balanced" },
 };
 ```
 
 - `name` names the agent's state home (`~/.huggr/<name>/` by default), just like `[agent]` name.
-- `models` is `[models]`: provider knobs (`base_url`, `api_key`, `api_key_env`, `default`) plus one tier per other key. Each tier (`TierConfig`) carries `model` and optional `input_usd_per_m_tokens`/`output_usd_per_m_tokens`; the prices that make every answer carry a cost, identical to `[models.medium]`. Sampling knobs such as temperature are never set; the provider's defaults apply.
+- `models` chooses a default from the fixed `fast`, `balanced`, `powerful`, and `max` tiers, and may contain concrete author overrides.
 - `limits` (`LimitsConfig`) is optional and caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`. An agent has no limits by default; each unset key is unbounded.
 - `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host.
-- `api_key_env` names an environment variable; the Node runtime resolves it from `process.env`, the browser runtime has no env (pass `api_key` directly there). The value never appears in any output.
+- The built-in catalog uses the Hugging Face router and `HF_TOKEN`. Pass `{ modelCatalog: { providers, models } }` as the second argument to `createAgent` for an explicit Node or browser host override. A browser provider may include `api_key` directly; Node normally resolves `api_key_env` from `process.env`. Key values never appear in output.
 
-The `default` tier is what the brain selects as the model selector when no tier is otherwise named. If `default` is omitted, the agent picks `"medium"` if a `medium` tier exists, else the alphabetically-first tier.
+The `default` tier is what the brain selects when no component requests another tier. `Agent.resolvedModels()` returns the effective four-tier mapping after runtime and `HUGGR_MODEL_<TIER>` overrides. See [Models, providers, and pricing](../concepts/models-and-pricing.md).
 
 ## Tools: { name, description, schema, invoke }
 
@@ -282,13 +276,7 @@ import { createAgent } from "huggr-agents/node";
 const agent = createAgent({
   name: "policy-helper",
   system: "Answer from the lookup_policy tool. Return { answer: string } as JSON.",
-  models: {
-    base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGGR_API_KEY",
-    default: "medium",
-    medium: { model: "moonshotai/Kimi-K2-Instruct",
-              input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
-  },
+  models: { default: "balanced" },
   tools: [{
     name: "lookup_policy",
     description: "Search policy text for a query.",

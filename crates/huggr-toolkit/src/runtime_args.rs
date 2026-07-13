@@ -128,14 +128,6 @@ fn apply_target(
             set_object_string(&mut grant.config, key, value);
             Ok(())
         }
-        ["models", "base_url"] => {
-            def.models.base_url = Some(value);
-            Ok(())
-        }
-        ["models", "api_key_env"] => {
-            def.models.api_key_env = Some(value);
-            Ok(())
-        }
         ["models", tier, key] => {
             let Some(tier) = def.models.tiers.get_mut(*tier) else {
                 return Err(fail(format!("no model tier named `{tier}`")));
@@ -165,7 +157,7 @@ fn apply_target(
             Ok(())
         }
         _ => Err(fail(
-            "supported targets are tools.<grant>.<key>, tools.agent.<grant>.<key>, tools.mcp.<grant>.<key>, models.*, traces.store, and scratchpad.root"
+            "supported targets are tools.<grant>.<key>, tools.agent.<grant>.<key>, tools.mcp.<grant>.<key>, models.<tier>.<key>, traces.store, and scratchpad.root"
                 .to_string(),
         )),
     }
@@ -191,8 +183,8 @@ mod tests {
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 [runtime.args.docs_path]
@@ -210,8 +202,8 @@ required = true
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [tools.fs_read]
 root = "."
 [runtime.args.docs_path]
@@ -235,8 +227,8 @@ target = "tools.fs_read.root"
         let src = r#"
 [agent]
 name = "docs"
-[models.medium]
-model = "m"
+[models]
+default = "balanced"
 [runtime.args.docs_path]
 target = "tools.fs_read.root"
 required = true

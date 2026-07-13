@@ -74,7 +74,7 @@ budget_tokens = 64000             # target projection size (default 128000)
 trigger_tokens = 56000            # start compacting past this (default: budget_tokens)
 keep_recent_tokens = 8000         # protected tail window (default: budget_tokens / 3)
 max_block_tokens = 2000           # per-block truncation cap (default: budget_tokens / 4)
-summary_model = "small"           # summarize only; defaults to the default tier
+summary_model = "fast"            # summarize only; defaults to the default tier
 
 [context.forget]
 tool_ttl = { web_fetch = 2 }

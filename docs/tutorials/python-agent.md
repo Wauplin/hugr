@@ -86,29 +86,20 @@ Sync and async tools are interchangeable from the agent's perspective, but async
 agent = huggr.Agent(
     name="policy-helper",
     system="Answer from the policy tools. Return JSON.",
-    models={
-        "default": "medium",
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "medium": {
-            "model": "moonshotai/Kimi-K2-Instruct",
-            "input_usd_per_m_tokens": 1.0,
-            "output_usd_per_m_tokens": 1.5,
-        },
-    },
+    models={"default": "balanced"},
     tools=[lookup_policy],
 )
 ```
 
-The full signature is `Agent(*, name, system=None, models=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`.
+The full signature is `Agent(*, name, system=None, models=None, providers=None, model_overrides=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`.
 
 Each config key mirrors the corresponding `huggr.toml` section with the same names and shapes. The manifest details from [Build your first agent](first-agent.md) therefore transfer directly.
 
-The package exports `TierConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes as `TypedDict`s for static checking. `ModelsConfig` and the nested `mcp`/`agent` instance tables are typed mappings because tier selectors and external grant instance names are deliberately open strings.
+The package exports `ModelTier`, `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant shapes for static checking. External grant instance names remain open strings.
 
 ### `models`
 
-The `models` dict has three reserved keys (`base_url`, `api_key_env`, and `default`) plus one nested table per tier. A tier table requires a `model` id and optionally carries per-million-token pricing (`input_usd_per_m_tokens`, `output_usd_per_m_tokens`). Sampling knobs such as temperature are never set; the provider's defaults apply. The `default` knob names which tier the agent uses. This is the exact shape of the `[models]` manifest block.
+The `models` dict selects a default from `fast`, `balanced`, `powerful`, and `max`, and may pin a concrete mapping for any tier. Python-defined agents otherwise use the built-in catalog. Pass `providers` with author pins, or pass a complete `model_overrides={"providers": ..., "models": ...}` catalog when the embedding host should choose concrete mappings at runtime. The explicit runtime catalog has precedence over author and built-in mappings. See [Models, providers, and pricing](../concepts/models-and-pricing.md).
 
 ### `limits`
 
@@ -295,7 +286,7 @@ If you choose this variant, install its application dependencies next to `huggr-
 pip install pandas "pydantic>=2"
 ```
 
-Save the following as `run.py`. Set `HUGGR_API_KEY` to a key for the configured OpenAI-compatible endpoint before running it:
+Save the following as `run.py`. Set `HF_TOKEN` for the built-in Hugging Face catalog before running it:
 
 ```python
 from typing import Literal
@@ -380,14 +371,7 @@ Base every account and revenue figure on the tool result.
 Return a RetentionReport JSON object and no additional fields.
 """,
     models={
-        "default": "medium",
-        "base_url": "https://router.huggingface.co/v1",
-        "api_key_env": "HUGGR_API_KEY",
-        "medium": {
-            "model": "moonshotai/Kimi-K2-Instruct",
-            "input_usd_per_m_tokens": 1.0,
-            "output_usd_per_m_tokens": 1.5,
-        },
+        "default": "balanced",
     },
     tools=[find_at_risk_accounts],
     response_schema=retention_report.json_schema(),

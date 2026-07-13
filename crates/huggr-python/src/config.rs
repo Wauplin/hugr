@@ -7,13 +7,17 @@ use std::collections::BTreeMap;
 
 use huggr_toolkit::manifest::{
     AgentDefinition, AgentMeta, ModelsConfig, ScratchpadConfig, TierConfig, ToolGrant, ToolKind,
-    TracesConfig,
+    TracesConfig, MODEL_TIERS,
+};
+use huggr_toolkit::models::{
+    default_catalog, load_global_catalog_if_exists, resolve_runtime_definition,
+    resolve_source_definition, ModelCatalog,
 };
 use serde_json::Value;
 
 /// Keys of the `models` dict that are provider knobs, not tier tables — the
 /// same reserved set as the `[models]` manifest block.
-const MODEL_KNOBS: &[&str] = &["base_url", "api_key_env", "default"];
+const MODEL_KNOBS: &[&str] = &["default"];
 
 pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
     let obj = cfg.as_object().ok_or("agent config must be an object")?;
@@ -23,13 +27,15 @@ pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
         .filter(|n| !n.trim().is_empty())
         .ok_or("agent config requires a non-empty `name`")?;
 
-    let mut def = AgentDefinition {
+    let def = AgentDefinition {
         agent: AgentMeta {
             name: name.to_string(),
             version: str_field(obj.get("version")).unwrap_or_default(),
             description: str_field(obj.get("description")).unwrap_or_default(),
         },
         models: models_from(obj.get("models"))?,
+        providers: section(obj.get("providers"), "providers")?,
+        model_sources: Default::default(),
         tools: grants_from(obj.get("grants"))?,
         skills: Vec::new(),
         limits: section(obj.get("limits"), "limits")?,
@@ -42,13 +48,34 @@ pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
         system_prompt: str_field(obj.get("system")),
         source_dir: None,
     };
+    let mut def = def;
+    if let Some(summary_model) = def.context.summary_model.as_deref() {
+        if !MODEL_TIERS.contains(&summary_model) {
+            return Err(format!(
+                "unknown context summary model `{summary_model}`; expected fast, balanced, powerful, or max"
+            ));
+        }
+    }
     if let Some(store) = obj.get("traces").and_then(Value::as_str) {
         def.traces.store = Some(store.to_string());
     }
     if let Some(root) = obj.get("scratchpad").and_then(Value::as_str) {
         def.scratchpad.root = Some(root.to_string());
     }
-    Ok(def)
+    let explicit = obj
+        .get("model_overrides")
+        .filter(|value| !value.is_null())
+        .map(|value| serde_json::from_value::<ModelCatalog>(value.clone()))
+        .transpose()
+        .map_err(|error| format!("invalid `model_overrides`: {error}"))?;
+    let global = load_global_catalog_if_exists().map_err(|error| error.to_string())?;
+    if let Some(explicit) = explicit.as_ref() {
+        resolve_runtime_definition(&def, Some(explicit), global.as_ref())
+            .map_err(|error| error.to_string())
+    } else {
+        resolve_source_definition(&def, global.as_ref().unwrap_or(&default_catalog()))
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn str_field(value: Option<&Value>) -> Option<String> {
@@ -75,9 +102,7 @@ fn models_from(value: Option<&Value>) -> Result<ModelsConfig, String> {
     };
     let obj = value.as_object().ok_or("`models` must be an object")?;
     let mut models = ModelsConfig {
-        base_url: str_field(obj.get("base_url")),
-        api_key_env: str_field(obj.get("api_key_env")),
-        default: str_field(obj.get("default")),
+        default: str_field(obj.get("default")).or_else(|| Some("balanced".to_string())),
         tiers: BTreeMap::new(),
     };
     for (key, tier) in obj {

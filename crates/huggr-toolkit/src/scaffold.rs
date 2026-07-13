@@ -164,7 +164,7 @@ fn blank_manifest_for(name: &str) -> String {
         "# Huggr agent definition — edit, then run with:\n\
          #   {name} <question>            (a built binary)\n\
          #   huggr run . \"<question>\"      (from this folder)\n\
-         # Set the provider key first:   export HUGGR_API_KEY=...\n\
+         # The first `huggr` run creates ~/.huggr/models.toml. Set the key named there.\n\
          \n\
          [agent]\n\
          name = \"{name}\"\n\
@@ -172,14 +172,7 @@ fn blank_manifest_for(name: &str) -> String {
          description = \"TODO: one line describing what this agent answers.\"\n\
          \n\
          [models]\n\
-         base_url = \"https://router.huggingface.co/v1\"\n\
-         api_key_env = \"HUGGR_API_KEY\"\n\
-         default = \"medium\"\n\
-         \n\
-         [models.medium]\n\
-         model = \"google/gemma-4-31B-it:cerebras\"\n\
-         input_usd_per_m_tokens = 1.0\n\
-         output_usd_per_m_tokens = 1.5\n\
+         default = \"balanced\"\n\
          \n\
          # No external tools — this agent has only its scratchpad. Add a\n\
          # library grant here, e.g. [tools.fs_read] root = \"./data\".\n\
@@ -276,7 +269,7 @@ mod tests {
                     panic!("template {} manifest must parse: {e}", template.as_str())
                 });
             assert_eq!(def.agent.name, "my-agent");
-            assert_eq!(def.default_tier(), Some("medium"));
+            assert_eq!(def.default_tier(), Some("balanced"));
             // SYSTEM.md carries the template vars for huggr run to substitute.
             assert!(
                 files

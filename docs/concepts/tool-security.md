@@ -104,12 +104,7 @@ version = "0.1.0"
 description = "Summarizes recent changes in a repository."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-[models.default]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "balanced"
 
 [tools.fs_read]
 root = "."

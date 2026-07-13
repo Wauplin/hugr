@@ -36,7 +36,7 @@ Each agent wheel exposes an in-process `ask(docs_path, question) -> Answer` whos
 ## Run
 
 ```bash
-export HUGGR_API_KEY=...        # provider key for the HF router
+export HF_TOKEN=hf_...         # key for the default Hugging Face provider
 hf auth login                  # Hub credentials (librarian uploads, eval downloads)
 
 .venv/bin/python pipeline.py   # generate → publish to <you>/huglet-docs-qa

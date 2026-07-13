@@ -8,14 +8,7 @@ version = "0.1.0"
 description = "Analyzes an agent's stored traces and feedback and reports improvement suggestions."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "medium"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.traces_read]
 root = "."
@@ -26,4 +19,3 @@ positional = true
 required = true
 env = "HUGGR_INSIGHTS_HOME"
 help = "Agent home directory to analyze (e.g. ~/.huggr/huglet-docs)."
-

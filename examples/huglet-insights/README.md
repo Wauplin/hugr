@@ -7,7 +7,7 @@ It only ever *reports*: suggestions are for a human (or an orchestrator) to revi
 ## Run it
 
 ```bash
-export HUGGR_API_KEY=...            # your model provider key
+export HF_TOKEN=hf_...             # key for the default Hugging Face provider
 huggr run . ~/.huggr/huglet-docs "What should huglet-docs improve?"
 ```
 

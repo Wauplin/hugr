@@ -10,7 +10,7 @@ The idea is that a specialist with a focused prompt and five jailed tools is che
 
 ```bash
 cargo run -p huggr-toolkit --bin huggr -- new my-agent            # scaffold an agent crate
-export HUGGR_API_KEY=hf_...                                       # the provider key named by the manifest
+export HF_TOKEN=hf_...                                            # key for the default Hugging Face provider
 cargo run -p huggr-toolkit --bin huggr -- run my-agent "question" # interpret it (dev loop)
 cargo run -p huggr-toolkit --bin huggr -- build my-agent          # ship it: one standalone binary
 ./my-agent/dist/my-agent-cli/target/debug/my-agent "question"    # answers; --trace <id> resumes; --mcp-serve serves MCP
@@ -25,7 +25,7 @@ Agent state lives under `~/.huggr/<agent-name>/` by default: immutable traces in
 ```
 my-agent/
   Cargo.toml          # Rust crate metadata; typed contracts and hooks live here
-  huggr.toml           # name, model tiers + pricing, tool grants + scopes, limits
+  huggr.toml           # name, required model tier, tool grants + scopes, limits
   SYSTEM.md           # the system prompt
   src/lib.rs          # optional typed response / hooks / custom Rust wiring
 ```
@@ -36,17 +36,13 @@ name = "policy-docs"
 description = "Answers questions about the company travel policy."
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.fs_read]
 root = "./policies"        # read-only, jailed to this folder
 ```
+
+The manifest chooses among four stable capability tiers: `fast`, `balanced`, `powerful`, and `max`. Concrete providers, model ids, and prices normally live once in `~/.huggr/models.toml`; the CLI creates that file with usable defaults on first run. A build resolves and embeds the mappings, while a `models.toml` on the machine running the built artifact overrides the embedded snapshot. See [Models, providers, and pricing](docs/concepts/models-and-pricing.md).
 
 The manifest defines the agent's blast radius and is the document to audit. Grant-driven tools that are not declared are not registered; the per-lineage scratchpad is part of every ask. Unknown keys are hard errors, so a typo cannot silently widen or narrow the grant.
 
@@ -67,7 +63,7 @@ The built-in library includes jailed filesystem reads and writes, restricted or 
 [`examples/huglet-docs`](examples/huglet-docs/) answers questions about a documentation folder. It has no shell, write, or network tools; only the read-only, folder-jailed `fs_*` family.
 
 ```bash
-export HUGGR_API_KEY=hf_...   # or any OpenAI-compatible endpoint key
+export HF_TOKEN=hf_...
 cargo run -p huggr-toolkit --bin huggr -- run examples/huglet-docs ./docs "What is the narrow-waist rule?" | jq
 ```
 

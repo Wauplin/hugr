@@ -11,14 +11,10 @@ fn reference_manifest_parses_without_warnings() {
     assert_eq!(def.agent.version, "0.1.0");
     assert!(!def.agent.description.is_empty());
 
-    assert_eq!(
-        def.models.base_url.as_deref(),
-        Some("https://router.huggingface.co/v1")
-    );
-    assert_eq!(def.models.api_key_env.as_deref(), Some("HUGGR_API_KEY"));
-    assert_eq!(def.default_tier(), Some("medium"));
-    let medium = &def.models.tiers["medium"];
-    assert_eq!(medium.input_usd_per_m_tokens, Some(1.0));
+    assert_eq!(def.providers["hf"].api_key_env, "HF_TOKEN");
+    assert_eq!(def.default_tier(), Some("powerful"));
+    let powerful = &def.models.tiers["powerful"];
+    assert_eq!(powerful.input_usd_per_m_tokens, Some(0.037));
 
     // Only fs_read is uncommented in the reference.
     assert_eq!(def.tools.len(), 1);

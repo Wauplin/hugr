@@ -26,11 +26,11 @@ my-agent/
   src/lib.rs
 ```
 
-Keep `Cargo.toml` as a normal Rust crate manifest. Put identity, provider configuration, grants, and limits in `huggr.toml`; instructions in `SYSTEM.md`; typed contracts and deterministic hooks in `src/lib.rs`.
+Keep `Cargo.toml` as a normal Rust crate manifest. Put identity, required model tiers, grants, and limits in `huggr.toml`; put the operator's concrete provider and model mappings in `~/.huggr/models.toml`; instructions in `SYSTEM.md`; typed contracts and deterministic hooks in `src/lib.rs`.
 
 ## Manifest cheat sheet
 
-Unknown fixed-schema keys are errors. Tier names, tool instance names, and forget-rule tool names are open strings.
+Unknown fixed-schema keys are errors. Model tiers are exactly `fast`, `balanced`, `powerful`, and `max`; tool instance names and forget-rule tool names are open strings.
 
 ```toml
 [agent]
@@ -41,14 +41,7 @@ description = "Answers questions about travel policy."
 skills = ["skills/policy-review"]
 
 [models]
-base_url = "https://router.huggingface.co/v1"
-api_key_env = "HUGGR_API_KEY"
-default = "medium"
-
-[models.medium]
-model = "google/gemma-4-31B-it:cerebras"
-input_usd_per_m_tokens = 1.0
-output_usd_per_m_tokens = 1.5
+default = "powerful"
 
 [tools.fs_read]
 root = "./policies"
@@ -93,7 +86,7 @@ budget_tokens = 64000
 trigger_tokens = 56000
 keep_recent_tokens = 8000
 max_block_tokens = 2000
-summary_model = "medium"
+summary_model = "fast"
 
 [context.forget.tool_ttl]
 web_fetch = 4
@@ -119,6 +112,8 @@ schema = "response.schema.json"
 ```
 
 Use `[response].schema` only for the legacy manifest-owned schema path. Prefer a Rust response contract. Omit optional sections rather than copying placeholders; especially avoid custom scratch/trace paths unless the default `~/.huggr/<agent>/` home is unsuitable.
+
+The CLI creates `~/.huggr/models.toml` on first run. That file maps fixed tiers to provider aliases, concrete model ids, and input/output prices. Source resolution is a manifest `[models.<tier>]` pin, then `HUGGR_MODEL_<TIER>`, then the global catalog. A build embeds the resolved catalog; a catalog on the runtime host overrides it. Inspect provenance and key availability with `--config`. See [Models, providers, and pricing](../../../docs/concepts/models-and-pricing.md).
 
 ## Choose grants deliberately
 
@@ -171,7 +166,7 @@ For composition and accounting, read [Compose agents and account for cost](../..
 
 ## Troubleshoot
 
-- Missing provider key: set the environment variable named by `models.api_key_env`; never put the secret in the manifest.
+- Missing provider key: inspect `--config`, then set the environment variable named by the resolved provider's `api_key_env`; never put the secret in a manifest or catalog.
 - `huggr` is not found: install `crates/huggr-toolkit` from a Huggr checkout and confirm Cargo's bin directory is on `PATH`.
 - Unknown manifest key: compare the failing table with the cheat sheet and `crates/huggr-toolkit/src/manifest.rs`.
 - Tool unavailable: add the narrowest matching grant, then confirm the registered surface with `--describe`.

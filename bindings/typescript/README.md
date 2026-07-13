@@ -8,13 +8,7 @@ import { createAgent } from "huggr-agents/node";
 const agent = createAgent({
   name: "policy-helper",
   system: "Answer from the policy tools. Return JSON.",
-  models: {
-    default: "medium",
-    base_url: "https://router.huggingface.co/v1",
-    api_key_env: "HUGGR_API_KEY",
-    medium: { model: "moonshotai/Kimi-K2-Instruct",
-              input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 1.5 },
-  },
+  models: { default: "balanced" },
   tools: [{
     name: "lookup_policy",
     description: "Search policy text.",
@@ -32,6 +26,8 @@ for await (const event of agent.run("Follow-up?", { traceId: answer.trace_id }))
 - `huggr-agents/browser`: IndexedDB stores and a fetch-based wasm loader.
 - `agent.verify(traceId)` replays a stored trace bit-for-bit through the wasm `verify_trace_json` fold, the same gate as `huggr verify`, across compatible trace stores.
 - `context` passes through to the core `BudgetPolicy`, so compaction runs inside the WASM brain.
+
+Model selection uses the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass a `modelCatalog` in the optional runtime argument to override the built-in provider, model, and pricing mappings.
 
 Tool functions are **trusted host code**: Huggr jails what the model can invoke (sandbox-by-registration), not what your TS does once invoked.
 

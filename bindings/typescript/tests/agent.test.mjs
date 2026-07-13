@@ -27,11 +27,10 @@ function makeAgent({ tools = [], limits, context, runtime = memRuntime() } = {})
     {
       name: "ts-test-agent",
       system: "Answer as JSON.",
+      providers: { test: { base_url: server.baseUrl, api_key: "test-key" } },
       models: {
-        base_url: server.baseUrl,
-        api_key: "test-key",
-        default: "medium",
-        medium: { model: "mock-model", input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 2.0 },
+        default: "balanced",
+        balanced: { provider: "test", model: "mock-model", input_usd_per_m_tokens: 1.0, output_usd_per_m_tokens: 2.0 },
       },
       tools,
       limits,
@@ -69,6 +68,20 @@ test("tool round-trip with accounting", async () => {
   assert.ok(answer.metadata.cost_micro_usd > 0);
   const second = server.requests[1];
   assert.ok(second.messages.some((m) => m.role === "tool"));
+});
+
+test("runtime model catalog overrides author mappings", () => {
+  const runtime = {
+    ...memRuntime(),
+    modelCatalog: {
+      providers: { runtime: { base_url: server.baseUrl, api_key: "runtime-key" } },
+      models: { powerful: { provider: "runtime", model: "runtime-model" } },
+    },
+  };
+  const agent = makeAgent({ runtime });
+  const resolved = agent.resolvedModels();
+  assert.equal(resolved.models.balanced.model, "runtime-model");
+  assert.equal(resolved.models.max.model, "runtime-model");
 });
 
 test("tool exceptions are semantic errors", async () => {
@@ -187,7 +200,8 @@ test("createAgent defaults to the agent home layout", async () => {
     const agent = createAgent({
       name: "ts-home-agent",
       system: "s",
-      models: { base_url: server.baseUrl, api_key: "k", default: "medium", medium: { model: "m" } },
+      providers: { test: { base_url: server.baseUrl, api_key: "k" } },
+      models: { default: "balanced", balanced: { provider: "test", model: "m" } },
     });
     server.scriptText('{"answer": "hi"}');
     const answer = await agent.ask("q");
