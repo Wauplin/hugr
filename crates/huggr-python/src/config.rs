@@ -49,6 +49,11 @@ pub fn definition_from_config(cfg: &Value) -> Result<AgentDefinition, String> {
     if let Some(root) = obj.get("scratchpad").and_then(Value::as_str) {
         def.scratchpad.root = Some(root.to_string());
     }
+    // Run the same semantic checks parse() applies to a TOML manifest, so an
+    // invalid compaction mode, a dangling default/summary tier, or a zero
+    // forget value is rejected here instead of reaching the runtime.
+    def.validate_semantics("python agent config")
+        .map_err(|err| err.to_string())?;
     Ok(def)
 }
 

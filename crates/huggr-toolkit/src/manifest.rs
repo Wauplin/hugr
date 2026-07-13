@@ -405,6 +405,31 @@ impl AgentDefinition {
         })
     }
 
+    /// Re-check the semantic invariants that `parse` enforces on a definition
+    /// **built directly** (not from TOML) — e.g. the Python surface, which
+    /// constructs `AgentDefinition` through serde and would otherwise carry an
+    /// invalid compaction mode, a dangling default/summary tier, or zero forget
+    /// values into the runtime. `label` names the source in diagnostics.
+    pub fn validate_semantics(&self, label: impl AsRef<Path>) -> Result<(), ManifestError> {
+        let path = label.as_ref();
+        if self.models.tiers.is_empty() {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: "[models] must declare at least one tier".to_string(),
+            });
+        }
+        if let Some(default) = &self.models.default
+            && !self.models.tiers.contains_key(default)
+        {
+            return Err(ManifestError::Validate {
+                path: path.to_path_buf(),
+                message: format!("[models].default = \"{default}\" names no declared tier"),
+            });
+        }
+        validate_context(&self.context, &self.models, path)?;
+        Ok(())
+    }
+
     /// The default tier selector: the explicit `[models].default`, else
     /// `medium` if present, else the first tier by name, else `None`.
     pub fn default_tier(&self) -> Option<&str> {
@@ -897,6 +922,22 @@ browser_observation = 1
             def.context.forget.keep_last_per_tool["browser_observation"],
             1
         );
+    }
+
+    #[test]
+    fn validate_semantics_rejects_a_dangling_default_on_a_built_definition() {
+        // Simulates the Python path: a definition built directly, not from TOML.
+        let mut def = AgentDefinition::parse(
+            "[agent]\nname = \"x\"\n[models.medium]\nmodel = \"m\"\n",
+            "huggr.toml",
+        )
+        .unwrap();
+        def.models.default = Some("nonesuch".to_string());
+        let err = def.validate_semantics("python agent config").unwrap_err();
+        assert!(err.to_string().contains("nonesuch"), "unexpected: {err}");
+        // A valid definition passes.
+        def.models.default = Some("medium".to_string());
+        assert!(def.validate_semantics("python agent config").is_ok());
     }
 
     #[test]
