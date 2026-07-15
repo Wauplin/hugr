@@ -46,6 +46,16 @@ pub enum ScratchEntryKind {
 #[async_trait]
 pub trait ScratchBackend: Send + Sync {
     async fn prepare(&self, parent: Option<&TraceId>) -> Result<ScratchHandle, std::io::Error>;
+    /// Prepare a working tree whose durable name is a live checkpoint id. The
+    /// default keeps custom backends compatible but does not add crash-durable
+    /// scratch state; filesystem storage overrides it.
+    async fn prepare_checkpoint(
+        &self,
+        parent: Option<&TraceId>,
+        _checkpoint: &TraceId,
+    ) -> Result<ScratchHandle, std::io::Error> {
+        self.prepare(parent).await
+    }
     async fn finalize(
         &self,
         handle: &ScratchHandle,
@@ -196,6 +206,28 @@ impl ScratchBackend for FsScratch {
                 // Seed working state but not `out/`: those files were already
                 // delivered as the parent's outbound blobs, and re-seeding them
                 // would make every follow-up re-emit its ancestors' outputs.
+                copy_tree_excluding_top(&parent_scratch, &working, crate::blobs::OUT_DIRNAME)?;
+            } else {
+                fs::create_dir_all(&working)?;
+            }
+        } else {
+            fs::create_dir_all(&working)?;
+        }
+        Ok(ScratchHandle::new(working.display().to_string()))
+    }
+
+    async fn prepare_checkpoint(
+        &self,
+        parent: Option<&TraceId>,
+        checkpoint: &TraceId,
+    ) -> Result<ScratchHandle, std::io::Error> {
+        let working = self.final_path(checkpoint);
+        if working.exists() {
+            fs::remove_dir_all(&working)?;
+        }
+        if let Some(parent_id) = parent {
+            let parent_scratch = self.final_path(parent_id);
+            if parent_scratch.exists() {
                 copy_tree_excluding_top(&parent_scratch, &working, crate::blobs::OUT_DIRNAME)?;
             } else {
                 fs::create_dir_all(&working)?;

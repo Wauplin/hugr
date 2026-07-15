@@ -21,3 +21,4 @@
   - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
 - migrate examples/chrome-extension onto the typed huggr-agents TS package (Agent + browser runtime) and delete the plain-JS driver modules
 - When the Python floor supports PEP 728, use TypedDict extra-items to describe open model-tier and grant maps without a mapping fallback.
+Expose the current live checkpoint id in streaming start events so callers can display or retain it without listing traces.

@@ -44,6 +44,42 @@ fn put_persists_and_get_reloads() {
     assert_eq!(std::fs::read(store.path_of(&id)).unwrap(), before);
 }
 
+#[test]
+fn live_checkpoint_is_listable_resumable_and_removable() {
+    let dir = TempDir::new("agent-store-checkpoint");
+    let store = TraceStore::new(dir.path());
+
+    let id = store
+        .begin_checkpoint(empty_trace(7), header("long work"))
+        .unwrap();
+    let head = store.head(&id).unwrap();
+    assert_eq!(head.trace_id, id);
+    assert_eq!(head.question, "long work");
+    assert_eq!(head.status, "interrupted");
+    assert_eq!(store.list().unwrap(), vec![head]);
+    assert_eq!(store.get(&id).unwrap().meta.created_at, Some(7));
+
+    store.remove_checkpoint(&id).unwrap();
+    assert!(matches!(store.get(&id), Err(StoreError::NotFound { .. })));
+}
+
+#[test]
+fn final_trace_id_does_not_depend_on_live_checkpoint_id() {
+    let dir_a = TempDir::new("agent-store-final-a");
+    let dir_b = TempDir::new("agent-store-final-b");
+    let store_a = TraceStore::new(dir_a.path());
+    let store_b = TraceStore::new(dir_b.path());
+
+    let checkpoint = store_a
+        .begin_checkpoint(empty_trace(7), header("long work"))
+        .unwrap();
+    let live = store_a.get(&checkpoint).unwrap();
+    let final_a = store_a.put(live, header("long work")).unwrap();
+    let final_b = store_b.put(empty_trace(7), header("long work")).unwrap();
+
+    assert_eq!(final_a, final_b);
+}
+
 /// Ids are content-derived (no RNG, no clock): the same trace bytes into two
 /// fresh stores propose the same id; different content gets a different id.
 #[test]

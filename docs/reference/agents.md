@@ -13,7 +13,7 @@ my-agent/
 - `huggr new <name> [--template weather|blank]` scaffolds a working agent crate folder. The default `weather` template is the self-contained beginner example: it grants only the allowlisted `web_fetch` tool (scoped to the Open-Meteo API hosts) and needs no local data folder, so `huggr new` → set the provider key → `huggr run` answers immediately. `blank` is the tool-free starting point.
 - `huggr run <agent-dir> "question" [--trace <id>]` is the development loop. Agents with a Rust response contract or hooks compile and reuse a cached dev shim that links the current agent crate, then run the same generated surface as the built binary; legacy manifest-schema agents can still run directly.
 - `huggr build <agent-dir> [--surface cli|python]` embeds the manifest, prompt, and bundled agent files into a **single standalone binary** that wraps the shared runtime (the default `cli` surface). It can also emit a typed language binding with `--surface python`. Building needs a Rust toolchain; running the CLI artifact does not.
-- `huggr traces <agent-dir>` lists the trace lineage tree with feedback counts. `huggr stats <agent-dir> [--trace <id> | --since <id>] [--json]` aggregates trace analytics. `huggr replay` / `huggr verify` point the replay machinery at a stored trace.
+- `huggr traces <agent-dir>` lists the trace lineage tree with feedback counts, including live snapshots left by interrupted filesystem-backed runs. `huggr stats <agent-dir> [--trace <id> | --since <id>] [--json]` aggregates trace analytics. `huggr replay` / `huggr verify` point the replay machinery at a stored trace.
 
 Every built agent binary has the same shape:
 
@@ -147,9 +147,10 @@ The orchestration model:
 
 - **New question, no `trace_id`** → fresh session; the answer carries the new `trace_id`.
 - **Follow-up, with `trace_id`** → the agent loads that trace, re-folds it into a fresh brain (instant, deterministic, zero model calls), appends the new question as a live turn, and persists the result as a **new** trace with `depends_on = parent`. The parent is never mutated.
+- **Interrupted run, with its `trace_id`** → the agent folds the last atomic live checkpoint, cancels effects that were in flight when the process stopped, and continues without repeating completed model or tool steps. `huggr traces` marks these snapshots with status `interrupted`.
 - **Fork = ask an old id twice.** Because every follow-up writes a new immutable trace, sibling branches are the default behavior: `root → t1 → {t2a, t2b}`. Lineage is a DAG recorded in trace headers; immutability makes parallel asks race-free by construction.
 
-Scratch state follows the lineage: a resumed ask sees its ancestor's notes; a fork gets a copy-on-fork view, so sibling branches never observe each other's writes.
+Scratch state follows the lineage: a resumed ask sees its ancestor's notes; a fork gets a copy-on-fork view, so sibling branches never observe each other's writes. Filesystem-backed native agents keep a live run's scratch tree under its checkpoint id, which preserves completed scratch writes across a process restart.
 
 Programmatic callers that need live progress use `Agent::ask_events(Ask)`, which returns a channel of serializable `AgentEvent` values plus a join handle for the final `Answer`. Events are host-layer observations (`AskStarted`, model/tool start/end, text deltas, notices, `Done`, `AnswerReady`); they are not core events and are not written to the durable log.
 

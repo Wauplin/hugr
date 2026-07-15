@@ -22,7 +22,7 @@ Goals:
 - **Trivial to define.** A new huglet is a human-readable, auditable Rust crate folder: a manifest, a system prompt, tool selections from a predefined library, and optional typed response/hooks/capability code in the same crate.
 - **Self-contained to ship.** `huggr build` produces one standalone CLI binary per agent; the same binary is an MCP server via `--mcp-serve`, and `--surface python` also generates a typed wheel.
 - **One invocation contract.** Every huglet accepts a question + optional metadata and returns a structured response + mandatory metadata (status, cost, duration, tokens, trace id). Orchestrators never learn per-agent APIs.
-- **Resumable and forkable by default.** Every completed turn persists an immutable trace with a `trace_id` and an optional `depends_on` parent. Passing a `trace_id` back resumes that context; passing an older one forks a sibling branch.
+- **Resumable and forkable by default.** Filesystem-backed runs atomically save live progress after each completed model or tool step. Every completed turn persists an immutable trace with a `trace_id` and an optional `depends_on` parent. Passing a completed or interrupted `trace_id` back resumes that context; passing an older one forks a sibling branch.
 - **Sandboxed by default.** A huglet gets a private scratchpad and only the optional tools it declares. Blob exchange with the caller is explicit.
 - **Deterministic and replayable.** Any session can be replayed bit-for-bit for testing, debugging, and resume because the [core is sans-IO](runtime.md).
 - **One way to do each thing.** One run path per stage (dev: `huggr run`; ship: a generated surface) and one trace format. External processes require explicit MCP, shell, delegation, or agent grants. Breaking changes are acceptable; there is no backward-compatibility ceremony.
@@ -39,7 +39,7 @@ Non-goals:
 A huglet consists of **(1) a system prompt and (2) a list of tools with associated privileges**. That pair makes it domain-specific. Every huglet also receives the following shared infrastructure:
 
 1. **A scratchpad:** a private filesystem subtree that the agent can read and write without permission round trips or access outside its root.
-2. **Traces:** every completed turn is stored as a replayable trace with a `trace_id`. Follow-up questions resume it, and older ids fork it. See [the Ask and Answer contract](../reference/agents.md#the-ask-and-answer-contract).
+2. **Traces:** every completed turn is stored as a replayable trace with a `trace_id`. A filesystem-backed run also keeps an atomic live checkpoint after each completed step. Follow-up questions resume completed or interrupted work, and older ids fork it. See [the Ask and Answer contract](../reference/agents.md#the-ask-and-answer-contract).
 3. **The brain:** the same `huggr-core` reducer, including the turn loop, context projection, and deterministic replay. See [Runtime](runtime.md).
 4. **A common API:** invocation (`ask`), asynchronous feedback (`feedback` keyed to a trace), and introspection (`--describe`: name, tools, tiers, pricing, context policy, limits; `--config`: effective runtime configuration and response schema without secret values; `--traces`: stored lineage).
 5. **Blob exchange:** a caller can give files to the agent and receive files back. Large payloads use the content-addressed blob store.

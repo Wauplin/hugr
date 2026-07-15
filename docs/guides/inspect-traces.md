@@ -2,7 +2,7 @@
 
 ## What you'll build
 
-Every Huggr ask writes an immutable trace to `~/.huggr/<agent>/traces`. This guide reads a trace, replays it event by event with `huggr replay --step`, verifies it bit-for-bit with `huggr verify`, and passes traces to an offline agent for improvement suggestions. It explains how the trace acts as the source of truth.
+Every completed Huggr ask writes an immutable trace to `~/.huggr/<agent>/traces`. Filesystem-backed native asks also keep an atomic live checkpoint after every completed step. This guide reads a trace, resumes interrupted work, replays it event by event with `huggr replay --step`, verifies it bit-for-bit with `huggr verify`, and passes traces to an offline agent for improvement suggestions. It explains how the trace acts as the source of truth.
 
 This assumes you can run and build an agent and know where cost and feedback live. See [Build your first agent](../tutorials/first-agent.md) and [Compose agents and account for cost](compose-agents.md). The trace format is specified in [the runtime documentation](../concepts/runtime.md#determinism-replay-and-traces). This guide provides the hands-on workflow.
 
@@ -14,7 +14,15 @@ Every surface (`huggr run`, a built binary, or a Python or TypeScript agent) res
 huggr traces ./examples/huglet-weather
 ```
 
-The built binary provides the same view through `--traces`. Output is a lineage tree. Each head shows its `trace_id`, parent (`depends_on`), question, status wire string (`success` / `off_topic` / `error`), and feedback count.
+The built binary provides the same view through `--traces`. Output is a lineage tree. Each head shows its `trace_id`, parent (`depends_on`), question, status wire string (`success` / `off_topic` / `error` / `interrupted`), and feedback count.
+
+An ask whose process stopped before producing an answer remains in the listing with status `interrupted`. Its mutable snapshot lives under `traces/.checkpoints/`, outside the immutable completed-trace namespace. Resume it through the normal trace argument:
+
+```bash
+huggr run ./examples/huglet-weather --trace <interrupted-trace-id> "continue from the last completed step"
+```
+
+The new ask cancels any effect that was in flight at the crash boundary and does not repeat completed model or tool steps. When the new ask completes, it writes a new immutable child trace. The interrupted parent remains available for inspection and sibling recovery attempts.
 
 The storage default and path resolution are documented in `crates/huggr-toolkit/src/surface.rs`. Home resolution is implemented in `crates/huggr-agent/src/store.rs`. Environment overrides are `HUGGR_AGENT_HOME`, `HUGGR_HOME`, and `HUGGR_BLOB_STORE`.
 
@@ -22,7 +30,7 @@ The storage default and path resolution are documented in `crates/huggr-toolkit/
 
 A trace is one JSON file keyed by a content-derived `trace_id` (sha256 of the trace, truncated; see `crates/huggr-agent/src/store.rs`). Its top-level shape lives in `crates/huggr-replay/src/lib.rs`:
 
-- **`meta`:** the header: codename, `format_version`, `trace_id`, `depends_on`, `agent_name`/`agent_version`, `question`, `status`, opaque `extra`.
+- **`meta`:** the header: codename, `format_version`, `trace_id`, `depends_on`, `agent_name`/`agent_version`, `question`, `status`, opaque `extra`. Live checkpoints use the open status string `interrupted`.
 - **`events`:** the ordered host→brain event stream and the input to replay (`Tick`s, model output, tool results, user input).
 - **`commands`:** the ordered brain→host command sequence drained by the live host and the recorded output checked by `verify` (empty in older traces → falls back to log-only comparison).
 - **`log`:** the consolidated, `seq`-stamped durable log and source of truth. It contains one `Record` per logical item (user message, consolidated model output, tool result, op-ended), never one per streaming delta.

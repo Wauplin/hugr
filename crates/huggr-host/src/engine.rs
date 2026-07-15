@@ -6,6 +6,7 @@
 //! here; the brain stays synchronous and single-threaded.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -130,6 +131,11 @@ pub struct Engine {
     /// trace can carry it (the brain branches on the policy's pure decisions —
     /// permission/background — so replay needs the same policy).
     policy_config: Option<serde_json::Value>,
+    /// Mutable host-side checkpoint. Completed traces remain immutable in the
+    /// agent store; this path is only the recoverable snapshot of a live run.
+    checkpoint_path: Option<PathBuf>,
+    checkpoint_meta: Option<huggr_replay::TraceMeta>,
+    checkpoint_dirty: bool,
 }
 
 impl Engine {
@@ -182,6 +188,7 @@ impl Engine {
     /// accumulated totals. Call this once after the last turn of a one-shot
     /// run, or when an interactive session exits.
     pub fn session_end(&mut self) {
+        self.flush_checkpoint();
         self.frontend.on_session_end();
     }
 
@@ -199,6 +206,9 @@ impl Engine {
             rec.record(&event);
         }
         self.brain.submit(tick);
+        if checkpoint_boundary(&event) {
+            self.checkpoint_dirty = true;
+        }
         self.brain.submit(event);
     }
 
@@ -219,7 +229,29 @@ impl Engine {
         if let Some(policy) = self.policy_config.clone() {
             trace = trace.with_policy(policy);
         }
+        if let Some(meta) = self.checkpoint_meta.clone() {
+            trace.meta = meta;
+            trace.meta.created_at = rec.created_at;
+        }
         Some(trace)
+    }
+
+    fn flush_checkpoint(&mut self) {
+        if !self.checkpoint_dirty {
+            return;
+        }
+        let Some(path) = self.checkpoint_path.as_ref() else {
+            return;
+        };
+        let Some(trace) = self.trace() else {
+            return;
+        };
+        match trace.save_atomic(path) {
+            Ok(()) => self.checkpoint_dirty = false,
+            Err(err) => self
+                .frontend
+                .on_notice(&format!("checkpoint failed ({}): {err}", path.display())),
+        }
     }
 
     /// Save the recorded session to `path` as a trace. Errors if recording was
@@ -249,12 +281,17 @@ impl Engine {
                 if let Some(rec) = self.recorder.as_mut() {
                     rec.record_commands(&commands);
                 }
+                // Persist after recording the commands derived from a durable
+                // event and before starting the next external effect. A crash
+                // can therefore repeat no completed model or tool step.
+                self.flush_checkpoint();
                 for command in commands {
                     self.perform(command).await;
                 }
             }
 
             if self.brain.state().inflight_len() == 0 {
+                self.flush_checkpoint();
                 break;
             }
 
@@ -341,6 +378,8 @@ impl Engine {
             // accumulate.
             Command::Checkpoint => {
                 self.tasks.retain(|_, h| !h.is_finished());
+                self.checkpoint_dirty = true;
+                self.flush_checkpoint();
             }
 
             Command::Done { reason } => {
@@ -358,10 +397,18 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        self.flush_checkpoint();
         for (_, handle) in self.tasks.drain() {
             handle.abort();
         }
     }
+}
+
+fn checkpoint_boundary(event: &Event) -> bool {
+    !matches!(
+        event,
+        Event::Tick { .. } | Event::ModelDelta { .. } | Event::CapabilityChunk { .. }
+    )
 }
 
 fn system_clock() -> u64 {
@@ -521,6 +568,8 @@ pub struct EngineBuilder {
     /// events into it (with zero IO), and the recorder is pre-loaded with those
     /// same events so the continued session re-saves the full history.
     resume: Option<Trace>,
+    checkpoint_path: Option<PathBuf>,
+    checkpoint_meta: Option<huggr_replay::TraceMeta>,
 }
 
 impl Default for EngineBuilder {
@@ -539,6 +588,8 @@ impl Default for EngineBuilder {
             policy_registry: PolicyRegistry::default(),
             record: false,
             resume: None,
+            checkpoint_path: None,
+            checkpoint_meta: None,
         }
     }
 }
@@ -618,6 +669,16 @@ impl EngineBuilder {
     /// bit-for-bit. Off by default (zero overhead).
     pub fn record(mut self, record: bool) -> Self {
         self.record = record;
+        self
+    }
+
+    /// Atomically persist the live recording at every durable step. The path
+    /// may be overwritten while the run is live; completed trace storage stays
+    /// immutable. `meta` identifies this checkpoint to the owning host store.
+    pub fn checkpoint(mut self, path: impl Into<PathBuf>, meta: huggr_replay::TraceMeta) -> Self {
+        self.record = true;
+        self.checkpoint_path = Some(path.into());
+        self.checkpoint_meta = Some(meta);
         self
     }
 
@@ -723,6 +784,9 @@ impl EngineBuilder {
             op_labels: HashMap::new(),
             recorder,
             policy_config,
+            checkpoint_path: self.checkpoint_path,
+            checkpoint_meta: self.checkpoint_meta,
+            checkpoint_dirty: false,
         }
     }
 }

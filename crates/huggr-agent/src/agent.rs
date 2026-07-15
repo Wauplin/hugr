@@ -479,6 +479,28 @@ impl Agent {
             None => None,
         };
 
+        // Filesystem-backed agents reserve a mutable checkpoint outside the
+        // immutable completed-trace namespace. It is immediately listable as
+        // `interrupted`, then atomically replaced after every durable step.
+        let live_checkpoint = if let Some(store) = &self.fs_trace_store {
+            let mut header = TraceHeader::new(
+                &self.name,
+                &self.version,
+                &ask.question,
+                crate::store::STATUS_INTERRUPTED,
+            )
+            .with_extra(ask.extra.clone());
+            if let Some(parent_id) = parent.clone() {
+                header = header.with_depends_on(parent_id);
+            }
+            let id = store.begin_checkpoint(Trace::new(Vec::new(), Vec::new(), None), header)?;
+            let checkpoint = store.get(&id)?;
+            builder = builder.checkpoint(store.checkpoint_path_of(&id), checkpoint.meta);
+            Some(id)
+        } else {
+            None
+        };
+
         // Register each granted child agent as an `agent_<name>` capability with a per-ask spend sink, so its cost folds into *this* ask's meta after the turn.
         let child_spend: Arc<Mutex<Vec<AnswerMeta>>> = Arc::new(Mutex::new(Vec::new()));
         for spec in &self.agent_tools {
@@ -491,7 +513,14 @@ impl Agent {
         }
 
         // A fresh working scratch subtree, seeded by copying the parent's finalized subtree on resume/fork — so this ask sees the ancestor's notes but never a sibling's writes.
-        let scratch_handle = self.scratch.prepare(parent.as_ref()).await?;
+        let scratch_handle = match live_checkpoint.as_ref() {
+            Some(checkpoint) => {
+                self.scratch
+                    .prepare_checkpoint(parent.as_ref(), checkpoint)
+                    .await?
+            }
+            None => self.scratch.prepare(parent.as_ref()).await?,
+        };
         let scratch = ScratchSession::new(self.scratch.clone(), scratch_handle);
         for capability in scratch.capabilities() {
             builder = builder.capability(capability);
@@ -600,6 +629,9 @@ impl Agent {
 
         // Finalize the working subtree under the new trace's id so a later resume/fork of *this* trace can seed from it. Scratch is never recorded, so this move happens after the trace is persisted.
         self.scratch.finalize(scratch.handle(), &trace_id).await?;
+        if let (Some(store), Some(checkpoint)) = (&self.fs_trace_store, &live_checkpoint) {
+            store.remove_checkpoint(checkpoint)?;
+        }
 
         let mut answer = Answer {
             status,

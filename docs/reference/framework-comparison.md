@@ -2,7 +2,7 @@
 
 This page gives a high-level comparison of Huggr, CrewAI, the LangChain ecosystem, and eve. It then lists the main features Huggr does not yet provide.
 
-The comparison reflects public documentation and Huggr `main` at commit `3ae15de` on 2026-07-13. Hosted products are included because they affect what a user can do, even when the feature is not part of the open-source framework.
+The comparison reflects public documentation and Huggr `main` at commit `ee9b0e9` on 2026-07-15, plus the live-checkpoint implementation under review. Hosted products are included because they affect what a user can do, even when the feature is not part of the open-source framework.
 
 ## High-level comparison
 
@@ -22,7 +22,7 @@ In practical terms:
 
 ## What Huggr already covers
 
-Huggr already provides the basic agent loop, streaming model output, tool calls, structured answers, agent-to-agent delegation, conversation resume and fork, local traces, cost accounting, feedback, CLI and MCP access, and Rust, Python, TypeScript, and browser embedding.
+Huggr already provides the basic agent loop, streaming model output, tool calls, structured answers, agent-to-agent delegation, conversation resume and fork, native live checkpoints, local traces, cost accounting, feedback, CLI and MCP access, and Rust, Python, TypeScript, and browser embedding.
 
 Its distinguishing features are:
 
@@ -30,6 +30,7 @@ Its distinguishing features are:
 - **Explicit permissions:** an agent receives only the tools and resource access declared in its manifest.
 - **Portable artifacts:** a built agent is a standalone program with the same ask/answer contract on every supported surface.
 - **A pure core:** model calls, files, networks, clocks, and other external effects stay outside the decision-making reducer.
+- **Interrupted-run recovery:** filesystem-backed native agents atomically save each completed step and resume the checkpoint through the existing trace id contract.
 
 ## Missing features
 
@@ -37,23 +38,22 @@ The following are gaps in the standard Huggr experience. Some underlying pieces 
 
 ### Highest priority
 
-1. **Continue interrupted work.** Huggr records completed runs, but it does not yet save live progress after each step. If a process stops halfway through a long request, it cannot reliably continue from the last completed step.
-2. **Ask a person before acting.** Huggr has internal permission request types, but its standard native host currently approves every registered tool automatically. It needs a way to pause, show the proposed action, accept or reject it, and then continue. The same mechanism should let an agent ask the user a clarifying question.
-3. **Run repeatable evaluations.** There is an evaluation example, but no general `huggr eval` command for running a set of test questions, checking answers and tool use, comparing cost and quality with a baseline, and failing CI when behavior regresses.
+1. **Ask a person before acting.** Huggr has internal permission request types, but its standard native host currently approves every registered tool automatically. It needs a way to pause, show the proposed action, accept or reject it, and then continue. The same mechanism should let an agent ask the user a clarifying question.
+2. **Run repeatable evaluations.** There is an evaluation example, but no general `huggr eval` command for running a set of test questions, checking answers and tool use, comparing cost and quality with a baseline, and failing CI when behavior regresses.
 
 ### Production operation
 
-4. **Search and monitor runs.** Huggr can inspect individual local traces and calculate aggregate statistics. It lacks indexed search across runs, standard telemetry export, dashboards, alerts, sampling, and automatic checks on live traffic.
-5. **Run as a web service.** Huggr provides a CLI, MCP server, language bindings, and a browser example. It does not provide a supported HTTP API with streaming, authentication hooks, queues, cancellation, health checks, and limits for concurrent requests.
-6. **Use more model providers directly.** The current adapter works with OpenAI-compatible APIs. Native adapters would better support providers whose streaming, tool calling, errors, or model options differ from that API.
+3. **Search and monitor runs.** Huggr can inspect individual local traces and calculate aggregate statistics. It lacks indexed search across runs, standard telemetry export, dashboards, alerts, sampling, and automatic checks on live traffic.
+4. **Run as a web service.** Huggr provides a CLI, MCP server, language bindings, and a browser example. It does not provide a supported HTTP API with streaming, authentication hooks, queues, cancellation, health checks, and limits for concurrent requests.
+5. **Use more model providers directly.** The current adapter works with OpenAI-compatible APIs. Native adapters would better support providers whose streaming, tool calling, errors, or model options differ from that API.
 
 ### Integration and application features
 
-7. **Apply checks around every operation.** Huggr lacks one standard extension point for input checks, sensitive-data removal, rate limits, tool validation, output moderation, caching, and similar policies around model and tool calls.
-8. **Search document collections.** Agents can use granted file and search tools, but Huggr has no built-in pipeline for importing documents, creating a semantic index, and retrieving relevant passages with source references.
-9. **Connect to remote tools and credentials.** Huggr supports local MCP subprocesses. It does not yet provide a standard remote MCP or OpenAPI connection layer with operation allowlists, authentication, timeouts, and credential handling outside the model.
-10. **Compose multi-step applications.** Agents can call other agents, but application authors do not have first-party helpers for sequential steps, parallel work, conditional routing, retries, and cancellation. These helpers should live outside the pure core.
-11. **Receive schedules, webhooks, and messages.** Huggr does not ship adapters for scheduled runs or services such as Slack and GitHub. Such adapters can translate incoming events into the existing ask/answer contract.
+6. **Apply checks around every operation.** Huggr lacks one standard extension point for input checks, sensitive-data removal, rate limits, tool validation, output moderation, caching, and similar policies around model and tool calls.
+7. **Search document collections.** Agents can use granted file and search tools, but Huggr has no built-in pipeline for importing documents, creating a semantic index, and retrieving relevant passages with source references.
+8. **Connect to remote tools and credentials.** Huggr supports local MCP subprocesses. It does not yet provide a standard remote MCP or OpenAPI connection layer with operation allowlists, authentication, timeouts, and credential handling outside the model.
+9. **Compose multi-step applications.** Agents can call other agents, but application authors do not have first-party helpers for sequential steps, parallel work, conditional routing, retries, and cancellation. These helpers should live outside the pure core.
+10. **Receive schedules, webhooks, and messages.** Huggr does not ship adapters for scheduled runs or services such as Slack and GitHub. Such adapters can translate incoming events into the existing ask/answer contract.
 
 ## What should remain outside `huggr-core`
 
