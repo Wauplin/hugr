@@ -35,3 +35,5 @@ examples/chrome-extension/vendor/
 # Built agent surfaces and pipeline artifacts (examples)
 examples/*/dist/
 examples/hf-librarian/qa.jsonl
+
+dev/

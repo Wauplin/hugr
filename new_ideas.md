@@ -1,7 +1,0 @@
-- (at some point - not for now) have a Android surface
-- Huggr on the Hub:
-  - Store traces, live snapshots, scratchpad, memory, etc. in buckets
-  - Run agents in Jobs / Sandbox
-  - GitHub action to generate a binary for each commit on a repo (or at least on main) => binary saved to bucket => xet dedup for more efficiency + save with commit hash + duplicate with tag and/or branch name
-- migrate examples/chrome-extension onto the typed huggr-agents TS package (Agent + browser runtime) and delete the plain-JS driver modules
-- Expose the current live checkpoint id in streaming start events so callers can display or retain it without listing traces.
