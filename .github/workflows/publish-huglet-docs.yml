@@ -1,10 +1,15 @@
 name: Publish huglet-docs to PyPI
 
-# Manual release of the huglet-docs typed Python wheel. Builds one wheel per
-# supported Python version (the extension is not abi3, so wheels are
-# version-specific) and publishes them with PyPI trusted publishing (OIDC, no
-# API token). Register this workflow as the project's trusted publisher on PyPI
-# with environment `pypi`.
+# Manual release of the huglet-docs typed Python wheel, published with PyPI
+# trusted publishing (OIDC, no API token). Register this workflow as the
+# project's trusted publisher on PyPI with environment `pypi`.
+#
+# The native extension is abi3-py39, so a single wheel covers all Python >=3.9.
+# It is built inside a manylinux_2_28 image so the wheel is tagged for an older
+# glibc and installs across most Linux distros; building on ubuntu-latest tags
+# manylinux_2_39, which is too new for most systems. Everything (compiling the
+# huggr CLI and running maturin) happens in the same container so the generated
+# project's absolute path dependency stays consistent.
 on:
   workflow_dispatch:
 
@@ -14,25 +19,21 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Install maturin
-        run: pip install maturin
+        run: /opt/python/cp312-cp312/bin/pip install maturin
       - name: Build wheel
-        run: cargo run -p huggr-toolkit --bin huggr -- build examples/huglet-docs --surface python --release
+        run: |
+          export PATH="/opt/python/cp312-cp312/bin:$PATH"
+          cargo run -p huggr-toolkit --bin huggr -- build examples/huglet-docs --surface python --release
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.python-version }}
+          name: wheel
           path: examples/huglet-docs/dist/huglet-docs-python/target/wheels/*.whl
           if-no-files-found: error
 
@@ -43,12 +44,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - name: Download wheels
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
+          name: wheel
           path: dist
-          pattern: wheel-*
-          merge-multiple: true
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
