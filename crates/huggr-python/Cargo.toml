@@ -3,7 +3,7 @@ name = "huggr-python"
 version = "0.0.2"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/huggr-rs/huggr"
+repository = "https://github.com/Wauplin/huggr"
 description = "PyO3 embedding of the huglet runtime: define agents and tools in Python, run on the Rust runtime."
 
 # Deliberately outside the root workspace: building this crate requires a
