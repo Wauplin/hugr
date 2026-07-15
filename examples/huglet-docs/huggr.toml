@@ -2,11 +2,11 @@ skills = ["skills/source-citation"]
 
 [agent]
 name = "huglet-docs"
-version = "0.0.2"
+version = "0.0.3"
 description = "Answers questions from a read-only documentation folder."
 
 [models]
-default = "powerful"
+default = "capable"
 
 # One named root; the runtime arg fills in its path. Files are addressed as
 # `docs/<path>` in tool calls.
