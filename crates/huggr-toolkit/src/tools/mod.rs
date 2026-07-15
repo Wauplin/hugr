@@ -60,8 +60,23 @@ pub const CATALOG: &[LibraryToolSpec] = &[
     LibraryToolSpec {
         id: "fs_write",
         privilege: "write",
-        tools: &["fs_write", "fs_create_dir", "fs_remove"],
-        summary: "Root-jailed filesystem writes, directory creation, and removal.",
+        // Write implies read on the same root: the `fs_read` family is registered
+        // too (unless an explicit `fs_read` grant owns the read jail).
+        tools: &[
+            "fs_write",
+            "fs_edit",
+            "fs_create_dir",
+            "fs_remove",
+            "fs_list",
+            "fs_search",
+            "fs_grep",
+            "fs_glob",
+            "fs_read",
+            "fs_read_range",
+            "fs_read_many",
+            "fs_outline",
+        ],
+        summary: "Root-jailed filesystem writes, targeted edits, directory creation, removal, and read access to the same root.",
     },
     LibraryToolSpec {
         id: "shell",
@@ -119,6 +134,13 @@ pub fn spec(id: &str) -> Option<&'static LibraryToolSpec> {
     CATALOG.iter().find(|s| s.id == id)
 }
 
+/// Whether `name` is one of the `fs_read` read-only capabilities. The `fs_write`
+/// grant registers this family too (write implies read); the host uses this to
+/// drop the overlap when an explicit `fs_read` grant is also present.
+pub fn is_read_family(name: &str) -> bool {
+    spec("fs_read").is_some_and(|s| s.tools.contains(&name))
+}
+
 /// Failure to construct a granted library tool.
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -135,6 +157,75 @@ pub enum ToolError {
         #[source]
         source: anyhow::Error,
     },
+}
+
+/// Parse the `root` scope of a filesystem grant into resolved (name, path)
+/// pairs. `root` is polymorphic:
+///
+/// - `root = "docs"` — one root, name from the final path component.
+/// - `root = ["../a", "../b"]` — several roots, names from path components.
+/// - `root = [{ name = "app", path = "../a" }]` — explicit names.
+/// - `root = { name = "app", path = "../a" }` — one explicitly named root.
+///
+/// Files are always addressed as `<name>/<path>`. Relative paths resolve
+/// against `base_dir`; names must be unique. Paths need not exist here — the
+/// jail canonicalizes.
+pub(crate) fn resolve_roots(
+    config: &serde_json::Value,
+    base_dir: &Path,
+) -> anyhow::Result<Vec<(String, std::path::PathBuf)>> {
+    use anyhow::Context;
+    let resolve = |p: &str| {
+        let path = Path::new(p);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            base_dir.join(path)
+        }
+    };
+    let derive_name = |p: &Path| -> String {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "root".to_string())
+    };
+    let entry = |v: &serde_json::Value| -> anyhow::Result<(String, std::path::PathBuf)> {
+        if let Some(s) = v.as_str() {
+            let resolved = resolve(s);
+            Ok((derive_name(&resolved), resolved))
+        } else if let Some(obj) = v.as_object() {
+            let path = obj
+                .get("path")
+                .and_then(|v| v.as_str())
+                .context("a root table requires string `path`")?;
+            let resolved = resolve(path);
+            let name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| derive_name(&resolved));
+            Ok((name, resolved))
+        } else {
+            anyhow::bail!("a root must be a path string or a {{ name, path }} table")
+        }
+    };
+
+    let root = config.get("root").cloned().unwrap_or_else(|| ".".into());
+    let out: Vec<(String, std::path::PathBuf)> = match root.as_array() {
+        Some(arr) => {
+            anyhow::ensure!(!arr.is_empty(), "`root` list cannot be empty");
+            arr.iter().map(entry).collect::<anyhow::Result<_>>()?
+        }
+        None => vec![entry(&root)?],
+    };
+    let mut seen = std::collections::HashSet::new();
+    for (name, _) in &out {
+        anyhow::ensure!(
+            seen.insert(name.as_str()),
+            "two roots resolve to the same name `{name}`; give explicit names with `root = [{{ name = \"...\", path = \"...\" }}]`"
+        );
+    }
+    Ok(out)
 }
 
 /// Build the capabilities a single library grant registers. Relative scope
@@ -154,35 +245,20 @@ pub fn build_library_grant(
     };
     match grant.name.as_str() {
         "fs_read" => {
-            let root = grant
-                .config
-                .get("root")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-            let resolved = {
-                let p = Path::new(root);
-                if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    base_dir.join(p)
-                }
-            };
-            let fs_root = FsRoot::new(&resolved).map_err(cfg)?;
-            Ok(fs_root.capabilities())
+            let roots = resolve_roots(&grant.config, base_dir).map_err(cfg)?;
+            Ok(FsRoot::with_named(roots).map_err(cfg)?.capabilities())
         }
         "fs_write" => {
-            let root = grant
-                .config
-                .get("root")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-            let p = Path::new(root);
-            let resolved = if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                base_dir.join(p)
-            };
-            Ok(FsWriteRoot::new(&resolved).map_err(cfg)?.capabilities())
+            let roots = resolve_roots(&grant.config, base_dir).map_err(cfg)?;
+            let mut caps = FsWriteRoot::with_named(roots.clone())
+                .map_err(cfg)?
+                .capabilities();
+            // Writing a folder implies reading it: `fs_edit` needs the current
+            // bytes, and a writer that cannot read is rarely useful. An explicit
+            // `fs_read` grant owns the read jail instead; the host suppresses this
+            // overlapping read family when one is present (see `runtime`).
+            caps.extend(FsRoot::with_named(roots).map_err(cfg)?.capabilities());
+            Ok(caps)
         }
         "shell" => {
             let mut config = grant.config.clone();
@@ -259,6 +335,51 @@ mod tests {
     }
 
     #[test]
+    fn resolve_roots_parses_single_array_and_tables() {
+        use std::path::PathBuf;
+        let base = Path::new("/tmp");
+        let one = resolve_roots(&json!({ "root": "docs" }), base).unwrap();
+        assert_eq!(one, vec![("docs".to_string(), PathBuf::from("/tmp/docs"))]);
+        // Default single root is `.`.
+        let dot = resolve_roots(&json!({}), base).unwrap();
+        assert_eq!(dot.len(), 1);
+        // A single `{ name, path }` table.
+        let single = resolve_roots(&json!({ "root": { "name": "d", "path": "." } }), base).unwrap();
+        assert_eq!(single, vec![("d".to_string(), PathBuf::from("/tmp/."))]);
+        // Array of strings derives names from the final path component.
+        let many = resolve_roots(&json!({ "root": ["../repo-a", "../repo-b"] }), base).unwrap();
+        assert_eq!(
+            many.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            vec!["repo-a", "repo-b"]
+        );
+        // Tables carry explicit names; absolute paths stay absolute.
+        let named = resolve_roots(
+            &json!({ "root": [{ "name": "x", "path": "../a" }, { "name": "y", "path": "/abs/b" }] }),
+            base,
+        )
+        .unwrap();
+        assert_eq!(named[0], ("x".to_string(), PathBuf::from("/tmp/../a")));
+        assert_eq!(named[1], ("y".to_string(), PathBuf::from("/abs/b")));
+        // Two roots that derive the same name are rejected with guidance.
+        let dup = resolve_roots(&json!({ "root": ["../a/repo", "../b/repo"] }), base);
+        assert!(dup.is_err());
+    }
+
+    #[test]
+    fn fs_read_grant_with_multiple_roots_builds() {
+        let base =
+            std::env::temp_dir().join(format!("huggr-fsread-multi-grant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("a")).unwrap();
+        std::fs::create_dir_all(base.join("b")).unwrap();
+        let caps =
+            build_library_grant(&grant("fs_read", json!({ "root": ["a", "b"] })), &base).unwrap();
+        assert!(caps.iter().any(|c| c.name() == "fs_read"));
+        assert!(caps.iter().any(|c| c.name() == "fs_grep"));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn unknown_grant_errors() {
         // `dyn Capability` is not Debug, so match rather than unwrap_err.
         let result = build_library_grant(&grant("nope", json!({})), Path::new("."));
@@ -291,5 +412,30 @@ mod tests {
         assert_eq!(caps[0].name(), "web_fetch");
         assert!(!caps[0].requires_permission());
         assert_eq!(spec("web_fetch").unwrap().privilege, "network");
+    }
+
+    #[test]
+    fn fs_write_grant_registers_edit_and_the_read_family() {
+        let dir = std::env::temp_dir().join(format!("huggr-fs-write-grant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let caps = build_library_grant(&grant("fs_write", json!({ "root": "." })), &dir).unwrap();
+        let names: Vec<_> = caps.iter().map(|c| c.name().to_string()).collect();
+        assert!(names.contains(&"fs_edit".to_string()), "{names:?}");
+        // Write implies read: the read family rides along on the same grant.
+        assert!(names.contains(&"fs_read".to_string()), "{names:?}");
+        assert!(names.contains(&"fs_grep".to_string()), "{names:?}");
+        assert!(
+            names
+                .iter()
+                .all(|n| is_read_family(n) || n.starts_with("fs_"))
+        );
+        // The catalog and the built capabilities agree on the registered set.
+        let mut cataloged: Vec<_> = spec("fs_write").unwrap().tools.to_vec();
+        cataloged.sort_unstable();
+        let mut built: Vec<&str> = names.iter().map(String::as_str).collect();
+        built.sort_unstable();
+        assert_eq!(built, cataloged);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

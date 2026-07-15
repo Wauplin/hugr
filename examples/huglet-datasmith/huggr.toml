@@ -12,8 +12,9 @@ description = "Mines a documentation folder and synthesizes grounded Q&A evaluat
 default = "powerful"
 
 # Read-only filesystem access, jailed to the docs folder passed at run time.
+# One named root; files are addressed as `docs/<path>` in tool calls.
 [tools.fs_read]
-root = "."
+root = [{ name = "docs", path = "." }]
 
 [runtime.args.docs_path]
 target = "tools.fs_read.root"

@@ -119,8 +119,8 @@ Use [Hugging Face Inference Providers](https://huggingface.co/inference/models) 
 
 ## Choose grants deliberately
 
-- `fs_read` adds list, literal search, regex grep, glob, read, range, batch, and outline capabilities under `root`; `root = "/"` is an explicit full-disk read grant.
-- `fs_write` creates or appends files, creates one directory, and removes one file or empty directory under `root`; `root = "/"` is an explicit full-disk write grant.
+- `fs_read` adds list, literal search, regex grep, glob, read, range, batch, and outline capabilities. `root` is polymorphic: a path (`root = "./docs"`), a list (`root = ["../a", "../b"]`), or `{ name, path }` tables (`root = [{ name = "app", path = "../a" }]`). Files are always addressed as `<root-name>/<path>` (single root included); a search with no path spans every root, and `fs_list` with no path lists the root names. Names default to the path's final component; pin an explicit name when the path is a runtime arg. `root = "/"` is a full-disk read grant.
+- `fs_write` creates or appends files, edits an exact text match in place (`fs_edit`), creates one directory, and removes one file or empty directory, over the same polymorphic `root` as `fs_read`; it also grants the `fs_read` family on the same roots (write implies read), so grant `fs_write` alone for full read+write access and add `[tools.fs_read]` only for read-only or a different read root; `root = "/"` is a full-disk write grant.
 - `shell` requires either `allow_commands` for direct execution without shell syntax or `full_access = true` for `<shell> -lc`; full mode relies on the operator's OS sandbox.
 - `web_fetch` is GET-only by default, has no automatic redirects, fails closed unless `allow_hosts` permits the destination, and supports HTML-to-Markdown conversion.
 - `web_search` uses Exa and reads its key from `api_key_env` (`EXA_API_KEY` by default).

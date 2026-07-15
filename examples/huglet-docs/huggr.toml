@@ -8,8 +8,10 @@ description = "Answers questions from a read-only documentation folder."
 [models]
 default = "powerful"
 
+# One named root; the runtime arg fills in its path. Files are addressed as
+# `docs/<path>` in tool calls.
 [tools.fs_read]
-root = "."
+root = [{ name = "docs", path = "." }]
 
 [runtime.args.docs_path]
 target = "tools.fs_read.root"

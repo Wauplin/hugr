@@ -37,11 +37,15 @@ output_usd_per_m_tokens = 4.4
 # [tools.<name>] — grants from the predefined tool library. The scope keys are
 # tool-specific and never unknown-key-checked. Elsewhere, unknown keys are hard
 # errors. A tool is jailed to the scope declared here.
+# `root` names one or more jails; files are addressed as <root-name>/<path>.
+# A bare string names the root by its final path component ("policies" here).
 [tools.fs_read]
 root = "./policies"              # read/list/search/grep/glob jailed to this folder
+# root = ["../repo-a", "../repo-b"]                  # several jails, names from paths
+# root = [{ name = "app", path = "../frontend" }]    # or pin explicit names
 
 # [tools.fs_write]
-# root = "./generated"             # use "/" only for an explicit full-disk grant
+# root = "./generated"             # write+edit+read on this folder (write implies read); "/" is full-disk
 
 # [tools.shell]
 # allow_commands = ["git", "cargo"] # direct execution; no shell operators

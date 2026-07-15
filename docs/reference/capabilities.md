@@ -1,10 +1,21 @@
 # Built-in capabilities
 
-This page lists the capabilities provided by `huggr-toolkit`. Grant-driven capabilities are registered only when their manifest grant is present; scratchpad capabilities are part of every ask. Relative filesystem roots resolve from the agent crate, and `root = "/"` explicitly grants the full filesystem while tool paths remain relative to that root.
+This page lists the capabilities provided by `huggr-toolkit`. Grant-driven capabilities are registered only when their manifest grant is present; scratchpad capabilities are part of every ask. Relative filesystem roots resolve from the agent crate, and `root = "/"` explicitly grants the full filesystem.
 
 ## Filesystem reads
 
-`[tools.fs_read]` accepts `root` (default `.`) and registers eight read-only capabilities under that canonicalized root.
+`[tools.fs_read]` registers eight read-only capabilities over one or more named, canonicalized roots. Files are always addressed as `<root-name>/<path>`: a tree operation (`fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_outline`) with no `path` spans every root, and `fs_list` with no `path` lists the root names.
+
+`root` is polymorphic and defaults to `.`:
+
+```toml
+[tools.fs_read]
+root = "./policies"                                    # one root named "policies"
+# root = ["../repo-a", "../repo-b"]                    # several; names from the paths
+# root = [{ name = "app", path = "../frontend" }]      # pin explicit names
+```
+
+A name defaults to the path's final component; pin explicit names with the `{ name, path }` form when two roots would otherwise collide or when the path is a runtime argument (so the name does not depend on the path passed in).
 
 | Capability | What it does | Limits |
 | --- | --- | --- |
@@ -17,13 +28,15 @@ This page lists the capabilities provided by `huggr-toolkit`. Grant-driven capab
 | `fs_read_many` | Reads several text files. | At most 50 files and 1 MB per file. |
 | `fs_outline` | Extracts Markdown-style headings from a file or directory. | Configurable document and heading caps. |
 
-Absolute tool paths, `..`, and symlink escapes are rejected. A full-disk grant uses `[tools.fs_read] root = "/"`; for example, pass `etc/hosts` to read `/etc/hosts`.
+Absolute tool paths, `..`, and symlink escapes are rejected. A full-disk grant uses `[tools.fs_read] root = "/"` (the root is named `root` unless you pin a name), so `root/etc/hosts` reads `/etc/hosts`.
 
 ## Filesystem writes
 
-`[tools.fs_write]` accepts `root` (default `.`) and registers `fs_write`, `fs_create_dir`, and `fs_remove`. `fs_write` creates, replaces, or appends to one file whose parent already exists. `fs_create_dir` creates one directory whose parent exists. `fs_remove` removes one file or one empty directory, never removes recursively, and refuses to remove the configured root itself (including via `.` or `a/..` spellings).
+`[tools.fs_write]` takes the same polymorphic `root` as `fs_read` (one or more named jails; write paths are addressed as `<root-name>/<path>`) and registers `fs_write`, `fs_edit`, `fs_create_dir`, and `fs_remove`. `fs_write` creates, replaces, or appends to one file whose parent already exists. `fs_edit` replaces an exact text occurrence in one existing file; `old` must match verbatim and, unless `replace_all` is set, must occur exactly once. `fs_create_dir` creates one directory whose parent exists. `fs_remove` removes one file or one empty directory, never removes recursively, and refuses to remove a jail root itself.
 
-Write targets and their canonicalized parents must remain under the configured root, including through symlinks. Use `root = "/"` only when the operator intends to grant full-disk writes.
+Write implies read on the same root(s): `[tools.fs_write]` also registers the full `fs_read` family (see above) jailed to the same roots, so granting write alone gives an agent both read and write access to those folders. Add a separate `[tools.fs_read]` only for read-only access or to read a different root; when both grants are present the explicit `fs_read` owns the read jail and the write grant does not register the read family a second time.
+
+Write targets and their canonicalized parents must remain under their jail root, including through symlinks. Use `root = "/"` only when the operator intends to grant full-disk writes.
 
 ## Shell
 

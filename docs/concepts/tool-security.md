@@ -21,17 +21,19 @@ One grant can register several capabilities. `[tools.fs_read]` registers the eig
 
 ## Filesystem grants
 
-`fs_read` and `fs_write` are each jailed to one canonicalized root, declared per grant:
+`fs_read` and `fs_write` are each jailed to one or more canonicalized roots, declared per grant. `root` is polymorphic: a path, a `{ name, path }` table, or a list of either.
 
 ```toml
 [tools.fs_read]
-root = "./policies"        # relative roots resolve from the agent crate
+root = "./policies"                                # one root named "policies"
 
 [tools.fs_write]
-root = "./output"
+root = ["./output", "./scratch"]                   # two named write jails
 ```
 
-`fs_read` registers the read-only family: `fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`, each with fixed size and match caps (200 KB default reads, 1 MB hard cap, 2,000 entries per listing). `fs_write` registers `fs_write`, `fs_create_dir`, and `fs_remove`; removal takes one file or one empty directory and is never recursive.
+Files are always addressed as `<root-name>/<path>` (a single root included); a name defaults to the path's final component and must be unique. A tree operation with no path spans every root, and `fs_list` with no path lists the root names. Each root is its own canonicalized jail and the jails never merge, so a traversal out of one root cannot reach another.
+
+`fs_read` registers the read-only family: `fs_list`, `fs_search`, `fs_grep`, `fs_glob`, `fs_read`, `fs_read_range`, `fs_read_many`, and `fs_outline`, each with fixed size and match caps (200 KB default reads, 1 MB hard cap, 2,000 entries per listing). `fs_write` registers `fs_write`, `fs_edit`, `fs_create_dir`, and `fs_remove`; `fs_edit` replaces an exact, by-default-unique text match in one existing file, and removal takes one file or one empty directory and is never recursive. Write implies read on the same root(s), so `fs_write` also registers the `fs_read` family jailed to the same root or roots; a separate `[tools.fs_read]` grant, when present, owns the read jail and the write grant does not register those read tools twice.
 
 The jail works the same way in both: tool paths must be relative, `..` and absolute paths are rejected before any filesystem touch, and every resolved target is canonicalized and re-checked against the root, so a symlink inside the root that points outside does not escape. `root = "/"` is an explicit full-disk grant, not a misconfiguration the jail softens; if you write it, you mean it.
 
@@ -107,16 +109,16 @@ description = "Summarizes recent changes in a repository."
 default = "balanced"
 
 [tools.fs_read]
-root = "."
+root = [{ name = "repo", path = "." }]
 
 [tools.shell]
 allow_commands = ["git"]
 
 [tools.fs_write]
-root = "./reports"
+root = [{ name = "reports", path = "./reports" }]
 ```
 
-The review reads in one pass: this agent can read the repo, run `git` (including, note, `git push` if the environment has credentials), and write inside `reports/`. It cannot fetch URLs, cannot run any other program, and cannot write outside `reports/`. If `git`'s write subcommands are unacceptable, the fix is environmental (a read-only checkout or credential-free environment), because restricted mode allowlists programs, not subcommands.
+The review reads in one pass: this agent can read the repo (as `repo/<path>`), run `git` (including, note, `git push` if the environment has credentials), and write inside `reports/` (as `reports/<path>`). It cannot fetch URLs, cannot run any other program, and cannot write outside `reports/`. If `git`'s write subcommands are unacceptable, the fix is environmental (a read-only checkout or credential-free environment), because restricted mode allowlists programs, not subcommands.
 
 ## Limitations
 
