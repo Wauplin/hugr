@@ -20,7 +20,3 @@
 - **Tool:** the model-facing view of an effect: a manifest grant that advertises one or more named, schema-described functions to the model. A built Huggr agent can itself be granted as a tool.
 - **Capability:** the host-side implementation behind a tool, registered in the host's capability registry and invoked when the brain emits `StartCapability`. See [Tools and capabilities](agents.md#tools-and-capabilities).
 - **Event / Command / Op / Projection / Policy:** the core vocabulary described in [Runtime](../concepts/runtime.md).
-
-## Name
-
-**Huggr** is Old Norse for "mind, thought, inner intent": a small, portable agent mind that runs inside many bodies. Pronounced **HUG-er**. Crates follow `huggr-<area>`; the CLI reads naturally as `huggr run`.
