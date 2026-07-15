@@ -78,25 +78,14 @@ struct NamedWriteJail {
 
 #[derive(Clone)]
 /// One or more named canonicalized write jails shared by the write
-/// capabilities. A single jail keeps bare relative paths; with more than one,
-/// callers address files as `<root-name>/<path>`.
+/// capabilities. Callers address files as `<root-name>/<path>`.
 pub struct FsWriteRoot {
     jails: Arc<Vec<NamedWriteJail>>,
 }
 
 impl FsWriteRoot {
-    /// Canonicalize a single directory used as the write jail. Paths stay bare.
-    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
-        let jail = WriteJail::new(root)?;
-        let name = default_root_name(&jail.root);
-        Ok(Self {
-            jails: Arc::new(vec![NamedWriteJail { name, jail }]),
-        })
-    }
-
-    /// Build from named roots. With one entry paths stay bare; with several,
-    /// the first path segment selects the root by name. Names must be unique
-    /// and free of `/`.
+    /// Build from named roots. Every root is addressed as `<name>/<path>`;
+    /// names must be unique and free of `/`.
     pub fn with_named(roots: Vec<(String, PathBuf)>) -> Result<Self> {
         anyhow::ensure!(!roots.is_empty(), "fs_write requires at least one root");
         let mut jails = Vec::with_capacity(roots.len());
@@ -123,42 +112,30 @@ impl FsWriteRoot {
         ]
     }
 
-    /// The canonical jail roots (one per named root).
-    pub fn roots(&self) -> Vec<PathBuf> {
-        self.jails.iter().map(|j| j.jail.root.clone()).collect()
-    }
-
-    fn named(&self) -> bool {
-        self.jails.len() > 1
-    }
-
     fn root_names(&self) -> Vec<&str> {
         self.jails.iter().map(|j| j.name.as_str()).collect()
     }
 
-    /// Split a caller path into (jail, jail-relative sub-path). The sub-path is
-    /// empty only when the caller named a root with no file under it.
+    /// Split a caller path into (jail, jail-relative sub-path). The first
+    /// segment always names a root; the sub-path is empty only when the caller
+    /// named a root with no file under it.
     fn locate(&self, rel: &str) -> Result<(&WriteJail, String)> {
-        if self.named() {
-            let rel = rel.trim().trim_start_matches('/');
-            let (name, sub) = match rel.split_once('/') {
-                Some((name, sub)) => (name, sub),
-                None => (rel, ""),
-            };
-            let jail = self
-                .jails
-                .iter()
-                .find(|j| j.name == name)
-                .with_context(|| {
-                    format!(
-                        "unknown root `{name}`; known roots: {}",
-                        self.root_names().join(", ")
-                    )
-                })?;
-            Ok((&jail.jail, sub.trim().to_string()))
-        } else {
-            Ok((&self.jails[0].jail, rel.trim().to_string()))
-        }
+        let rel = rel.trim().trim_start_matches('/');
+        let (name, sub) = match rel.split_once('/') {
+            Some((name, sub)) => (name, sub),
+            None => (rel, ""),
+        };
+        let jail = self
+            .jails
+            .iter()
+            .find(|j| j.name == name)
+            .with_context(|| {
+                format!(
+                    "unknown root `{name}`; known roots: {}",
+                    self.root_names().join(", ")
+                )
+            })?;
+        Ok((&jail.jail, sub.trim().to_string()))
     }
 
     fn resolve_write(&self, rel: &str) -> Result<PathBuf> {
@@ -185,14 +162,6 @@ impl FsWriteRoot {
     }
 }
 
-/// Default display name for a root: its final path component, or `root`.
-fn default_root_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "root".to_string())
-}
-
 struct FsWrite(FsWriteRoot);
 struct FsEdit(FsWriteRoot);
 struct FsCreateDir(FsWriteRoot);
@@ -210,8 +179,8 @@ impl Capability for FsWrite {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_write",
-            "Create or replace one file under the configured root. Parent directories must already exist.",
-            json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"append":{"type":"boolean","description":"Append instead of replacing. Defaults to false."}},"required":["path","content"],"additionalProperties":false}),
+            "Create or replace one file, addressed as `<root>/<path>`. Parent directories must already exist.",
+            json!({"type":"object","properties":{"path":{"type":"string","description":"File path as `<root>/<path>`."},"content":{"type":"string"},"append":{"type":"boolean","description":"Append instead of replacing. Defaults to false."}},"required":["path","content"],"additionalProperties":false}),
         )
     }
     fn requires_permission(&self) -> bool {
@@ -251,8 +220,8 @@ impl Capability for FsEdit {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_edit",
-            "Replace an exact text occurrence in one existing file under the configured root. `old` must match verbatim and, unless `replace_all` is set, must be unique.",
-            json!({"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string","description":"Exact text to find. Must be non-empty."},"new":{"type":"string","description":"Replacement text."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring a unique match. Defaults to false."}},"required":["path","old","new"],"additionalProperties":false}),
+            "Replace an exact text occurrence in one existing file, addressed as `<root>/<path>`. `old` must match verbatim and, unless `replace_all` is set, must be unique.",
+            json!({"type":"object","properties":{"path":{"type":"string","description":"File path as `<root>/<path>`."},"old":{"type":"string","description":"Exact text to find. Must be non-empty."},"new":{"type":"string","description":"Replacement text."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring a unique match. Defaults to false."}},"required":["path","old","new"],"additionalProperties":false}),
         )
     }
     fn requires_permission(&self) -> bool {
@@ -306,8 +275,8 @@ impl Capability for FsCreateDir {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_create_dir",
-            "Create one directory under the configured root. Its parent must already exist.",
-            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}),
+            "Create one directory, addressed as `<root>/<path>`. Its parent must already exist.",
+            json!({"type":"object","properties":{"path":{"type":"string","description":"Directory as `<root>/<path>`."}},"required":["path"],"additionalProperties":false}),
         )
     }
     fn requires_permission(&self) -> bool {
@@ -333,8 +302,8 @@ impl Capability for FsRemove {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_remove",
-            "Remove one file or empty directory under the configured root. Recursive removal is unavailable.",
-            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}),
+            "Remove one file or empty directory, addressed as `<root>/<path>`. Recursive removal is unavailable.",
+            json!({"type":"object","properties":{"path":{"type":"string","description":"File or empty directory as `<root>/<path>`."}},"required":["path"],"additionalProperties":false}),
         )
     }
     fn requires_permission(&self) -> bool {
@@ -369,10 +338,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("huggr-fs-write-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
-        let root = FsWriteRoot::new(&dir).unwrap();
-        fs::write(root.resolve_parent("x.txt").unwrap(), "ok").unwrap();
+        let root = FsWriteRoot::with_named(vec![("r".to_string(), dir.clone())]).unwrap();
+        fs::write(root.resolve_parent("r/x.txt").unwrap(), "ok").unwrap();
         assert_eq!(fs::read_to_string(dir.join("x.txt")).unwrap(), "ok");
-        assert!(root.resolve_parent("../x").is_err());
+        assert!(root.resolve_parent("r/../x").is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -381,9 +350,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("huggr-fs-remove-root-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
-        let remove = FsRemove(FsWriteRoot::new(&dir).unwrap());
+        let remove =
+            FsRemove(FsWriteRoot::with_named(vec![("r".to_string(), dir.clone())]).unwrap());
         let sink = ChunkSink::noop();
-        for path in [".", "./", "sub/.."] {
+        // Naming the root with no file, resolving back to the root via `.`, and
+        // escaping via `..` must all be refused without touching the jail.
+        for path in ["r", "r/.", "r/sub/.."] {
             let err = remove
                 .invoke(json!({ "path": path }), &sink)
                 .await
@@ -404,10 +376,10 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("a.txt"), "hello world").unwrap();
-        let edit = FsEdit(FsWriteRoot::new(&dir).unwrap());
+        let edit = FsEdit(FsWriteRoot::with_named(vec![("r".to_string(), dir.clone())]).unwrap());
         let out = edit
             .invoke(
-                json!({ "path": "a.txt", "old": "world", "new": "there" }),
+                json!({ "path": "r/a.txt", "old": "world", "new": "there" }),
                 &ChunkSink::noop(),
             )
             .await
@@ -426,16 +398,16 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("a.txt"), "x x x").unwrap();
-        let edit = FsEdit(FsWriteRoot::new(&dir).unwrap());
+        let edit = FsEdit(FsWriteRoot::with_named(vec![("r".to_string(), dir.clone())]).unwrap());
         let sink = ChunkSink::noop();
         let err = edit
-            .invoke(json!({ "path": "a.txt", "old": "x", "new": "y" }), &sink)
+            .invoke(json!({ "path": "r/a.txt", "old": "x", "new": "y" }), &sink)
             .await
             .unwrap_err();
         assert!(err["error"].as_str().unwrap().contains("3 times"));
         let out = edit
             .invoke(
-                json!({ "path": "a.txt", "old": "x", "new": "y", "replace_all": true }),
+                json!({ "path": "r/a.txt", "old": "x", "new": "y", "replace_all": true }),
                 &sink,
             )
             .await
@@ -451,10 +423,13 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("a.txt"), "abc").unwrap();
-        let edit = FsEdit(FsWriteRoot::new(&dir).unwrap());
+        let edit = FsEdit(FsWriteRoot::with_named(vec![("r".to_string(), dir.clone())]).unwrap());
         let sink = ChunkSink::noop();
         let missing_text = edit
-            .invoke(json!({ "path": "a.txt", "old": "zzz", "new": "q" }), &sink)
+            .invoke(
+                json!({ "path": "r/a.txt", "old": "zzz", "new": "q" }),
+                &sink,
+            )
             .await
             .unwrap_err();
         assert!(
@@ -464,7 +439,10 @@ mod tests {
                 .contains("not found")
         );
         let missing_file = edit
-            .invoke(json!({ "path": "nope.txt", "old": "a", "new": "b" }), &sink)
+            .invoke(
+                json!({ "path": "r/nope.txt", "old": "a", "new": "b" }),
+                &sink,
+            )
             .await
             .unwrap_err();
         assert!(
@@ -539,8 +517,8 @@ mod tests {
         fs::create_dir_all(&root_dir).unwrap();
         fs::write(&outside, "safe").unwrap();
         symlink(&outside, root_dir.join("link")).unwrap();
-        let root = FsWriteRoot::new(&root_dir).unwrap();
-        assert!(root.resolve_write("link").is_err());
+        let root = FsWriteRoot::with_named(vec![("r".to_string(), root_dir.clone())]).unwrap();
+        assert!(root.resolve_write("r/link").is_err());
         assert_eq!(fs::read_to_string(outside).unwrap(), "safe");
         fs::remove_dir_all(base).unwrap();
     }

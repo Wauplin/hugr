@@ -159,11 +159,17 @@ pub enum ToolError {
     },
 }
 
-/// Parse the `root`/`roots` scope of a filesystem grant into resolved
-/// (name, path) pairs. Accepts a single `root = "path"`, or
-/// `roots = ["a", "b"]` / `roots = [{ name = "x", path = "..." }]`. Relative
-/// paths resolve against `base_dir`; a name defaults to the path's final
-/// component. Paths are not required to exist here — the jail canonicalizes.
+/// Parse the `root` scope of a filesystem grant into resolved (name, path)
+/// pairs. `root` is polymorphic:
+///
+/// - `root = "docs"` — one root, name from the final path component.
+/// - `root = ["../a", "../b"]` — several roots, names from path components.
+/// - `root = [{ name = "app", path = "../a" }]` — explicit names.
+/// - `root = { name = "app", path = "../a" }` — one explicitly named root.
+///
+/// Files are always addressed as `<name>/<path>`. Relative paths resolve
+/// against `base_dir`; names must be unique. Paths need not exist here — the
+/// jail canonicalizes.
 pub(crate) fn resolve_roots(
     config: &serde_json::Value,
     base_dir: &Path,
@@ -183,45 +189,40 @@ pub(crate) fn resolve_roots(
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| "root".to_string())
     };
-    let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
-    if let Some(roots) = config.get("roots") {
-        let arr = roots
-            .as_array()
-            .context("`roots` must be an array of path strings or { name, path } tables")?;
-        anyhow::ensure!(!arr.is_empty(), "`roots` cannot be empty");
-        for entry in arr {
-            let (name, path) = if let Some(s) = entry.as_str() {
-                let resolved = resolve(s);
-                (derive_name(&resolved), resolved)
-            } else if let Some(obj) = entry.as_object() {
-                let path = obj
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .context("a `roots` table requires string `path`")?;
-                let resolved = resolve(path);
-                let name = obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| derive_name(&resolved));
-                (name, resolved)
-            } else {
-                anyhow::bail!(
-                    "each `roots` entry must be a path string or a {{ name, path }} table"
-                );
-            };
-            out.push((name, path));
+    let entry = |v: &serde_json::Value| -> anyhow::Result<(String, std::path::PathBuf)> {
+        if let Some(s) = v.as_str() {
+            let resolved = resolve(s);
+            Ok((derive_name(&resolved), resolved))
+        } else if let Some(obj) = v.as_object() {
+            let path = obj
+                .get("path")
+                .and_then(|v| v.as_str())
+                .context("a root table requires string `path`")?;
+            let resolved = resolve(path);
+            let name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| derive_name(&resolved));
+            Ok((name, resolved))
+        } else {
+            anyhow::bail!("a root must be a path string or a {{ name, path }} table")
         }
-    } else {
-        let root = config.get("root").and_then(|v| v.as_str()).unwrap_or(".");
-        let resolved = resolve(root);
-        out.push((derive_name(&resolved), resolved));
-    }
+    };
+
+    let root = config.get("root").cloned().unwrap_or_else(|| ".".into());
+    let out: Vec<(String, std::path::PathBuf)> = match root.as_array() {
+        Some(arr) => {
+            anyhow::ensure!(!arr.is_empty(), "`root` list cannot be empty");
+            arr.iter().map(entry).collect::<anyhow::Result<_>>()?
+        }
+        None => vec![entry(&root)?],
+    };
     let mut seen = std::collections::HashSet::new();
     for (name, _) in &out {
         anyhow::ensure!(
             seen.insert(name.as_str()),
-            "two roots resolve to the same name `{name}`; give explicit names with `roots = [{{ name = \"...\", path = \"...\" }}]`"
+            "two roots resolve to the same name `{name}`; give explicit names with `root = [{{ name = \"...\", path = \"...\" }}]`"
         );
     }
     Ok(out)
@@ -342,22 +343,25 @@ mod tests {
         // Default single root is `.`.
         let dot = resolve_roots(&json!({}), base).unwrap();
         assert_eq!(dot.len(), 1);
+        // A single `{ name, path }` table.
+        let single = resolve_roots(&json!({ "root": { "name": "d", "path": "." } }), base).unwrap();
+        assert_eq!(single, vec![("d".to_string(), PathBuf::from("/tmp/."))]);
         // Array of strings derives names from the final path component.
-        let many = resolve_roots(&json!({ "roots": ["../repo-a", "../repo-b"] }), base).unwrap();
+        let many = resolve_roots(&json!({ "root": ["../repo-a", "../repo-b"] }), base).unwrap();
         assert_eq!(
             many.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
             vec!["repo-a", "repo-b"]
         );
         // Tables carry explicit names; absolute paths stay absolute.
         let named = resolve_roots(
-            &json!({ "roots": [{ "name": "x", "path": "../a" }, { "name": "y", "path": "/abs/b" }] }),
+            &json!({ "root": [{ "name": "x", "path": "../a" }, { "name": "y", "path": "/abs/b" }] }),
             base,
         )
         .unwrap();
         assert_eq!(named[0], ("x".to_string(), PathBuf::from("/tmp/../a")));
         assert_eq!(named[1], ("y".to_string(), PathBuf::from("/abs/b")));
         // Two roots that derive the same name are rejected with guidance.
-        let dup = resolve_roots(&json!({ "roots": ["../a/repo", "../b/repo"] }), base);
+        let dup = resolve_roots(&json!({ "root": ["../a/repo", "../b/repo"] }), base);
         assert!(dup.is_err());
     }
 
@@ -369,7 +373,7 @@ mod tests {
         std::fs::create_dir_all(base.join("a")).unwrap();
         std::fs::create_dir_all(base.join("b")).unwrap();
         let caps =
-            build_library_grant(&grant("fs_read", json!({ "roots": ["a", "b"] })), &base).unwrap();
+            build_library_grant(&grant("fs_read", json!({ "root": ["a", "b"] })), &base).unwrap();
         assert!(caps.iter().any(|c| c.name() == "fs_read"));
         assert!(caps.iter().any(|c| c.name() == "fs_grep"));
         std::fs::remove_dir_all(base).unwrap();

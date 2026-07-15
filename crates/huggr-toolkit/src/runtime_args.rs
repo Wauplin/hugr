@@ -103,7 +103,11 @@ fn apply_target(
             }) else {
                 return Err(fail(format!("no library tool grant named `{name}`")));
             };
-            set_object_string(&mut grant.config, key, value);
+            if *key == "root" {
+                set_root_path(&mut grant.config, value).map_err(fail)?;
+            } else {
+                set_object_string(&mut grant.config, key, value);
+            }
             Ok(())
         }
         ["tools", namespace, name, key] => {
@@ -173,6 +177,38 @@ fn set_object_string(value: &mut Value, key: &str, string: String) {
         .insert(key.to_string(), Value::String(string));
 }
 
+/// Apply a runtime path to a filesystem grant's `root`, preserving any pinned
+/// name. `root` may be a scalar string, a single `{ name, path }` table, or a
+/// single-element list of either; a multi-root list is ambiguous and rejected.
+fn set_root_path(config: &mut Value, path: String) -> Result<(), String> {
+    let set_entry = |entry: &mut Value| match entry {
+        Value::Object(obj) => {
+            obj.insert("path".to_string(), Value::String(path.clone()));
+        }
+        slot => *slot = Value::String(path.clone()),
+    };
+    match config.get_mut("root") {
+        Some(Value::Array(arr)) => {
+            let [entry] = arr.as_mut_slice() else {
+                return Err(
+                    "cannot set `root` from a runtime argument when several roots are configured"
+                        .to_string(),
+                );
+            };
+            set_entry(entry);
+            Ok(())
+        }
+        Some(entry @ Value::Object(_)) => {
+            set_entry(entry);
+            Ok(())
+        }
+        _ => {
+            set_object_string(config, "root", path);
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +256,45 @@ target = "tools.fs_read.root"
                 .to_string_lossy()
                 .as_ref()
         );
+    }
+
+    #[test]
+    fn runtime_value_sets_named_root_path_without_clobbering_the_name() {
+        let src = r#"
+[agent]
+name = "docs"
+[models]
+default = "balanced"
+[tools.fs_read]
+root = [{ name = "docs", path = "." }]
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+required = true
+"#;
+        let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
+        let values = RuntimeValues::from([("docs_path".to_string(), "/tmp/docs".to_string())]);
+        apply_runtime_values(&mut def, &values).unwrap();
+        assert_eq!(def.tools[0].config["root"][0]["name"], "docs");
+        assert_eq!(def.tools[0].config["root"][0]["path"], "/tmp/docs");
+    }
+
+    #[test]
+    fn runtime_value_cannot_target_root_with_several_roots() {
+        let src = r#"
+[agent]
+name = "docs"
+[models]
+default = "balanced"
+[tools.fs_read]
+root = ["../a", "../b"]
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+required = true
+"#;
+        let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
+        let values = RuntimeValues::from([("docs_path".to_string(), "/tmp/docs".to_string())]);
+        let err = apply_runtime_values(&mut def, &values).unwrap_err();
+        assert!(matches!(err, RuntimeArgError::Target { .. }), "{err}");
     }
 
     #[test]

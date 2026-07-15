@@ -1225,7 +1225,7 @@ name = "x"
 default = "balanced"
 
 [tools.fs_read]
-roots = ["repo-a", "repo-b"]
+root = ["repo-a", "repo-b"]
 "#;
         let mut def = AgentDefinition::parse(src, "huggr.toml").unwrap();
         def.source_dir = Some(base.clone());

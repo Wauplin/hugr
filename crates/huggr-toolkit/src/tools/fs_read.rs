@@ -2,8 +2,10 @@
 //! from the `huglet-docs` retrieval tools: the docs-specific `AI_INDEX`/`is_index`
 //! bits are dropped and the root is a manifest-configured scope.
 //!
-//! One grant registers a family of eight read capabilities, all sharing the same
-//! [`FsRoot`] jail:
+//! One grant registers a family of eight read capabilities over one or more
+//! named [`FsRoot`] jails. Files are always addressed as `<root-name>/<path>`;
+//! a tree operation with no path spans every root, and `fs_list` with no path
+//! lists the root names. The family:
 //!
 //! | tool             | purpose                                             |
 //! | ---------------- | --------------------------------------------------- |
@@ -123,9 +125,8 @@ struct NamedJail {
     jail: Jail,
 }
 
-/// One or more named directory jails backing the read capabilities. A single
-/// jail keeps bare relative paths (`foo/bar.md`); with more than one, callers
-/// address files as `<root-name>/<path>` and a tree operation with no path
+/// One or more named directory jails backing the read capabilities. Callers
+/// address files as `<root-name>/<path>`, and a tree operation with no path
 /// spans every root. Cheap to clone (`Arc` inside).
 #[derive(Clone, Debug)]
 pub struct FsRoot {
@@ -133,18 +134,8 @@ pub struct FsRoot {
 }
 
 impl FsRoot {
-    /// Canonicalize and validate a single root directory. Paths stay bare.
-    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
-        let jail = Jail::new(root)?;
-        let name = default_root_name(jail.root());
-        Ok(Self {
-            jails: Arc::new(vec![NamedJail { name, jail }]),
-        })
-    }
-
-    /// Build from named roots. With one entry paths stay bare; with several,
-    /// the first path segment selects the root by name. Names must be unique
-    /// and free of `/`.
+    /// Build from named roots. Every root is addressed as `<name>/<path>`;
+    /// names must be unique and free of `/`.
     pub fn with_named(roots: Vec<(String, PathBuf)>) -> Result<Self> {
         anyhow::ensure!(!roots.is_empty(), "fs_read requires at least one root");
         let mut jails = Vec::with_capacity(roots.len());
@@ -175,44 +166,35 @@ impl FsRoot {
         ]
     }
 
-    fn named(&self) -> bool {
-        self.jails.len() > 1
-    }
-
     fn root_names(&self) -> Vec<&str> {
         self.jails.iter().map(|j| j.name.as_str()).collect()
     }
 
-    fn jail_named(&self, name: &str) -> Result<&NamedJail> {
-        self.jails.iter().find(|j| j.name == name).with_context(|| {
-            format!(
-                "unknown root `{name}`; known roots: {}",
-                self.root_names().join(", ")
-            )
-        })
-    }
-
-    /// Split a caller path into (jail, jail-relative sub-path). Single-root: the
-    /// whole path is jail-relative. Named: the first segment is the root name.
+    /// Split a caller path into (jail, jail-relative sub-path). The first
+    /// segment always names a root; the remainder is relative within it.
     fn locate(&self, rel: &str) -> Result<(&NamedJail, Option<String>)> {
-        if self.named() {
-            let rel = rel.trim().trim_start_matches('/');
-            let (name, sub) = match rel.split_once('/') {
-                Some((name, sub)) => (name, sub),
-                None => (rel, ""),
-            };
-            anyhow::ensure!(
-                !name.is_empty(),
-                "path must name a root as `<root>/<path>` (roots: {})",
-                self.root_names().join(", ")
-            );
-            let jail = self.jail_named(name)?;
-            let sub = sub.trim();
-            Ok((jail, (!sub.is_empty()).then(|| sub.to_string())))
-        } else {
-            let rel = rel.trim();
-            Ok((&self.jails[0], (!rel.is_empty()).then(|| rel.to_string())))
-        }
+        let rel = rel.trim().trim_start_matches('/');
+        let (name, sub) = match rel.split_once('/') {
+            Some((name, sub)) => (name, sub),
+            None => (rel, ""),
+        };
+        anyhow::ensure!(
+            !name.is_empty(),
+            "path must name a root as `<root>/<path>` (roots: {})",
+            self.root_names().join(", ")
+        );
+        let jail = self
+            .jails
+            .iter()
+            .find(|j| j.name == name)
+            .with_context(|| {
+                format!(
+                    "unknown root `{name}`; known roots: {}",
+                    self.root_names().join(", ")
+                )
+            })?;
+        let sub = sub.trim();
+        Ok((jail, (!sub.is_empty()).then(|| sub.to_string())))
     }
 
     /// Resolve a caller path to an existing canonical path inside its jail.
@@ -221,8 +203,8 @@ impl FsRoot {
         jail.jail.resolve_existing(sub.as_deref())
     }
 
-    /// Caller-facing display path for a canonical path: `name/rel` when named,
-    /// otherwise bare `rel`.
+    /// Caller-facing display path for a canonical path: always `<name>/<rel>`
+    /// (just `<name>` for a root itself).
     fn rel_path(&self, path: &Path) -> Result<String> {
         let owner = self
             .jails
@@ -230,15 +212,11 @@ impl FsRoot {
             .find(|j| j.jail.contains(path))
             .with_context(|| format!("path {} is not under any tool root", path.display()))?;
         let rel = owner.jail.rel_path(path)?;
-        if self.named() {
-            Ok(if rel.is_empty() {
-                owner.name.clone()
-            } else {
-                format!("{}/{rel}", owner.name)
-            })
+        Ok(if rel.is_empty() {
+            owner.name.clone()
         } else {
-            Ok(rel)
-        }
+            format!("{}/{rel}", owner.name)
+        })
     }
 
     /// The (jail, start) pairs a tree operation should walk. `None`/empty ⇒
@@ -257,14 +235,6 @@ impl FsRoot {
             }
         }
     }
-}
-
-/// Default display name for a root: its final path component, or `root`.
-fn default_root_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "root".to_string())
 }
 
 fn path_to_slash(path: &Path) -> String {
@@ -395,11 +365,11 @@ impl Capability for FsList {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_list",
-            "List files and directories under the tool root. Paths are relative to the root.",
+            "List files and directories. Paths are addressed as `<root>/<path>`; with no path, this lists the available roots.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Relative directory path. Defaults to the root." },
+                    "path": { "type": "string", "description": "Directory as `<root>/<path>`. Omit to list the roots themselves." },
                     "recursive": { "type": "boolean", "description": "Whether to list recursively. Defaults to false." },
                     "max_entries": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum entries to return." }
                 },
@@ -428,8 +398,8 @@ fn list_impl(root: &FsRoot, args: Value) -> Result<Value> {
         .unwrap_or(DEFAULT_LIST_LIMIT as u64)
         .clamp(1, 2000) as usize;
 
-    // Named roots with no path list the roots themselves as top-level dirs.
-    if root.named() && !has_path && !recursive {
+    // With no path, list the roots themselves as top-level dirs.
+    if !has_path && !recursive {
         let entries: Vec<_> = root
             .jails
             .iter()
@@ -484,11 +454,11 @@ impl Capability for FsRead {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_read",
-            "Read one text file under the tool root. Read-only; cannot access paths outside the root.",
+            "Read one text file, addressed as `<root>/<path>`. Read-only; cannot access paths outside the roots.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File path relative to the tool root." },
+                    "path": { "type": "string", "description": "File path as `<root>/<path>`." },
                     "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1000000, "description": "Maximum bytes to return. Defaults to 200000." }
                 },
                 "required": ["path"],
@@ -536,11 +506,11 @@ impl Capability for FsReadRange {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_read_range",
-            "Read a line range from one text file under the tool root. Lines are 1-based, inclusive.",
+            "Read a line range from one text file, addressed as `<root>/<path>`. Lines are 1-based, inclusive.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File path relative to the tool root." },
+                    "path": { "type": "string", "description": "File path as `<root>/<path>`." },
                     "start_line": { "type": "integer", "minimum": 1, "description": "First line to read, 1-based." },
                     "end_line": { "type": "integer", "minimum": 1, "description": "Last line to read, inclusive. If omitted, max_lines controls the window." },
                     "max_lines": { "type": "integer", "minimum": 1, "maximum": 5000, "description": "Maximum lines when end_line is omitted or too large. Defaults to 200." },
@@ -641,11 +611,11 @@ impl Capability for FsReadMany {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_read_many",
-            "Read multiple text files under the tool root in one call.",
+            "Read multiple text files in one call, each addressed as `<root>/<path>`.",
             json!({
                 "type": "object",
                 "properties": {
-                    "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 50, "description": "File paths relative to the tool root." },
+                    "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 50, "description": "File paths, each as `<root>/<path>`." },
                     "max_bytes_per_document": { "type": "integer", "minimum": 1, "maximum": 1000000, "description": "Maximum bytes per file. Defaults to 200000." },
                     "max_documents": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum files to read. Defaults to 50." }
                 },
@@ -705,12 +675,12 @@ impl Capability for FsSearch {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_search",
-            "Search text files under the tool root for a case-insensitive substring. Returns snippets with relative paths and line numbers.",
+            "Search text files for a case-insensitive substring across all roots. Returns snippets with `<root>/<path>` paths and line numbers.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Case-insensitive substring to search for." },
-                    "path": { "type": "string", "description": "Optional relative directory or file to search within." },
+                    "path": { "type": "string", "description": "Optional `<root>` or `<root>/<path>` to scope the search. Omit to search every root." },
                     "max_matches": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum matches to return. Defaults to 50." }
                 },
                 "required": ["query"],
@@ -734,7 +704,7 @@ impl Capability for FsGrep {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_grep",
-            "Search text files under the tool root with a Rust regular expression.",
+            "Search text files with a Rust regular expression across all roots (or a `<root>`/`<root>/<path>` scope). Paths are reported as `<root>/<path>`.",
             json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"case_sensitive":{"type":"boolean"},"max_matches":{"type":"integer","minimum":1,"maximum":500}},"required":["pattern"],"additionalProperties":false}),
         )
     }
@@ -817,7 +787,7 @@ impl Capability for FsGlob {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_glob",
-            "Match file paths under the tool root with a glob pattern. `**` crosses directories.",
+            "Match file paths with a glob pattern; `**` crosses directories. Matches against the `<root>/<path>` form, so a pattern can target one root or span all.",
             json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"max_matches":{"type":"integer","minimum":1,"maximum":2000}},"required":["pattern"],"additionalProperties":false}),
         )
     }
@@ -921,11 +891,11 @@ impl Capability for FsOutline {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "fs_outline",
-            "Return markdown-style headings for one text file or for text files under a directory.",
+            "Return markdown-style headings for one text file or for text files under a directory. Paths are addressed as `<root>/<path>`; omit to span every root.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Optional relative file or directory path. Defaults to the root." },
+                    "path": { "type": "string", "description": "Optional file or directory as `<root>/<path>`. Omit to span every root." },
                     "max_documents": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum text files to inspect. Defaults to 100." },
                     "max_headings": { "type": "integer", "minimum": 1, "maximum": 5000, "description": "Maximum headings across all inspected files. Defaults to 1000." }
                 },
@@ -1047,55 +1017,57 @@ mod tests {
         let dir = TmpDir::new(tag);
         dir.write("a.md", "# Title\nhello world\nsecond line\n");
         dir.write("sub/b.txt", "needle here\nother\n");
-        let fs_root = FsRoot::new(&dir.0).unwrap();
+        // A single root is still addressed by name (`r/...`).
+        let fs_root = FsRoot::with_named(vec![("r".to_string(), dir.0.clone())]).unwrap();
         (dir, fs_root)
     }
 
     #[test]
     fn lists_reads_searches_greps_globs_and_outlines() {
         let (_dir, root) = root("basic");
-        let listed = list_impl(&root, json!({ "recursive": true })).unwrap();
+        let listed = list_impl(&root, json!({ "path": "r", "recursive": true })).unwrap();
         let paths: Vec<_> = listed["entries"]
             .as_array()
             .unwrap()
             .iter()
             .map(|e| e["path"].as_str().unwrap().to_string())
             .collect();
-        assert!(paths.contains(&"a.md".to_string()));
-        assert!(paths.contains(&"sub/b.txt".to_string()));
+        assert!(paths.contains(&"r/a.md".to_string()));
+        assert!(paths.contains(&"r/sub/b.txt".to_string()));
 
-        let read = read_document(&root, "a.md", 1_000_000).unwrap();
+        let read = read_document(&root, "r/a.md", 1_000_000).unwrap();
         assert!(read["content"].as_str().unwrap().contains("hello world"));
 
         let searched = search_impl(&root, json!({ "query": "needle" })).unwrap();
         assert_eq!(searched["matches"].as_array().unwrap().len(), 1);
-        assert_eq!(searched["matches"][0]["path"], "sub/b.txt");
+        assert_eq!(searched["matches"][0]["path"], "r/sub/b.txt");
 
         let grepped = grep_impl(
             &root,
             json!({ "pattern": "NEE.*", "case_sensitive": false }),
         )
         .unwrap();
-        assert_eq!(grepped["matches"][0]["path"], "sub/b.txt");
+        assert_eq!(grepped["matches"][0]["path"], "r/sub/b.txt");
 
         let globbed = glob_impl(&root, json!({ "pattern": "**/*.md" })).unwrap();
-        assert_eq!(globbed["matches"][0], "a.md");
+        assert_eq!(globbed["matches"][0], "r/a.md");
 
-        let outline = outline_impl(&root, json!({ "path": "a.md" })).unwrap();
+        let outline = outline_impl(&root, json!({ "path": "r/a.md" })).unwrap();
         assert_eq!(outline["documents"][0]["headings"][0]["text"], "Title");
 
-        let ranged = read_range_document(&root, "a.md", 2, Some(2), 200, 1_000_000).unwrap();
+        let ranged = read_range_document(&root, "r/a.md", 2, Some(2), 200, 1_000_000).unwrap();
         assert_eq!(ranged["content"], "hello world");
     }
 
     #[test]
     fn jail_rejects_traversal_and_absolute_paths() {
         let (_dir, root) = root("jail");
-        assert!(root.resolve_existing(Some("../secret")).is_err());
-        assert!(root.resolve_existing(Some("/etc/passwd")).is_err());
-        assert!(read_document(&root, "../a.md", 1000).is_err());
+        assert!(root.resolve_existing(Some("r/../secret")).is_err());
+        assert!(read_document(&root, "r/../a.md", 1000).is_err());
         // A legitimate in-jail path still resolves.
-        assert!(root.resolve_existing(Some("sub/b.txt")).is_ok());
+        assert!(root.resolve_existing(Some("r/sub/b.txt")).is_ok());
+        // An unknown root name is rejected.
+        assert!(root.resolve_existing(Some("nope/x")).is_err());
     }
 
     fn multi_root() -> (TmpDir, TmpDir, FsRoot) {
@@ -1206,9 +1178,9 @@ mod tests {
         // The symlink's own path has only Normal components, so it clears the
         // component check — but canonicalization resolves it to `outside`,
         // which fails the starts_with(root) re-check.
-        let err = root.resolve_existing(Some("escape.md")).unwrap_err();
+        let err = root.resolve_existing(Some("r/escape.md")).unwrap_err();
         assert!(err.to_string().contains("escapes the tool root"), "{err}");
-        assert!(read_document(&root, "escape.md", 1000).is_err());
+        assert!(read_document(&root, "r/escape.md", 1000).is_err());
 
         let _ = fs::remove_file(&outside);
     }
