@@ -1,11 +1,13 @@
 //! The trace store — immutable traces with `trace_id` / `depends_on` lineage.
 //!
-//! A [`TraceStore`] is a directory of **immutable** [`Trace`] files, each keyed
-//! by a generated [`TraceId`] and carrying header metadata (agent name/version,
-//! the question, the outcome status, and the `depends_on` lineage pointer) in
-//! its [`TraceMeta`]. The store is the orchestration-facing wrapper around the
-//! existing replay machinery: it names and files what `huggr-replay` already
-//! persists, adding nothing to the core.
+//! A [`TraceStore`] is a directory of **immutable** completed [`Trace`] files,
+//! each keyed by a generated [`TraceId`] and carrying header metadata (agent
+//! name/version, the question, the outcome status, and the `depends_on` lineage
+//! pointer) in its [`TraceMeta`]. Mutable live checkpoints use a separate hidden
+//! namespace and become immutable lineage parents if a process is interrupted.
+//! The store is the orchestration-facing wrapper around the existing replay
+//! machinery: it names and files what `huggr-replay` already persists, adding
+//! nothing to the core.
 //!
 //! ## Immutability & lineage
 //!
@@ -46,6 +48,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::contract::TraceId;
+
+const CHECKPOINTS_DIRNAME: &str = ".checkpoints";
+pub const STATUS_INTERRUPTED: &str = "interrupted";
 
 #[async_trait]
 pub trait TraceBackend: Send + Sync {
@@ -202,6 +207,73 @@ impl TraceStore {
         self.root.join(format!("{id}.json"))
     }
 
+    /// The mutable live-checkpoint path for `id`. Checkpoints live outside the
+    /// immutable completed-trace namespace but remain addressable by trace id.
+    pub fn checkpoint_path_of(&self, id: &TraceId) -> PathBuf {
+        self.root
+            .join(CHECKPOINTS_DIRNAME)
+            .join(format!("{id}.json"))
+    }
+
+    /// Reserve a stable id for a live run and persist its initial recoverable
+    /// trace. Later checkpoints atomically replace this file until completion.
+    pub fn begin_checkpoint(
+        &self,
+        mut trace: Trace,
+        mut header: TraceHeader,
+    ) -> Result<TraceId, StoreError> {
+        std::fs::create_dir_all(self.root.join(CHECKPOINTS_DIRNAME))?;
+        header.status = STATUS_INTERRUPTED.to_string();
+        stamp_header(&mut trace, header);
+        trace.meta.trace_id = None;
+        // Completed ids are hexadecimal content hashes (plus numeric collision
+        // suffixes), so the prefix also prevents cross-namespace collisions.
+        let base = format!("live-{}", base_id(&trace)?);
+
+        let mut candidate = TraceId::new(base.as_str());
+        let mut counter = 1u64;
+        loop {
+            if self.path_of(&candidate).exists() {
+                candidate = TraceId::new(format!("{base}-{counter}"));
+                counter += 1;
+                continue;
+            }
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(self.checkpoint_path_of(&candidate))
+            {
+                Ok(file) => {
+                    drop(file);
+                    break;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    candidate = TraceId::new(format!("{base}-{counter}"));
+                    counter += 1;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        trace.meta.trace_id = Some(candidate.as_str().to_string());
+        let path = self.checkpoint_path_of(&candidate);
+        if let Err(err) = trace.save_atomic(&path) {
+            let _ = std::fs::remove_file(path);
+            return Err(err.into());
+        }
+        Ok(candidate)
+    }
+
+    /// Remove the mutable checkpoint after its completed immutable trace has
+    /// been stored. Interrupted checkpoints are deliberately retained.
+    pub fn remove_checkpoint(&self, id: &TraceId) -> Result<(), StoreError> {
+        match std::fs::remove_file(self.checkpoint_path_of(id)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
     /// Persist `trace` as a **new** immutable trace: generate its id from the
     /// trace content (deterministic — no RNG, no clock), stamp `header` and
     /// the id into the trace's [`TraceMeta`], and write it atomically (temp
@@ -214,6 +286,9 @@ impl TraceStore {
         std::fs::create_dir_all(&self.root)?;
 
         stamp_header(&mut trace, header);
+        // A finalized live checkpoint receives a new content-derived immutable
+        // id; the temporary checkpoint id must not influence that hash.
+        trace.meta.trace_id = None;
 
         // Content-derived id: hash the headed trace *before* the id is stamped
         // in (the id cannot depend on itself), then collision-check against
@@ -256,7 +331,7 @@ impl TraceStore {
     /// Load the full trace stored under `id` — one file read, then a pure
     /// parse; re-folding it into a brain needs zero further IO.
     pub fn get(&self, id: &TraceId) -> Result<Trace, StoreError> {
-        let path = self.path_of(id);
+        let path = self.resolve_path(id);
         if !path.exists() {
             return Err(StoreError::NotFound { id: id.clone() });
         }
@@ -266,7 +341,7 @@ impl TraceStore {
     /// Read the header of the trace stored under `id` **without** loading its
     /// events: only the `meta` header is deserialized.
     pub fn head(&self, id: &TraceId) -> Result<TraceHead, StoreError> {
-        let path = self.path_of(id);
+        let path = self.resolve_path(id);
         if !path.exists() {
             return Err(StoreError::NotFound { id: id.clone() });
         }
@@ -308,8 +383,44 @@ impl TraceStore {
                 }
             }
         }
+        let checkpoints = self.root.join(CHECKPOINTS_DIRNAME);
+        let checkpoint_entries = match std::fs::read_dir(checkpoints) {
+            Ok(entries) => Some(entries),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err.into()),
+        };
+        if let Some(entries) = checkpoint_entries {
+            for entry in entries {
+                let path = entry?.path();
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                let Ok(id) = TraceId::try_new(stem) else {
+                    continue;
+                };
+                match self.head(&id) {
+                    Ok(head) => heads.push(head),
+                    Err(err) => eprintln!(
+                        "warning: skipping unreadable checkpoint {}: {err}",
+                        id.as_str()
+                    ),
+                }
+            }
+        }
         heads.sort_by(|a, b| a.trace_id.cmp(&b.trace_id));
         Ok(heads)
+    }
+
+    fn resolve_path(&self, id: &TraceId) -> PathBuf {
+        let completed = self.path_of(id);
+        if completed.exists() {
+            completed
+        } else {
+            self.checkpoint_path_of(id)
+        }
     }
 
     /// Project a stored [`TraceMeta`] into a [`TraceHead`], checking the

@@ -174,7 +174,7 @@ pub struct Trace {
   A trace with an unknown policy kind can still be replayed with an explicitly supplied policy. Faithful automatic replay and resume need a registry that knows the kind.
 - **The `TraceBackend`** holds immutable traces keyed by content-derived `trace_id`, with `depends_on` lineage in the header. `head()` reads metadata without folding events.
 
-  The default filesystem implementation is `FsTraceStore`/`TraceStore`, rooted at `<agent-home>/traces`. It uses atomic `create_new` reservation so parallel asks are collision-free. `MemTraceStore` is the in-memory reference implementation.
+  The default filesystem implementation is `FsTraceStore`/`TraceStore`, rooted at `<agent-home>/traces`. It uses atomic `create_new` reservation so parallel asks are collision-free. While an ask is live, the host maintains a mutable atomic snapshot under `traces/.checkpoints/`. The snapshot has a stable `trace_id`, appears in trace listings with status `interrupted`, and is removed only after the completed immutable trace and scratch state are durable. `MemTraceStore` is the in-memory reference implementation.
 - **The `FeedbackBackend`** is a sidecar store keyed to existing trace ids. The default filesystem implementation appends JSON lines under `<agent-home>/feedback/<trace_id>.jsonl`; `MemFeedbackStore` is the in-memory reference implementation. Feedback is intentionally outside replay/verify.
 - **Agent home** resolves the same for development and built surfaces. Resolution uses `HUGGR_AGENT_HOME` as a full override, then `HUGGR_HOME/<agent-name>`, then `$HOME/.huggr/<agent-name>`, and finally a temporary-directory fallback.
 
@@ -188,7 +188,9 @@ pub struct Trace {
   `Agent::new` is the convenience filesystem constructor. `Agent::with_storage` / `StorageOverrides` accepts custom `Arc<dyn ...>` implementations.
 
   A generated agent crate can opt in by exporting `pub fn storage() -> huggr_agent::StorageOverrides`. This needs no core type changes or manifest enum.
-- **Resume after crash** is the same machinery: fold the persisted log, append `OpCancelled` for ops that were in flight, continue live.
+- **Resume after crash** uses the same machinery. The native host writes a checkpoint after recording each durable event and its derived commands, before it starts the next external effect. Model deltas and capability chunks do not trigger writes because they are transport, not completed steps. To continue, pass the interrupted checkpoint id through the existing `trace_id` input. Resume folds the checkpoint, appends `OpCancelled` for any effect that was in flight when the process stopped, and starts the new user turn without repeating completed model or tool calls. Filesystem scratch state uses the checkpoint id while the run is live, so completed tool writes remain available after restart.
+
+  Automatic live checkpointing currently applies to filesystem-backed native agents, including `huggr run`, built CLI and MCP artifacts, and the native Python runtime. Custom `StorageOverrides` and the TypeScript/browser hosts must provide their own live persistence policy.
 
 ## Risks and mitigations
 

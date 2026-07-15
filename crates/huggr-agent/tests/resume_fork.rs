@@ -117,6 +117,11 @@ async fn fresh_ask_persists_a_root_trace() {
 
     // The persisted trace replays bit-for-bit.
     huggr_replay::verify(&store.get(&answer.trace_id).unwrap()).unwrap();
+    assert_eq!(
+        store.list().unwrap().len(),
+        1,
+        "the completed run removed its mutable checkpoint"
+    );
 }
 
 #[tokio::test]

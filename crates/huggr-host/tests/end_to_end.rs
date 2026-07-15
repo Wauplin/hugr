@@ -243,6 +243,42 @@ async fn multi_turn_session_with_tool_round_trip() {
 }
 
 #[tokio::test]
+async fn live_checkpoint_tracks_each_completed_step_and_replays() {
+    let model = MockModel::new([
+        ModelOutput::tool_calls(vec![ToolCall::new(
+            "call-1",
+            "echo",
+            json!({ "message": "durable" }),
+        )]),
+        ModelOutput::text("done"),
+    ]);
+    let dir =
+        std::env::temp_dir().join(format!("huggr-host-live-checkpoint-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("live.json");
+    let mut meta = huggr_host::huggr_replay::TraceMeta::default();
+    meta.trace_id = Some("live-run".into());
+    meta.status = Some("interrupted".into());
+
+    let mut engine = Engine::builder()
+        .model(ModelSelector::named("medium"), model)
+        .capability(Arc::new(Echo))
+        .clock(deterministic_clock())
+        .checkpoint(&path, meta)
+        .build();
+    engine.user_turn("use echo".into()).await;
+
+    let trace = huggr_host::Trace::load(&path).expect("checkpoint is readable");
+    assert_eq!(trace.meta.trace_id.as_deref(), Some("live-run"));
+    assert_eq!(count_tool_results(&trace.log).len(), 1);
+    assert!(trace.log.iter().any(|entry| matches!(
+        &entry.record,
+        Record::ModelOutput { output, .. } if output.text == "done"
+    )));
+    huggr_host::huggr_replay::verify(&trace).expect("checkpoint replays bit-for-bit");
+}
+
+#[tokio::test]
 async fn mcp_stdio_tool_runs_through_real_engine() {
     if !python3_available() {
         eprintln!("skipping MCP stdio test: python3 unavailable");

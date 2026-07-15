@@ -36,6 +36,7 @@ Classify the result:
 - Verify fails after a core change: inspect the first divergent event, reducer arm, command order, policy config, and record consolidation. Add or update a scripted determinism test only when the new behavior is intentional and the spec matches it.
 - Automatic replay cannot decode policy: ensure the trace's open `policy.kind` has a pure decoder registered in the replay `PolicyRegistry`.
 - Trace is missing: compare `HUGGR_AGENT_HOME`, `HUGGR_HOME`, manifest `[traces].store`, agent-name sanitization, and the caller's selected agent directory.
+- Trace status is `interrupted`: this is a native filesystem live checkpoint. Verify it first, then pass its id through the normal `trace_id` or `--trace` input to continue from its last completed step. Resume cancels stale in-flight ops; it does not repeat completed model or tool work.
 - Resume context looks wrong: confirm the new trace points to the intended parent and inspect projection dispositions; compaction changes model context, never the durable log.
 
 ## Inspect cost and operations

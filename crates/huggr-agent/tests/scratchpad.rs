@@ -24,6 +24,29 @@ struct MockModel {
     outputs: Mutex<VecDeque<ModelOutput>>,
 }
 
+struct BlockAfterTool {
+    first: Mutex<Option<ModelOutput>>,
+    blocked: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+#[async_trait]
+impl ModelAdapter for BlockAfterTool {
+    async fn call(
+        &self,
+        _request: ModelRequest,
+        _sink: &ModelSink,
+    ) -> anyhow::Result<(ModelOutput, Usage)> {
+        let first = self.first.lock().unwrap().take();
+        if let Some(output) = first {
+            return Ok((output, Usage::new(1, 1)));
+        }
+        if let Some(blocked) = self.blocked.lock().unwrap().take() {
+            let _ = blocked.send(());
+        }
+        std::future::pending().await
+    }
+}
+
 impl MockModel {
     fn new<I: IntoIterator<Item = ModelOutput>>(outputs: I) -> Arc<Self> {
         Arc::new(Self {
@@ -125,6 +148,67 @@ async fn note_written_in_one_ask_is_reread_across_a_resumed_ask() {
     let reads = tool_results(&store, &second.trace_id, "scratch_read");
     assert_eq!(reads.len(), 1, "one scratch_read in the resumed turn");
     assert_eq!(reads[0]["content"], json!("remember: 42"));
+}
+
+#[tokio::test]
+async fn interrupted_ask_resumes_completed_tool_and_scratch_state() {
+    let dir = tempdir();
+    let store = TraceStore::new(dir.path());
+    let (blocked_tx, blocked_rx) = tokio::sync::oneshot::channel();
+    let mut interrupted = Agent::new("scratch-agent", "0.1.0", store.clone());
+    interrupted.models.push((
+        ModelSelector::named("medium"),
+        Arc::new(BlockAfterTool {
+            first: Mutex::new(Some(ModelOutput::tool_calls(vec![write_call(
+                "c1", "note.txt", "survived",
+            )]))),
+            blocked: Mutex::new(Some(blocked_tx)),
+        }),
+    ));
+    interrupted.clock = Some(deterministic_clock());
+
+    let task = tokio::spawn(async move { interrupted.ask(Ask::new("write then wait")).await });
+    blocked_rx.await.expect("second model call started");
+    task.abort();
+    let _ = task.await;
+
+    let heads = store.list().unwrap();
+    assert_eq!(heads.len(), 1);
+    assert_eq!(heads[0].status, "interrupted");
+    let checkpoint = heads[0].trace_id.clone();
+    let trace = store.get(&checkpoint).unwrap();
+    assert_eq!(
+        trace
+            .log
+            .iter()
+            .filter(|entry| matches!(&entry.record, Record::ToolResult { name, .. } if name == "scratch_write"))
+            .count(),
+        1
+    );
+    huggr_replay::verify(&trace).expect("live checkpoint replays");
+
+    let resumed = agent(
+        store.clone(),
+        vec![
+            ModelOutput::tool_calls(vec![read_call("c2", "note.txt")]),
+            ModelOutput::text("recovered"),
+        ],
+    );
+    let answer = resumed
+        .ask(Ask {
+            trace_id: Some(checkpoint),
+            ..Ask::new("continue")
+        })
+        .await
+        .unwrap();
+
+    let reads = tool_results(&store, &answer.trace_id, "scratch_read");
+    assert_eq!(reads[0]["content"], json!("survived"));
+    assert_eq!(
+        tool_results(&store, &answer.trace_id, "scratch_write").len(),
+        1,
+        "the completed tool step was not repeated"
+    );
 }
 
 #[tokio::test]

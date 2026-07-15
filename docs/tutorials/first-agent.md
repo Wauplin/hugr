@@ -89,7 +89,7 @@ Because this agent has a typed Rust contract, the first `huggr run` compiles a s
 
 ## Resume and fork with trace ids
 
-Every completed turn is recorded as an immutable trace. List them as a lineage tree:
+Every completed turn is recorded as an immutable trace. Filesystem-backed runs also save an atomic checkpoint after each completed model or tool step. List both as a lineage tree:
 
 ```bash
 huggr traces my-agent
@@ -102,6 +102,8 @@ huggr run my-agent --trace <TRACE_ID> "and in London?"
 ```
 
 A resumed ask never mutates the old trace. It writes a **new** trace with `depends_on` pointing at the parent. Resuming the same id twice forks the conversation into two branches, and `huggr traces` shows the tree.
+
+If a process stops before returning an answer, `huggr traces` shows its live snapshot with status `interrupted`. Pass that id to `--trace` with a continuation request. Huggr cancels work that was in flight when the process stopped and retains completed model calls, tool results, and scratch writes.
 
 `huggr verify my-agent <TRACE_ID>` confirms that a trace replays bit-for-bit. `huggr replay my-agent <TRACE_ID> --step` walks through it event by event. See [determinism and replay](../concepts/runtime.md#determinism-replay-and-traces) for the underlying design.
 
