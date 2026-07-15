@@ -1,0 +1,55 @@
+name: Publish huglet-docs to PyPI
+
+# Manual release of the huglet-docs typed Python wheel. Builds one wheel per
+# supported Python version (the extension is not abi3, so wheels are
+# version-specific) and publishes them with PyPI trusted publishing (OIDC, no
+# API token). Register this workflow as the project's trusted publisher on PyPI
+# with environment `pypi`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build wheel
+        run: cargo run -p huggr-toolkit --bin huggr -- build examples/huglet-docs --surface python --release
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.python-version }}
+          path: examples/huglet-docs/dist/huglet-docs-python/target/wheels/*.whl
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheel-*
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
