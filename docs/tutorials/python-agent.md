@@ -91,7 +91,7 @@ agent = huggr.Agent(
 )
 ```
 
-The full signature is `Agent(*, name, system=None, models=None, providers=None, model_overrides=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`.
+The full signature is `Agent(*, name, system=None, models=None, providers=None, model_overrides=None, api_token=None, tools=(), grants=None, limits=None, context=None, response_schema=None, version="0.0.0", description="", traces=None, scratchpad=None)`.
 
 Each config key mirrors the corresponding `huggr.toml` section with the same names and shapes. The manifest details from [Build your first agent](first-agent.md) therefore transfer directly.
 
@@ -100,6 +100,21 @@ The package exports `ModelTier`, `TierConfig`, `ProviderConfig`, `ModelCatalogCo
 ### `models`
 
 The `models` dict selects a default from `fast`, `balanced`, `powerful`, and `max`, and may pin a concrete mapping for any tier. Python-defined agents otherwise use the built-in catalog. Pass `providers` with author pins, or pass a complete `model_overrides={"providers": ..., "models": ...}` catalog when the embedding host should choose concrete mappings at runtime. The explicit runtime catalog has precedence over author and built-in mappings. See [Models, providers, and pricing](../concepts/models-and-pricing.md).
+
+Pass `api_token=` when the embedding application already owns the model credential:
+
+```python
+import os
+
+agent = huggr.Agent(
+    name="policy-helper",
+    system="Answer from the policy tools. Return JSON.",
+    models={"default": "balanced"},
+    api_token=os.environ["HF_TOKEN"],
+)
+```
+
+`api_token` takes precedence over every resolved provider's `api_key_env` for this agent. It is not included in agent cards or traces. Use provider-specific environment variables instead when one agent routes tiers through providers that require different credentials.
 
 ### `limits`
 

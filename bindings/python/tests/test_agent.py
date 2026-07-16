@@ -108,6 +108,20 @@ def test_runtime_model_catalog_overrides_author_mapping(server):
     assert tiers["balanced"].details.resolved_from == "powerful"
 
 
+def test_api_token_overrides_provider_environment(server, huggr_home, monkeypatch):
+    monkeypatch.setenv("TEST_KEY", "environment-token")
+    agent = make_agent(server, api_token="explicit-token")
+    server.script_text('{"answer": "authenticated"}')
+
+    answer = agent.ask("q")
+
+    assert answer.ok
+    assert server.authorizations == ["Bearer explicit-token"]
+    assert "explicit-token" not in repr(agent.describe())
+    trace = huggr_home / "huggr-home" / "py-test-agent" / "traces" / f"{answer.trace_id}.json"
+    assert "explicit-token" not in trace.read_text()
+
+
 def test_async_tool(server):
     calls = []
 

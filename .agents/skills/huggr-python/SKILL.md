@@ -29,6 +29,7 @@ Import the package as `huggr_agents`. It runs the native Rust runtime; the Pytho
 Annotate every parameter: the advertised JSON Schema is inferred from the type annotations (`str`/`int`/`float`/`bool`/`list[...]`/`dict`/`Optional[...]` or `X | None`; defaults become optional), the name from the function, the description from the docstring, and the model's arguments arrive as keyword arguments. Pass `schema=` to advertise a hand-written schema instead; the callable then receives the raw arguments dict as its single parameter. Both sync and async callables are supported; async callables run through `asyncio.run` on a blocking worker and cannot reuse objects bound to the caller's event loop. Exceptions become semantic tool errors returned to the model.
 
 ```python
+import os
 import huggr_agents as huggr
 
 @huggr.tool
@@ -40,6 +41,7 @@ agent = huggr.Agent(
     name="policy-helper",
     system="Use lookup_policy, then return a JSON object with an answer field.",
     models={"default": "balanced"},
+    api_token=os.environ["HF_TOKEN"],
     tools=[lookup_policy],
     response_schema={
         "type": "object",
@@ -70,7 +72,7 @@ async def stream():
             answer = event.answer
 ```
 
-Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. The built-in catalog leaves `max` unset, so it falls back to `powerful`. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog. [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. For another OpenAI-compatible service, give it a separate provider alias with its own `base_url` API URL and credential configuration.
+Fixed-shape inputs use the exported `TypedDict`s: `TierConfig`, `ProviderConfig`, `ModelCatalogConfig`, `LimitsConfig`, `ContextConfig`, `GrantsConfig`, and the individual grant configs. Model selectors are the fixed `fast`, `balanced`, `powerful`, and `max` tiers. The built-in catalog leaves `max` unset, so it falls back to `powerful`. Pass `api_token=` when the embedding application owns one token for all model tiers; it overrides provider environment credentials without entering cards or traces. Keep provider-specific environment variables when tiers need different credentials. Pass `model_overrides={"providers": ..., "models": ...}` for an explicit embedding-host catalog. [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. For another OpenAI-compatible service, give it a separate provider alias with its own `base_url` API URL and credential configuration.
 
 Structured outputs are recursive dataclasses: `Answer`, every `AgentEvent` variant, `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Branch on `answer.ok` or `answer.status`. Turn failures are answers with mandatory metadata; configuration and infrastructure failures raise exceptions.
 

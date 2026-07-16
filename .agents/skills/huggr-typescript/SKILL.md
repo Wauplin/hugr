@@ -37,7 +37,7 @@ const agent = createAgent({
     },
     invoke: async (args) => ({ matches: await searchPolicyText((args as { query: string }).query) }),
   }],
-});
+}, { apiToken: process.env.HF_TOKEN });
 
 const answer = await agent.ask("Can I expense a train ticket?");
 await agent.verify(answer.trace_id);
@@ -64,7 +64,7 @@ Node resolves `HUGGR_AGENT_HOME`, then `HUGGR_HOME/<name>`, then `~/.huggr/<name
 
 Browser trace writes use atomic IndexedDB `add` claims. Concurrent content-id collisions allocate `-N` suffixes instead of overwriting or surfacing `ConstraintError`.
 
-The runtime resolves the fixed `fast`, `balanced`, `powerful`, and `max` tiers from its built-in catalog. The built-in catalog leaves `max` unset, so it falls back to `powerful`. Pass `modelCatalog` in the optional runtime object to override providers, model ids, and prices. [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. For another OpenAI-compatible service, give it a separate provider alias with its own `base_url` API URL and credential configuration. Browsers have no environment variables, so put `api_key` on the runtime provider from a user-controlled settings store and never bake a production secret into a published bundle. Supply custom `TraceStore` and `FeedbackStore` implementations through the runtime when the built-in fs, IndexedDB, or memory stores do not fit.
+The runtime resolves the fixed `fast`, `balanced`, `powerful`, and `max` tiers from its built-in catalog. The built-in catalog leaves `max` unset, so it falls back to `powerful`. Pass `apiToken` in the optional runtime object when the embedding application owns one token for all model tiers; it overrides provider credentials without entering resolved model output or traces. Keep provider-specific credentials when tiers need different tokens. Pass `modelCatalog` in the runtime object to override providers, model ids, and prices. [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists provider and model combinations for the built-in `hf` provider. For another OpenAI-compatible service, give it a separate provider alias with its own `base_url` API URL and credential configuration. In browsers, load `apiToken` from a user-controlled settings store and never bake a production secret into a published bundle. Supply custom `TraceStore` and `FeedbackStore` implementations through the runtime when the built-in fs, IndexedDB, or memory stores do not fit.
 
 Provider-reported usage cost is authoritative for answer metadata and `max_cost_micro_usd`; configured token prices are the fallback when the provider reports no cost.
 
@@ -97,5 +97,5 @@ npm test
 - Missing `pkg/`: run `npm run build:wasm` before `npm test` or browser packaging.
 - Missing target: run `rustup target add wasm32-unknown-unknown`.
 - `wasm-bindgen` schema mismatch: install the version required by the repository build script.
-- Provider auth in Node: set the variable named by the resolved provider's `api_key_env` (`HF_TOKEN` for the built-in catalog); in browsers, inject `api_key` through a runtime `modelCatalog` from a user-controlled settings store.
+- Provider auth: pass `apiToken` from the embedding application's secret or settings store, or set the variable named by the resolved provider's `api_key_env` (`HF_TOKEN` for the built-in catalog in Node).
 - Trace drift: call `agent.verify(id)`. Use `$huggr-debug-traces` or the Rust CLI when a matching manifest-defined agent resolves to the same Node trace store.

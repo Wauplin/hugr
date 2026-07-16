@@ -12,6 +12,7 @@ class MockOpenAi:
     def __init__(self) -> None:
         self.outputs: List[Dict[str, Any]] = []
         self.requests: List[Dict[str, Any]] = []
+        self.authorizations: List[str | None] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -21,6 +22,7 @@ class MockOpenAi:
             def do_POST(self) -> None:
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 outer.requests.append(json.loads(body))
+                outer.authorizations.append(self.headers.get("Authorization"))
                 if not outer.outputs:
                     self.send_response(500)
                     self.end_headers()
