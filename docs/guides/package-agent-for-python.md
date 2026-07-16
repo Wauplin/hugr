@@ -29,10 +29,11 @@ huglet-docs-python/
   Cargo.toml           # cdylib `_native`, links huggr-toolkit + the agent crate
   pyproject.toml       # maturin backend, module-name = huglet_docs._native
   bundle.bin           # the embedded agent bundle (same bytes as the CLI shim)
-  src/lib.rs           # PyO3: ask_json(...) -> Answer JSON, in-process
+  src/lib.rs           # PyO3: signal-aware AgentEvent stream, in-process
   python/huglet_docs/
-    __init__.py        # typed ask(...) -> Answer
-    _models.py         # generated dataclasses: DocsResponse, Answer, AnswerMeta, BlobHandle
+    __init__.py        # typed ask(...) and async run(...)
+    _models.py         # generated dataclasses: DocsResponse and typed Answer
+    _types.py          # shared contract and AgentEvent dataclasses
     py.typed           # PEP 561 marker
 ```
 
@@ -55,12 +56,29 @@ else:
 print(answer.trace_id, answer.metadata.cost_micro_usd)
 ```
 
-Three things to notice:
+Four things to notice:
 
-- **Declared runtime args become typed parameters.** `huglet-docs` declares a positional, required `docs_path` runtime arg in its manifest, so the generated `ask()` signature is `ask(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None, api_token=None)`; positional args lead, before the question, mirroring the CLI surface exactly. `skills` accepts caller-local standard `SKILL.md` folder paths for that invocation.
+- **Declared runtime args become typed parameters.** `huglet-docs` declares a positional, required `docs_path` runtime arg in its manifest, so both generated methods use `ask(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None, api_token=None)` and `run(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None, api_token=None)`. Positional args lead, before the question, mirroring the CLI surface exactly. `skills` accepts caller-local standard `SKILL.md` folder paths for that invocation.
 - **`api_token` supplies the model credential per ask.** Pass `api_token=` when the calling application owns the token instead of exporting the provider's `api_key_env`. It overrides every resolved provider's environment credential for that ask and never enters the agent card or the trace. Leave it unset to fall back to the environment.
 - **The typing is strict but there is no second validator.** Rust already casts the model's final JSON into the agent's response type before it reaches `Answer.response`; `_models.py` only deserializes that already-valid JSON into dataclasses.
-- **It runs in-process.** The PyO3 bridge embeds the bundle and drives the real runtime inside your Python process; no subprocess, no serialization boundary beyond one JSON string. Traces still land under `~/.huggr/huglet-docs/` like every other surface.
+- **It streams the shared event API.** `run()` is an async iterator over the same `AskStartedEvent`, `TextDeltaEvent`, tool lifecycle, `DoneEvent`, and `AnswerReadyEvent` dataclasses as the `huggr-agents` runtime package. The generated package copies these stable models from the authoritative Python API source at build time, while keeping the agent-specific response dataclass generated from its Rust schema.
+- **It runs in-process and responds to cancellation.** The PyO3 bridge embeds the bundle and drives the runtime inside your Python process. `Ctrl+C` interrupts a blocking `ask()`, and cancelling or closing `run()` aborts the in-flight Rust task. An interrupted filesystem-backed run leaves its live checkpoint available for resume. Traces still land under `~/.huggr/huglet-docs/` like every other surface.
+
+Stream events when the caller needs incremental text or progress:
+
+```python
+import asyncio
+import huglet_docs
+
+async def main():
+    async for event in huglet_docs.run("./docs", "How do I resume a trace?"):
+        if isinstance(event, huglet_docs.TextDeltaEvent):
+            print(event.text, end="")
+        elif isinstance(event, huglet_docs.AnswerReadyEvent):
+            print("\ntrace:", event.answer.trace_id)
+
+asyncio.run(main())
+```
 
 Resume works the same as everywhere else; pass a previous answer's `trace_id` and you get a *new* trace with `depends_on` set:
 

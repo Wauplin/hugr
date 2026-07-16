@@ -162,7 +162,7 @@ huggr stats ./my-agent
 huggr build ./my-agent --release
 ```
 
-Use `--stream` on a built binary for newline-delimited lifecycle events. Use `--blob <path>` for inbound files and repeatable `--skill <folder>` for invocation-specific standard Agent Skills. Definition-owned `skills = [...]` paths are manifest-relative; runtime skill paths are caller-relative. Treat `status: "error"` as contract data: ask paths exit 0 even on missing keys, limits, or model failures.
+Use `--stream` on a built binary for newline-delimited lifecycle events. A generated Python wheel exposes the same typed vocabulary through `async for event in <module>.run(...)`; `run()` takes the same parameters as `ask()`. Both methods cancel the native ask on `Ctrl+C`, task cancellation, or iterator close. Use `--blob <path>` for inbound files and repeatable `--skill <folder>` for invocation-specific standard Agent Skills. Definition-owned `skills = [...]` paths are manifest-relative; runtime skill paths are caller-relative. Treat `status: "error"` as contract data: ask paths exit 0 even on missing keys, limits, or model failures.
 
 For composition and accounting, read [Compose agents and account for cost](../../../docs/guides/compose-agents.md). For replay diagnosis, use `$huggr-debug-traces` or [Inspect, replay, and verify traces](../../../docs/guides/inspect-traces.md).
 

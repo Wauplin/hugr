@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List
 
@@ -27,6 +28,8 @@ class MockOpenAi:
                     self.wfile.write(b"mock ran out of scripted outputs")
                     return
                 output = outer.outputs.pop(0)
+                if "delay" in output:
+                    time.sleep(output["delay"])
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
@@ -35,6 +38,7 @@ class MockOpenAi:
                 self.wfile.write(b"data: [DONE]\n\n")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
@@ -44,6 +48,9 @@ class MockOpenAi:
 
     def script_text(self, text: str) -> None:
         self.outputs.append({"text": text})
+
+    def script_delayed_text(self, text: str, delay: float) -> None:
+        self.outputs.append({"text": text, "delay": delay})
 
     def script_tool_call(self, name: str, args: Dict[str, Any], call_id: str = "call_1") -> None:
         self.outputs.append({"tool": {"id": call_id, "name": name, "args": args}})

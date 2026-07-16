@@ -31,7 +31,7 @@ uv pip install ../../crates/huggr-python/target/wheels/*.whl \
                ../huglet-docs/dist/huglet-docs-python/target/wheels/*.whl
 ```
 
-Each agent wheel exposes an in-process `ask(docs_path, question) -> Answer` whose `response` is the agent's typed contract (`QaDataset`, `DocsResponse`), with no subprocess or JSON parsing.
+Each agent wheel exposes in-process `ask(docs_path, question) -> Answer` and async `run(docs_path, question)` methods. The final `response` is the agent's typed contract (`QaDataset`, `DocsResponse`), with no subprocess or caller-owned JSON parsing.
 
 ## Run
 

@@ -10,6 +10,8 @@ pub mod bundle;
 pub mod manifest;
 pub mod mcp_serve;
 pub mod models;
+#[cfg(feature = "python-bridge")]
+pub mod python_bridge;
 pub mod runtime;
 pub mod runtime_args;
 pub mod scaffold;

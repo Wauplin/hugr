@@ -8,4 +8,4 @@ huggr run . ../../docs "Generate 5 question/answer pairs about traces"
 huggr build . --surface python --release              # also emits a typed Python wheel
 ```
 
-The wheel exposes `huglet_datasmith.ask(docs_path, question) -> Answer` for calling the agent in-process from Python. [`examples/hf-librarian`](../hf-librarian) composes it into a full generate → publish → eval pipeline, walked through in [the docs-QA pipeline tutorial](../../docs/tutorials/docs-qa-dataset-pipeline.md).
+The wheel exposes `huglet_datasmith.ask(docs_path, question) -> Answer` and `huglet_datasmith.run(docs_path, question)` for typed in-process calls or async event streaming from Python. [`examples/hf-librarian`](../hf-librarian) composes it into a full generate → publish → eval pipeline, walked through in [the docs-QA pipeline tutorial](../../docs/tutorials/docs-qa-dataset-pipeline.md).

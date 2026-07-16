@@ -64,6 +64,7 @@ and, built with `--surface python`:
 ```python
 import huglet_docs
 answer = huglet_docs.ask("./docs", "How do I grant a tool?")
+# The async huglet_docs.run("./docs", ...) event stream uses the same arguments.
 ```
 
 Four call sites, one artifact, and in every case `fs_read` was re-jailed before the first model call. Point it at a different folder tomorrow and the traces, scratch, and memory still accumulate under the same agent home, because identity comes from the agent name, not the argument.

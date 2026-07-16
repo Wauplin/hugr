@@ -3,7 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, TypedDict, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Literal,
+    Optional,
+    TypeVar,
+    TypedDict,
+    Union,
+    cast,
+    overload,
+)
 
 JsonScalar = Union[None, bool, int, float, str]
 JsonValue = Union[JsonScalar, List["JsonValue"], Dict[str, "JsonValue"]]
@@ -432,13 +445,16 @@ class DoneEvent:
     type: Literal["done"] = field(init=False, default="done")
 
 
+AnswerT = TypeVar("AnswerT")
+
+
 @dataclass
-class AnswerReadyEvent:
-    answer: Answer
+class AnswerReadyEvent(Generic[AnswerT]):
+    answer: AnswerT
     type: Literal["answer_ready"] = field(init=False, default="answer_ready")
 
 
-AgentEvent = Union[
+AgentEventFor = Union[
     AskStartedEvent,
     ModelStartedEvent,
     TextDeltaEvent,
@@ -447,8 +463,9 @@ AgentEvent = Union[
     ToolEndedEvent,
     NoticeEvent,
     DoneEvent,
-    AnswerReadyEvent,
+    AnswerReadyEvent[AnswerT],
 ]
+AgentEvent = AgentEventFor[Answer]
 
 
 class AskStartedEventDict(TypedDict):
@@ -517,7 +534,20 @@ AgentEventDict = Union[
 ]
 
 
-def agent_event_from_dict(data: AgentEventDict) -> AgentEvent:
+@overload
+def agent_event_from_dict(data: AgentEventDict) -> AgentEvent: ...
+
+
+@overload
+def agent_event_from_dict(
+    data: AgentEventDict, answer_from_dict: Callable[[AnswerDict], AnswerT]
+) -> AgentEventFor[AnswerT]: ...
+
+
+def agent_event_from_dict(
+    data: AgentEventDict,
+    answer_from_dict: Callable[[AnswerDict], Any] = Answer.from_dict,
+) -> Any:
     event_type = data["type"]
     if event_type == "ask_started":
         ask_started = cast(AskStartedEventDict, data)
@@ -555,7 +585,7 @@ def agent_event_from_dict(data: AgentEventDict) -> AgentEvent:
         done = cast(DoneEventDict, data)
         return DoneEvent(reason=DoneReason.from_json(done["reason"]))
     answer_ready = cast(AnswerReadyEventDict, data)
-    return AnswerReadyEvent(answer=Answer.from_dict(answer_ready["answer"]))
+    return AnswerReadyEvent(answer=answer_from_dict(answer_ready["answer"]))
 
 
 @dataclass

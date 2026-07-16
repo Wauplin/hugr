@@ -227,6 +227,8 @@ Every event dataclass retains its literal `type` attribute for discriminated-uni
 
 A successful stream starts with `AskStartedEvent` and ends with `AnswerReadyEvent`; the final answer is already available as `event.answer`. Infrastructure failures can terminate iteration without an answer and raise from the native stream.
 
+The blocking and streaming methods share the same native event bridge. Pressing `Ctrl+C` during `ask()` aborts the Rust ask promptly. Cancelling the task consuming `run()` or explicitly closing the async iterator also aborts the in-flight ask. Generated wheels for Rust-defined huglets expose the same `run()` method and event dataclasses; see [Package an agent for Python](../guides/package-agent-for-python.md).
+
 ## File feedback
 
 Feedback is the asynchronous back-channel for recording, beside an immutable trace, whether an answer helped. It is never read during a live ask and is intended for offline analysis (see [Inspect, replay, and verify traces](../guides/inspect-traces.md)).

@@ -16,7 +16,7 @@ huggr/
 │   ├── huggr-wasm/          # generic WASM bindings around huggr-core for browser/JS hosts: submit/poll over
 │   │                       #   JSON, AgentSession + verify_trace_json, browser tool schemas
 │   └── huggr-python/        # PyO3 runtime embedding: define agents/tools in Python on the same runtime
-│                           #   (outside the cargo workspace; built by maturin from bindings/python)
+│                           #   (outside the workspace; built by maturin from bindings/python)
 ├── bindings/
 │   ├── python/             # the `huggr-agents` Python package: typed pure-Python layer over
 │   │                       #   crates/huggr-python, pytest suite with a mock provider
@@ -37,7 +37,7 @@ huggr/
 
 **`huggr-core` depends on nothing environmental.** Verify this with `cargo tree -p huggr-core`.
 
-`huggr-replay` may use `std::fs`, but it consumes `huggr-core` as pure data. The native layers stack strictly: `huggr-agent` depends on `huggr-host` + `huggr-replay`, then `huggr-toolkit` depends on `huggr-agent`.
+`huggr-replay` may use `std::fs`, but it consumes `huggr-core` as pure data. The native layers stack strictly: `huggr-agent` depends on `huggr-host` + `huggr-replay`, then `huggr-toolkit` depends on `huggr-agent`. The optional `huggr-toolkit` Python bridge feature contains the signal-aware PyO3 stream shared by generated wheels and `crates/huggr-python`.
 
 Browser-specific behavior lives in JavaScript hosts under `bindings/typescript` and `examples/chrome-extension`. Chrome APIs, IndexedDB, extension UI, and browser tool execution never enter the core or native host crates. `crates/huggr-wasm` is only a JSON-in/JSON-out binding around the brain.
 

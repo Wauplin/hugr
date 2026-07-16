@@ -538,17 +538,51 @@ pub async fn ask_bundle_with_options(
     extra: serde_json::Value,
     runtime: &RuntimeValues,
 ) -> Answer {
+    let (agent, ask) = match prepare_bundle_ask_with_options(
+        bundle_bytes,
+        options,
+        question,
+        trace_id,
+        paths,
+        extra,
+        runtime,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(answer) => return answer,
+    };
+    let started = Instant::now();
+    match agent.ask(ask).await {
+        Ok(answer) => answer,
+        Err(err) => error_answer(err.to_string(), started),
+    }
+}
+
+/// Assemble an embedded bundle and its ask without starting the turn.
+///
+/// Python surfaces use this split to attach their shared event stream before
+/// model or tool work begins. Setup failures remain ordinary error answers.
+pub async fn prepare_bundle_ask_with_options(
+    bundle_bytes: &[u8],
+    options: &RuntimeOptions,
+    question: String,
+    trace_id: Option<String>,
+    paths: AskPaths<'_>,
+    extra: serde_json::Value,
+    runtime: &RuntimeValues,
+) -> Result<(Agent, Ask), Answer> {
     let started = Instant::now();
     let trace_id = match trace_id.map(external_trace_id).transpose() {
         Ok(trace_id) => trace_id,
-        Err(err) => return error_answer(err, started),
+        Err(err) => return Err(error_answer(err, started)),
     };
     let mut def = match prepare_definition(bundle_bytes, options.model_catalog()) {
         Ok(def) => def,
-        Err(err) => return error_answer(err.to_string(), started),
+        Err(err) => return Err(error_answer(err.to_string(), started)),
     };
     if let Err(err) = apply_runtime_values(&mut def, runtime) {
-        return error_answer(err.to_string(), started);
+        return Err(error_answer(err.to_string(), started));
     }
     let agent = match build_agent_with_options(&def, options).await {
         Ok((agent, warnings)) => {
@@ -557,14 +591,14 @@ pub async fn ask_bundle_with_options(
             }
             agent
         }
-        Err(err) => return error_answer(err.to_string(), started),
+        Err(err) => return Err(error_answer(err.to_string(), started)),
     };
 
     let mut blobs = Vec::with_capacity(paths.blobs.len());
     for path in paths.blobs {
         match blob_handle_from_path(path) {
             Ok(handle) => blobs.push(handle),
-            Err(err) => return error_answer(err, started),
+            Err(err) => return Err(error_answer(err, started)),
         }
     }
 
@@ -579,10 +613,7 @@ pub async fn ask_bundle_with_options(
             .collect(),
         extra,
     };
-    match agent.ask(ask).await {
-        Ok(answer) => answer,
-        Err(err) => error_answer(err.to_string(), started),
-    }
+    Ok((agent, ask))
 }
 
 /// The `--config` view: the parsed manifest as JSON. The API key env *name*
