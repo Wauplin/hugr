@@ -609,6 +609,7 @@ dependencies = [
  "huggr-host",
  "huggr-providers",
  "huggr-replay",
+ "pyo3",
  "regex",
  "reqwest",
  "schemars",

@@ -399,8 +399,21 @@ class Agent:
         skills: Sequence[str] = (),
         extra: JsonValue = None,
     ) -> Answer:
-        raw = self._native.ask(_ask_json(question, trace_id, blobs, skills, extra))
-        return Answer.from_dict(cast(AnswerDict, json.loads(raw)))
+        stream = self._native.ask_events(
+            _ask_json(question, trace_id, blobs, skills, extra)
+        )
+        try:
+            while True:
+                raw = stream.next_event()
+                if raw is None:
+                    raise RuntimeError("event stream ended without an answer")
+                event = agent_event_from_dict(
+                    cast(AgentEventDict, json.loads(raw))
+                )
+                if isinstance(event, AnswerReadyEvent):
+                    return event.answer
+        finally:
+            stream.cancel()
 
     async def run(
         self,
@@ -413,11 +426,14 @@ class Agent:
     ) -> AsyncIterator[AgentEvent]:
         """Stream Rust-validated events cast into their public dataclasses."""
         stream = self._native.ask_events(_ask_json(question, trace_id, blobs, skills, extra))
-        while True:
-            raw = await asyncio.to_thread(stream.next_event)
-            if raw is None:
-                return
-            yield agent_event_from_dict(cast(AgentEventDict, json.loads(raw)))
+        try:
+            while True:
+                raw = await asyncio.to_thread(stream.next_event)
+                if raw is None:
+                    return
+                yield agent_event_from_dict(cast(AgentEventDict, json.loads(raw)))
+        finally:
+            stream.cancel()
 
     def feedback(self, trace_id: str, payload: JsonValue) -> Feedback:
         raw = self._native.feedback(trace_id, json.dumps(payload))

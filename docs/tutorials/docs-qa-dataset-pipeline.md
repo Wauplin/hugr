@@ -83,7 +83,7 @@ pub struct QaItem {
 
 ## Set up the environment and build the wheels
 
-The pipeline calls its Rust agents in-process, not over subprocesses: `huggr build --surface python` wraps a built agent into a maturin wheel exposing a strictly-typed `ask()` ([Package an agent for Python](../guides/package-agent-for-python.md)). You need Rust, [uv](https://docs.astral.sh/uv/), [maturin](https://maturin.rs) (`uv tool install maturin`), and the `huggr` CLI (`cargo install --path crates/huggr-toolkit`).
+The pipeline calls its Rust agents in-process, not over subprocesses: `huggr build --surface python` wraps a built agent into a maturin wheel exposing typed `ask()` and async `run()` methods ([Package an agent for Python](../guides/package-agent-for-python.md)). You need Rust, [uv](https://docs.astral.sh/uv/), [maturin](https://maturin.rs) (`uv tool install maturin`), and the `huggr` CLI (`cargo install --path crates/huggr-toolkit`).
 
 From `examples/hf-librarian/`, create the environment and install the PyPI dependencies:
 

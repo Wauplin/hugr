@@ -129,7 +129,7 @@ This generates a shim crate under `my-agent/dist/` (override with `--out <dir>`)
 
 The result is one self-contained binary at `my-agent/dist/my-agent-cli/target/release/my-agent` that needs no repository checkout. On startup, it installs its bundle into a content-addressed `.definitions/<name>/<hash>/` cache beside `~/.huggr/<name>/`; traces and other mutable state remain in the agent home, so `--trace` resume works anywhere you copy the binary.
 
-`--surface python` also generates a pip-installable Python module.
+`--surface python` also generates a pip-installable Python module with a typed blocking `ask(...)` and async `run(...)` event stream.
 
 The built binary speaks the same universal surface as `huggr run`:
 

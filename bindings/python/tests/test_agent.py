@@ -1,6 +1,10 @@
 import asyncio
 import json
+import os
+import signal
+import subprocess
 import sys
+import time
 from dataclasses import is_dataclass
 
 import pytest
@@ -197,6 +201,66 @@ def test_event_stream_ordering(server):
     assert isinstance(ready, huggr.AnswerReadyEvent)
     assert is_dataclass(ready.answer)
     assert ready.answer.ok
+
+
+def test_async_stream_cancellation_stops_in_flight_ask(server):
+    agent = make_agent(server)
+    server.script_delayed_text('{"answer": "late"}', 10)
+
+    async def cancel_after_start():
+        events = agent.run("q")
+        started = await events.__anext__()
+        assert isinstance(started, huggr.AskStartedEvent)
+        model_started = await events.__anext__()
+        assert isinstance(model_started, huggr.ModelStartedEvent)
+        pending = asyncio.create_task(events.__anext__())
+        await asyncio.sleep(0.05)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        await events.aclose()
+
+    asyncio.run(asyncio.wait_for(cancel_after_start(), timeout=2))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX SIGINT")
+def test_sync_ask_honors_sigint_promptly(server, tmp_path):
+    server.script_delayed_text('{"answer": "late"}', 10)
+    code = f"""
+import huggr_agents as huggr
+agent = huggr.Agent(
+    name="signal-test-agent",
+    system="Answer as JSON.",
+    providers={{"test": {{"base_url": {server.base_url!r}, "api_key_env": "TEST_KEY"}}}},
+    models={{"default": "balanced", "balanced": {{"provider": "test", "model": "mock-model"}}}},
+)
+agent.ask("q")
+"""
+    env = os.environ.copy()
+    env["HUGGR_HOME"] = str(tmp_path / "signal-home")
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not server.requests and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.requests, "child ask reached the model server"
+
+        started = time.monotonic()
+        process.send_signal(signal.SIGINT)
+        _, stderr = process.communicate(timeout=2)
+
+        assert time.monotonic() - started < 2
+        assert process.returncode != 0
+        assert "KeyboardInterrupt" in stderr
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 def test_feedback_round_trip(server):

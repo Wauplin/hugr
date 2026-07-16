@@ -8,14 +8,13 @@
 mod capability;
 mod config;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use huggr_agent::{Agent, AgentEvent, Ask, StatsOptions, TraceId};
+use huggr_agent::{Agent, Ask, StatsOptions, TraceId};
+use huggr_toolkit::python_bridge::{forward_agent_events, EventStream};
 use huggr_toolkit::runtime::build_agent_with_options;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::task::JoinHandle;
 
 use capability::PyCapability;
 
@@ -86,27 +85,15 @@ impl NativeAgent {
         dump(&self.agent.describe())
     }
 
-    fn ask(&self, py: Python<'_>, ask_json: &str) -> PyResult<String> {
-        let ask: Ask = serde_json::from_str(ask_json)
-            .map_err(|err| value_err(format!("invalid ask: {err}")))?;
-        let answer = py
-            .allow_threads(|| self.runtime.block_on(self.agent.ask(ask)))
-            .map_err(runtime_err)?;
-        dump(&answer)
-    }
-
     fn ask_events(&self, ask_json: &str) -> PyResult<EventStream> {
         let ask: Ask = serde_json::from_str(ask_json)
             .map_err(|err| value_err(format!("invalid ask: {err}")))?;
-        let (rx, handle) = {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = {
             let _guard = self.runtime.enter();
-            self.agent.ask_events(ask)
+            tokio::spawn(forward_agent_events(self.agent.clone(), ask, tx))
         };
-        Ok(EventStream {
-            rx: Mutex::new(rx),
-            handle: Mutex::new(Some(handle)),
-            runtime: self.runtime.clone(),
-        })
+        Ok(EventStream::new(rx, handle, self.runtime.clone()))
     }
 
     fn feedback(&self, py: Python<'_>, trace_id: &str, payload_json: &str) -> PyResult<String> {
@@ -143,39 +130,6 @@ impl NativeAgent {
             .allow_threads(|| self.runtime.block_on(self.agent.stats(options)))
             .map_err(runtime_err)?;
         dump(&stats)
-    }
-}
-
-/// A blocking pull of one ask's [`AgentEvent`] stream; the Python layer drives
-/// it from a worker thread (`asyncio.to_thread`) to expose an async iterator.
-#[pyclass]
-struct EventStream {
-    rx: Mutex<UnboundedReceiver<AgentEvent>>,
-    handle: Mutex<Option<JoinHandle<Result<huggr_agent::Answer, huggr_agent::AskError>>>>,
-    runtime: Arc<tokio::runtime::Runtime>,
-}
-
-#[pymethods]
-impl EventStream {
-    /// The next event as JSON, or `None` when the ask is finished. Raises on
-    /// infrastructure failures (`AskError`) after the stream is drained.
-    fn next_event(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        let event = py.allow_threads(|| {
-            let mut rx = self.rx.lock().unwrap();
-            self.runtime.block_on(rx.recv())
-        });
-        match event {
-            Some(event) => Ok(Some(dump(&event)?)),
-            None => {
-                let handle = self.handle.lock().unwrap().take();
-                if let Some(handle) = handle {
-                    py.allow_threads(|| self.runtime.block_on(handle))
-                        .map_err(runtime_err)?
-                        .map_err(runtime_err)?;
-                }
-                Ok(None)
-            }
-        }
     }
 }
 

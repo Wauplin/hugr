@@ -52,9 +52,9 @@ let answer = handle.await??;
 
 `ask_events` returns an unbounded receiver of `AgentEvent` plus a join handle resolving to the `Result<Answer, AskError>`. The channel ends after `answer_ready`; an infrastructure failure surfaces as a `notice` on the stream and an error from the handle.
 
-## Python and TypeScript: `agent.run(...)`
+## Python and TypeScript: `run(...)`
 
-Both runtime embeddings expose the blocking/awaitable `ask(...)` and a streaming `run(...)` over the same vocabulary:
+Python-defined agents, generated wheels for Rust-defined agents, and the TypeScript embedding expose `ask(...)` plus a streaming `run(...)` over the same vocabulary:
 
 ```python
 async for event in agent.run("Explain compaction"):
@@ -64,7 +64,7 @@ async for event in agent.run("Explain compaction"):
         answer = event.answer
 ```
 
-Python yields typed dataclasses (`AskStartedEvent` through `AnswerReadyEvent`), cast from the same wire shapes; `DoneReason` is normalized to a `kind` plus optional `message`.
+Python yields typed dataclasses (`AskStartedEvent` through `AnswerReadyEvent`), cast from the same wire shapes; `DoneReason` is normalized to a `kind` plus optional `message`. Both Python surfaces use the same authoritative event model source and signal-aware native bridge. `Ctrl+C` interrupts blocking `ask()`, while task cancellation or iterator close aborts `run()`.
 
 ```ts
 for await (const event of agent.run("Explain compaction")) {

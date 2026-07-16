@@ -10,6 +10,10 @@ rust-version.workspace = true
 [lib]
 name = "huggr_toolkit"
 
+[features]
+default = []
+python-bridge = ["dep:pyo3"]
+
 [[bin]]
 name = "huggr"
 path = "src/bin/huggr.rs"
@@ -38,6 +42,7 @@ html2md = "0.2"
 huggr-agent = { workspace = true }
 huggr-providers = { workspace = true }
 tokio = { workspace = true }
+pyo3 = { version = "0.23", features = ["abi3-py39"], optional = true }
 clap = { workspace = true }
 # Trace tooling reuses the versioned replay/inspect machinery.
 huggr-replay = { workspace = true }

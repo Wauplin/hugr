@@ -9,6 +9,7 @@
 //! Rust toolchain, `maturin`, and a Python interpreter, and is slow.
 
 use std::path::PathBuf;
+use std::process::Command;
 
 use huggr_toolkit::build::BuildOptions;
 use huggr_toolkit::build_python::build_python;
@@ -35,6 +36,7 @@ fn real_python_build_generates_typed_package_and_wheel() {
     let pkg = outcome.crate_dir.join("python").join("huglet_docs");
     let init = std::fs::read_to_string(pkg.join("__init__.py")).unwrap();
     assert!(init.contains("def ask("), "{init}");
+    assert!(init.contains("async def run("), "{init}");
     assert!(
         init.contains("docs_path: str"),
         "runtime arg is typed: {init}"
@@ -55,11 +57,53 @@ fn real_python_build_generates_typed_package_and_wheel() {
         "{models}"
     );
     assert!(pkg.join("py.typed").exists(), "PEP 561 marker present");
+    assert!(
+        pkg.join("_types.py").exists(),
+        "shared event models present"
+    );
 
     // maturin produced a wheel.
     let wheel = outcome.wheel.expect("maturin produced a wheel");
     assert_eq!(wheel.extension().and_then(|e| e.to_str()), Some("whl"));
     assert!(wheel.is_file(), "wheel exists at {}", wheel.display());
+
+    let site = out_dir.join("python-site");
+    let install = Command::new("python3")
+        .args(["-m", "pip", "install", "--no-deps", "--target"])
+        .arg(&site)
+        .arg(&wheel)
+        .output()
+        .expect("install generated wheel");
+    assert!(
+        install.status.success(),
+        "pip install failed: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let smoke = Command::new("python3")
+        .env("PYTHONPATH", &site)
+        .args([
+            "-c",
+            r#"import asyncio
+import huglet_docs
+
+async def collect():
+    return [event async for event in huglet_docs.run(".", "q", trace_id="../bad")]
+
+events = asyncio.run(collect())
+assert isinstance(events[-1], huglet_docs.AnswerReadyEvent)
+assert type(events[-1].answer) is huglet_docs.Answer
+assert not events[-1].answer.ok
+answer = huglet_docs.ask(".", "q", trace_id="../bad")
+assert not answer.ok
+"#,
+        ])
+        .output()
+        .expect("run generated wheel smoke test");
+    assert!(
+        smoke.status.success(),
+        "generated wheel smoke test failed: {}",
+        String::from_utf8_lossy(&smoke.stderr)
+    );
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }

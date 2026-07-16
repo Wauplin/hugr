@@ -56,7 +56,7 @@ Fixed-shape inputs are declared as `TypedDict`s. Selector and grant maps remain 
 
 Structured outputs are recursively cast into stdlib dataclasses. This includes `Answer`, every tagged `AgentEvent` variant and its nested values, `AgentCard`, trace heads, feedback, and stats. Opaque payloads (`response`, tool args/results, schemas, feedback payloads, and `extra`) retain the recursive JSON type defined by the narrow waist.
 
-Python callables register as ordinary host `Capability`s. They may be synchronous or asynchronous and use explicit JSON schemas. Exceptions become semantic tool errors. `agent.ask()` blocks, while `async for event in agent.run(...)` streams the shared `AgentEvent` dataclass union.
+Python callables register as ordinary host `Capability`s. They may be synchronous or asynchronous and use explicit JSON schemas. Exceptions become semantic tool errors. `agent.ask()` blocks, while `async for event in agent.run(...)` streams the shared `AgentEvent` dataclass union. Both paths drive the same signal-aware native stream, so `Ctrl+C`, task cancellation, and closing the iterator abort the in-flight Rust ask.
 
 The FFI boundary uses JSON strings in both directions. Rust remains the sole validator, and Python only deserializes values that Rust has validated. Replay never imports Python because capability results are recorded events. Python-recorded traces use the standard `huggr-replay` format; the `huggr` CLI needs an agent crate folder that resolves to their store.
 
@@ -90,13 +90,14 @@ Validation in each surface would reimplement the same schema in Python, Kotlin, 
 
 The Python surface makes this concrete:
 
-- A compiled extension (`<agent>._native`, PyO3) embeds the same bundle, links the response-contract crate, and drives one ask in process. It returns the `Answer` as opaque JSON, preserving the narrow waist across the FFI boundary.
-- A pure-Python package wraps it with a typed `ask(...) -> Answer`. Declared runtime args become typed parameters, with positional parameters before the question.
+- A compiled extension (`<agent>._native`, PyO3) embeds the same bundle, links the response-contract crate, and drives one signal-aware event stream in process. Events cross the FFI boundary as opaque JSON, preserving the narrow waist.
+- A pure-Python package wraps it with typed `ask(...) -> Answer` and `async run(...) -> AsyncIterator[AgentEvent]` methods. Both methods take the same declared runtime and ask parameters, with positional runtime parameters before the question.
 
-  The package generates stdlib `@dataclass` models from the **schemars JSON Schema read from the built artifact's `--config`**. These models cover the agent's response type and the stable `Answer`, `AnswerMeta`, and `BlobHandle` contract types. This single source of truth prevents the Python and Rust types from drifting.
+  The package generates its response and typed `Answer` dataclasses from the **schemars JSON Schema read from the built artifact's `--config`**. Stable contract and event dataclasses are copied from the `huggr-agents` Python source during generation, so Rust-defined and Python-defined agents expose the same event API without a second handwritten model set.
 
   `ok` and `status` distinguish the typed success response (`Answer.response`) from the error message (`Answer.error`), preserving errors as answers.
 - The build is offline and self-contained, with no runtime dependency beyond the wheel. A static type checker (mypy/pyright) enforces both input arguments and response fields, so the Python surface is as strict as the Rust surface.
+- Blocking waits poll Python signals, and every stream owns an abort handle. `Ctrl+C` interrupts `ask()` promptly; cancelling an async consumer or closing its iterator aborts the underlying ask instead of leaving the runtime alive until model completion.
 
 ## The Ask and Answer contract
 
