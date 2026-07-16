@@ -343,6 +343,7 @@ class Agent:
         models: Optional[ModelsConfig] = None,
         providers: Optional[ProvidersConfig] = None,
         model_overrides: Optional[ModelCatalogConfig] = None,
+        api_token: Optional[str] = None,
         tools: Sequence[Tool] = (),
         grants: Optional[GrantsConfig] = None,
         limits: Optional[LimitsConfig] = None,
@@ -379,7 +380,7 @@ class Agent:
             )
             for t in tools
         ]
-        self._native = NativeAgent(json.dumps(config), specs)
+        self._native = NativeAgent(json.dumps(config), specs, api_token)
 
     @property
     def warnings(self) -> List[str]:

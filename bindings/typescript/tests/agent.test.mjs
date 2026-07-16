@@ -20,6 +20,7 @@ after(() => server.close());
 beforeEach(() => {
   server.outputs.length = 0;
   server.requests.length = 0;
+  server.authorizations.length = 0;
 });
 
 function memRuntime() {
@@ -86,6 +87,19 @@ test("runtime model catalog overrides author mappings", () => {
   const resolved = agent.resolvedModels();
   assert.equal(resolved.models.balanced.model, "runtime-model");
   assert.equal(resolved.models.max.model, "runtime-model");
+});
+
+test("runtime API token overrides provider credentials", async () => {
+  const runtime = { ...memRuntime(), apiToken: "explicit-token" };
+  const agent = makeAgent({ runtime });
+  server.scriptText('{"answer": "authenticated"}');
+
+  const answer = await agent.ask("q");
+
+  assert.equal(answer.status, "success");
+  assert.deepEqual(server.authorizations, ["Bearer explicit-token"]);
+  assert.ok(!JSON.stringify(agent.resolvedModels()).includes("explicit-token"));
+  assert.ok(!JSON.stringify(await runtime.traces.get(answer.trace_id)).includes("explicit-token"));
 });
 
 test("built-in max tier falls back to powerful", () => {

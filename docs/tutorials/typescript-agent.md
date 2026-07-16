@@ -47,7 +47,7 @@ const config: AgentConfig = {
 - `models` chooses a default from the fixed `fast`, `balanced`, `powerful`, and `max` tiers, and may contain concrete author overrides.
 - `limits` (`LimitsConfig`) is optional and caps `max_model_calls`, `max_cost_micro_usd`, and `timeout_s`; the same three knobs as `[limits]`. An agent has no limits by default; each unset key is unbounded.
 - `context` (`ContextConfig`) is optional and passes through to the core `BudgetPolicy` inside the WASM brain, so compaction (`"none"` | `"truncate"` | `"summarize"`), `budget_tokens`, `trigger_tokens`, `keep_recent_tokens`, `max_block_tokens`, `summary_model`, `tool_ttl`, and `keep_last_per_tool` all run in the brain, not the host. The forget maps `tool_ttl` and `keep_last_per_tool` sit directly on `ContextConfig` here, matching the WASM brain's decoder; this is intentionally flatter than the TOML manifest, which nests them under `[context.forget]`.
-- The built-in catalog uses the Hugging Face router and `HF_TOKEN`. Pass `{ modelCatalog: { providers, models } }` as the second argument to `createAgent` for an explicit Node or browser host override. A browser provider may include `api_key` directly; Node normally resolves `api_key_env` from `process.env`. Key values never appear in output.
+- The built-in catalog uses the Hugging Face router and `HF_TOKEN`. Pass `{ apiToken }` as the second argument to `createAgent` when the embedding application already owns the credential. The runtime token takes precedence over provider `api_key` and `api_key_env` values and never appears in resolved model output or traces. Pass `{ modelCatalog: { providers, models } }` for an explicit Node or browser host override. Use provider-specific credentials instead when tiers route through providers that require different tokens.
 
 The `default` tier is what the brain selects when no component requests another tier. `Agent.resolvedModels()` returns the effective four-tier mapping after runtime and `HUGGR_MODEL_<TIER>` overrides. See [Models, providers, and pricing](../concepts/models-and-pricing.md).
 
@@ -177,6 +177,7 @@ interface AgentRuntime {
   traces: TraceStore;
   feedback?: FeedbackStore;
   env?: (name: string) => string | undefined;
+  apiToken?: string;
 }
 ```
 
@@ -186,6 +187,12 @@ The Node entry (`huggr-agents/node`) provides defaults via `nodeRuntime(name)`:
 import { createAgent, FsTraceStore, FsFeedbackStore, nodeRuntime } from "huggr-agents/node";
 
 const agent = createAgent(config, { traces: new FsTraceStore("/custom/traces") });
+```
+
+An application can pass its model token without rebuilding the provider catalog:
+
+```ts
+const agent = createAgent(config, { apiToken: process.env.HF_TOKEN });
 ```
 
 This wires `loadWasm()` (which reads `./pkg` bytes without fetch), `FsTraceStore` under `<home>/traces/`, `FsFeedbackStore` under `<home>/feedback/`, and `env: process.env[name]`.
@@ -204,7 +211,7 @@ import { createAgent, IndexedDbTraceStore } from "huggr-agents/browser";
 const agent = createAgent(config, { traces: new IndexedDbTraceStore("my-agent") });
 ```
 
-This wires `loadWasm(pkgUrl?)` (imports `huggr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so point at `models.api_key` directly. Trace writes claim their content-derived key with an atomic IndexedDB `add`; concurrent tabs that collide retry with `-N` suffixes without overwriting or failing the ask.
+This wires `loadWasm(pkgUrl?)` (imports `huggr_wasm.js` and initializes the wasm bytes over `fetch`), `IndexedDbTraceStore` (one IndexedDB database per agent, keyed by trace id), `IndexedDbFeedbackStore`, and no `env`; browsers have no environment, so pass `{ apiToken: settings.modelToken }` from a user-controlled settings store. Do not bake production credentials into a published bundle. Trace writes claim their content-derived key with an atomic IndexedDB `add`; concurrent tabs that collide retry with `-N` suffixes without overwriting or failing the ask.
 
 The root export's in-memory stores (`MemTraceStore`, `MemFeedbackStore`) are the reference implementation of the storage seam and double as the "how to write a backend" example; if you want to store traces somewhere neither fs nor IndexedDB covers (a remote service, your app's database), implement `TraceStore`:
 

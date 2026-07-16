@@ -48,7 +48,7 @@ Use a wrapper when the agent is a Rust crate and the caller needs a typed interf
 
 ### Runtime embedding in Python
 
-The `huggr-agents` package consists of the PyO3 crate in `crates/huggr-python` and the pure-Python layer in `bindings/python`. It exposes `huggr_agents.Agent(name=..., system=..., models={...}, tools=[...], grants={...}, limits={...}, context={...})`.
+The `huggr-agents` package consists of the PyO3 crate in `crates/huggr-python` and the pure-Python layer in `bindings/python`. It exposes `huggr_agents.Agent(name=..., system=..., models={...}, api_token=..., tools=[...], grants={...}, limits={...}, context={...})`. The optional host-owned token overrides resolved provider environment credentials for that agent without entering its card or traces.
 
 Config keys correspond to `huggr.toml` sections; `grants` is the Python spelling of `[tools]`. Assembly uses the same `huggr_toolkit::runtime::build_agent` path as `huggr run`, so a Python-defined agent behaves like a manifest-defined one. It uses the same `~/.huggr/<name>/` home, trace format, limits, pricing, and compaction.
 
@@ -66,7 +66,7 @@ Python tool callables are **trusted host code**. Huggr jails what the model can 
 
 The `huggr-agents` npm package in `bindings/typescript` supports Node and the browser. It combines one WASM core artifact with a typed TypeScript host that owns every effect. The artifact is `crates/huggr-wasm`'s `AgentSession`, which contains the brain and recorder over JSON.
 
-`new Agent({ name, system, models, tools, limits, context }, runtime)` uses the same config keys as the manifest and Python API. Tools are `{ name, description, schema, invoke }` objects. `agent.ask()` returns the typed `Answer`, while `for await (const event of agent.run(...))` streams the shared event vocabulary.
+`new Agent({ name, system, models, tools, limits, context }, runtime)` uses the same config keys as the manifest and Python API. The runtime can carry `apiToken` as a host-owned credential that overrides provider credentials without entering resolved model output or traces. Tools are `{ name, description, schema, invoke }` objects. `agent.ask()` returns the typed `Answer`, while `for await (const event of agent.run(...))` streams the shared event vocabulary.
 
 Storage uses `TraceStore` and `FeedbackStore` interfaces. Node implementations write the portable trace format into `~/.huggr/<name>/`, where the Rust CLI can read it directly. Browser implementations use IndexedDB.
 

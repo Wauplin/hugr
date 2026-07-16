@@ -15,7 +15,7 @@ const agent = createAgent({
     schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
     invoke: async (args) => ({ matches: await searchPolicyText(args.query) }),
   }],
-});
+}, { apiToken: process.env.HF_TOKEN });
 
 const answer = await agent.ask("Can I expense a train ticket?");
 for await (const event of agent.run("Follow-up?", { traceId: answer.trace_id })) { /* stream */ }
@@ -27,7 +27,7 @@ for await (const event of agent.run("Follow-up?", { traceId: answer.trace_id }))
 - `agent.verify(traceId)` replays a stored trace bit-for-bit through the wasm `verify_trace_json` fold, the same gate as `huggr verify`, across compatible trace stores.
 - `context` passes through to the core `BudgetPolicy`, so compaction runs inside the WASM brain.
 
-Model selection uses the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass a `modelCatalog` in the optional runtime argument to override the built-in provider, model, and pricing mappings.
+Model selection uses the fixed `fast`, `balanced`, `powerful`, and `max` tiers. Pass `apiToken` in the optional runtime argument to supply one host-owned credential for every tier, or pass `modelCatalog` to override the built-in provider, model, and pricing mappings.
 
 Tool functions are **trusted host code**: Huggr jails what the model can invoke (sandbox-by-registration), not what your TS does once invoked.
 

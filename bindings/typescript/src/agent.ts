@@ -62,6 +62,8 @@ export interface AgentRuntime {
   env?: (name: string) => string | undefined;
   /// Trusted host override for all model mappings.
   modelCatalog?: ModelCatalog;
+  /// Override provider credentials for every model tier in this agent.
+  apiToken?: string;
 }
 
 const MODEL_TIERS: ModelTier[] = ["fast", "balanced", "powerful", "max"];
@@ -309,7 +311,9 @@ export class Agent {
     const tier = this.tierConfig(selector, models);
     const provider = models.providers[tier.provider];
     if (!provider) throw new Error(`model tier ${selector} references unknown provider ${tier.provider}`);
-    const apiKey = provider.api_key ?? (provider.api_key_env ? (this.runtime.env?.(provider.api_key_env) ?? "") : "");
+    const apiKey = this.runtime.apiToken
+      ?? provider.api_key
+      ?? (provider.api_key_env ? (this.runtime.env?.(provider.api_key_env) ?? "") : "");
     return {
       baseUrl: provider.base_url,
       apiKey,
