@@ -1,8 +1,6 @@
-skills = ["skills/source-citation"]
-
 [agent]
 name = "huglet-docs"
-version = "0.0.6"
+version = "0.0.7"
 description = "Answers questions from a read-only documentation folder."
 
 [models]
