@@ -2,7 +2,7 @@ skills = ["skills/source-citation"]
 
 [agent]
 name = "huglet-docs"
-version = "0.0.4"
+version = "0.0.5"
 description = "Answers questions from a read-only documentation folder."
 
 [models]
