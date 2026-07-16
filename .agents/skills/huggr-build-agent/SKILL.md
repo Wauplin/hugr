@@ -168,7 +168,7 @@ For composition and accounting, read [Compose agents and account for cost](../..
 
 ## Troubleshoot
 
-- Missing provider key: inspect `--config`, then set the environment variable named by the resolved provider's `api_key_env`; never put the secret in a manifest or catalog.
+- Missing provider key: inspect `--config`, then set the environment variable named by the resolved provider's `api_key_env`; never put the secret in a manifest or catalog. The generated Python wheel's `ask(..., api_token=...)` supplies the credential per call instead of the environment, overriding every provider's `api_key_env` and staying out of the trace.
 - `huggr` is not found: install `crates/huggr-toolkit` from a Huggr checkout and confirm Cargo's bin directory is on `PATH`.
 - Unknown manifest key: compare the failing table with the cheat sheet and `crates/huggr-toolkit/src/manifest.rs`.
 - Tool unavailable: add the narrowest matching grant, then confirm the registered surface with `--describe`.

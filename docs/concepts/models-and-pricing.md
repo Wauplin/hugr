@@ -48,6 +48,8 @@ output_usd_per_m_tokens = 4.4
 
 Provider names are local aliases. A provider declares an OpenAI-compatible endpoint and the name of the environment variable containing its key. A model entry selects that provider, the concrete model id, and optional input and output prices in USD per million tokens. Secrets never enter either configuration file.
 
+A huglet built with `--surface python` accepts a per-ask credential: `ask(..., api_token=...)` overrides every resolved provider's `api_key_env` for that call and never enters the agent card or the trace. This lets an embedding application own the token directly instead of exporting an environment variable. Leave it unset to fall back to the environment.
+
 The CLI creates `~/.huggr/models.toml` with the three mappings above the first time any `huggr` command runs. The built-in catalog intentionally omits `max`, so it resolves to `powerful` unless the operator adds a `[models.max]` entry. Set `HUGGR_HOME` to relocate the Huggr home, or `HUGGR_MODELS_FILE` to point directly at another catalog. The generated file is ordinary user configuration and can be edited at any time.
 
 [Hugging Face Inference Providers](https://huggingface.co/inference/models) lists a large choice of provider and model combinations that work with the built-in `hf` provider. To use another OpenAI-compatible service, add a separate provider alias with its `base_url` set to the API URL of your choice, set its own `api_key_env`, and reference that alias from the relevant model tiers. Keep the `hf` alias for requests routed through Hugging Face.

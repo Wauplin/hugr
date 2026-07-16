@@ -57,7 +57,8 @@ print(answer.trace_id, answer.metadata.cost_micro_usd)
 
 Three things to notice:
 
-- **Declared runtime args become typed parameters.** `huglet-docs` declares a positional, required `docs_path` runtime arg in its manifest, so the generated `ask()` signature is `ask(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None)`; positional args lead, before the question, mirroring the CLI surface exactly. `skills` accepts caller-local standard `SKILL.md` folder paths for that invocation.
+- **Declared runtime args become typed parameters.** `huglet-docs` declares a positional, required `docs_path` runtime arg in its manifest, so the generated `ask()` signature is `ask(docs_path, question, *, trace_id=None, blobs=None, skills=None, extra=None, api_token=None)`; positional args lead, before the question, mirroring the CLI surface exactly. `skills` accepts caller-local standard `SKILL.md` folder paths for that invocation.
+- **`api_token` supplies the model credential per ask.** Pass `api_token=` when the calling application owns the token instead of exporting the provider's `api_key_env`. It overrides every resolved provider's environment credential for that ask and never enters the agent card or the trace. Leave it unset to fall back to the environment.
 - **The typing is strict but there is no second validator.** Rust already casts the model's final JSON into the agent's response type before it reaches `Answer.response`; `_models.py` only deserializes that already-valid JSON into dataclasses.
 - **It runs in-process.** The PyO3 bridge embeds the bundle and drives the real runtime inside your Python process; no subprocess, no serialization boundary beyond one JSON string. Traces still land under `~/.huggr/huglet-docs/` like every other surface.
 
@@ -65,6 +66,14 @@ Resume works the same as everywhere else; pass a previous answer's `trace_id` an
 
 ```python
 follow_up = huglet_docs.ask("./docs", "And how do I fork one?", trace_id=answer.trace_id)
+```
+
+When the embedding application holds the model credential, pass it directly instead of exporting an environment variable:
+
+```python
+import os
+
+answer = huglet_docs.ask("./docs", "How do I resume a trace?", api_token=os.environ["HF_TOKEN"])
 ```
 
 ## Binary subprocess

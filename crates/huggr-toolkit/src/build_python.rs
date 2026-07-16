@@ -208,7 +208,7 @@ static BUNDLE: &[u8] = include_bytes!("../bundle.bin");
 /// answers (status:error), so this only raises on a genuine bridge failure
 /// (bad JSON in, serialization out, or a runtime that will not start).
 #[pyfunction]
-#[pyo3(signature = (question, trace_id=None, blob_paths=None, skill_paths=None, extra_json=None, runtime_json=None))]
+#[pyo3(signature = (question, trace_id=None, blob_paths=None, skill_paths=None, extra_json=None, runtime_json=None, api_token=None))]
 fn ask_json(
     py: Python<'_>,
     question: String,
@@ -217,6 +217,7 @@ fn ask_json(
     skill_paths: Option<Vec<String>>,
     extra_json: Option<String>,
     runtime_json: Option<String>,
+    api_token: Option<String>,
 ) -> PyResult<String> {{
     py.allow_threads(move || {{
         let runtime: BTreeMap<String, String> = match runtime_json {{
@@ -239,7 +240,10 @@ fn ask_json(
             .into_iter()
             .map(PathBuf::from)
             .collect();
-        let options = {options};
+        let mut options = {options};
+        if let Some(api_token) = api_token {{
+            options = options.with_api_token(api_token);
+        }}
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -425,6 +429,7 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
     params.push_str("    blobs: Optional[List[str]] = None,\n");
     params.push_str("    skills: Optional[List[str]] = None,\n");
     params.push_str("    extra: Optional[dict] = None,\n");
+    params.push_str("    api_token: Optional[str] = None,\n");
 
     // Docstring.
     let mut doc = String::new();
@@ -447,6 +452,9 @@ fn init_py(def: &AgentDefinition, module: &str, root_class: &str) -> String {
     doc.push_str("        blobs: Local file paths to hand in as inbound blobs.\n");
     doc.push_str("        skills: Local SKILL.md folder paths to add for this ask.\n");
     doc.push_str("        extra: Opaque caller metadata, echoed into the trace.\n");
+    doc.push_str(
+        "        api_token: Model credential for this ask; overrides every provider's\n            api_key_env and never enters the trace.\n",
+    );
 
     // Runtime-values dict.
     let mut runtime_build = String::from("    runtime: Dict[str, str] = {}\n");
@@ -503,6 +511,7 @@ def ask(
         list(skills) if skills else None,
         json.dumps(extra) if extra is not None else None,
         json.dumps(runtime),
+        api_token,
     )
     return Answer._from_dict(json.loads(raw))
 "#,
@@ -626,6 +635,8 @@ help = "Folder containing the documentation to search."
         assert!(rs.contains("ask_bundle_with_options"));
         assert!(rs.contains("fn _native("));
         assert!(rs.contains("RuntimeOptions::default()"));
+        assert!(rs.contains("api_token: Option<String>"));
+        assert!(rs.contains("options.with_api_token(api_token)"));
     }
 
     #[test]
@@ -639,6 +650,10 @@ help = "Folder containing the documentation to search."
         assert!(init.contains("-> Answer:"));
         assert!(init.contains("from ._models import Answer, AnswerMeta, BlobHandle, DocsResponse"));
         assert!(init.contains("_native.ask_json("));
+        // api_token is a kw-only ask parameter forwarded to the bridge.
+        assert!(init.contains("api_token: Optional[str] = None,"));
+        let api_token = init.find("api_token: Optional[str] = None,").unwrap();
+        assert!(q < api_token, "api_token follows the question");
     }
 
     #[test]

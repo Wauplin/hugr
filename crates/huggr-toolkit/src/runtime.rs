@@ -201,6 +201,18 @@ pub struct RuntimeOptions {
     storage: Option<StorageOverrides>,
     state_root: Option<PathBuf>,
     model_catalog: Option<ModelCatalog>,
+    api_token: Option<ApiToken>,
+}
+
+/// A host-supplied model credential. Its `Debug` is redacted so the token never
+/// leaks into logs, panics, or error messages.
+#[derive(Clone)]
+struct ApiToken(String);
+
+impl std::fmt::Debug for ApiToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<redacted>")
+    }
 }
 
 impl RuntimeOptions {
@@ -259,6 +271,14 @@ impl RuntimeOptions {
         self
     }
 
+    /// Override provider credentials for every model tier in this host runtime.
+    /// The token takes precedence over each provider's `api_key_env` and never
+    /// enters agent cards, model introspection, or traces.
+    pub fn with_api_token(mut self, api_token: impl Into<String>) -> Self {
+        self.api_token = Some(ApiToken(api_token.into()));
+        self
+    }
+
     pub(crate) fn with_state_root(mut self, root: PathBuf) -> Self {
         self.state_root = Some(root);
         self
@@ -288,6 +308,11 @@ impl RuntimeOptions {
 
     pub fn model_catalog(&self) -> Option<&ModelCatalog> {
         self.model_catalog.as_ref()
+    }
+
+    /// Return the host credential override, if configured.
+    pub fn api_token(&self) -> Option<&str> {
+        self.api_token.as_ref().map(|token| token.0.as_str())
     }
 }
 
@@ -355,7 +380,10 @@ pub async fn build_agent_with_options(
                     tier: tier_name.clone(),
                     provider: tier.provider.clone(),
                 })?;
-        let api_key = std::env::var(&provider.api_key_env).unwrap_or_default();
+        let api_key = options
+            .api_token()
+            .map(str::to_string)
+            .unwrap_or_else(|| std::env::var(&provider.api_key_env).unwrap_or_default());
         if api_key.is_empty() {
             let warning = format!(
                 "api key env var `{}` is unset; model calls will fail until it is set",
@@ -1085,6 +1113,14 @@ allow_hosts = ["example.com"]
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(18_993), (2022, 1, 1));
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+
+    #[test]
+    fn runtime_options_debug_redacts_api_token() {
+        let options = RuntimeOptions::new().with_api_token("secret-token");
+        let debug = format!("{options:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("secret-token"));
     }
 
     #[test]
