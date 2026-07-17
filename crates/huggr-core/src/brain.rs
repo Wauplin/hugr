@@ -6,22 +6,22 @@
 //!     loop {
 //!         for cmd in brain.poll() { host.perform(cmd); }
 //!         let event = host.next_event().await;
-//!         brain.submit(event);
+//!         brain.submit(Envelope::new(host.now(), event));
 //!     }
 //! ```
 
 use serde_json::json;
 
 use crate::command::{Command, DoneReason, OutputEvent, PermissionRequest};
-use crate::event::{Decision, Event};
+use crate::event::{Decision, Envelope, Event};
 use crate::model::{ContextPlan, ModelDelta, ModelOutput, ToolCall, Usage};
 use crate::policy::{StaticPolicy, TurnPolicy};
 use crate::primitives::{OpId, Value};
 use crate::record::{LogEntry, OpMeta, OpOutcome, Record};
 use crate::state::{BrainState, ModelPurpose, OpKind};
 
-/// The agent core. Construct one with a [`TurnPolicy`], feed it [`Event`]s
-/// with [`submit`](Brain::submit), and drain [`Command`]s with
+/// The agent core. Construct one with a [`TurnPolicy`], feed it time-stamped
+/// [`Envelope`]s with [`submit`](Brain::submit), and drain [`Command`]s with
 /// [`poll`](Brain::poll).
 pub struct Brain {
     state: BrainState,
@@ -70,9 +70,12 @@ impl Brain {
         self.state.drain_commands()
     }
 
-    /// Feed one event in. The single entry point for all of the brain's logic.
-    pub fn submit(&mut self, event: Event) {
-        match event {
+    /// Feed one time-stamped event in. The single entry point for all of the
+    /// brain's logic: `at` becomes the brain's current time (stamped onto
+    /// everything the event makes durable), then the event is reduced.
+    pub fn submit(&mut self, envelope: Envelope) {
+        *self.state.now_mut() = envelope.at;
+        match envelope.event {
             Event::UserInput {
                 content,
                 est_tokens,
@@ -108,8 +111,6 @@ impl Brain {
             } => self.on_permission_decision(op, decision, est_tokens),
 
             Event::OpCancelled { op } => self.on_op_cancelled(op),
-
-            Event::Tick { now } => *self.state.now_mut() = now,
         }
     }
 

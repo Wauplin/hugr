@@ -17,8 +17,9 @@
 //!   in-flight op table and everything else is a *fold* over that log.
 //! - **The model is not special** — it is one event source among many,
 //!   correlated to its [`Command::StartModelCall`] by an [`OpId`].
-//! - **All nondeterminism is injected** ([`Event::Tick`], model output, tool
-//!   results, user input), so a recorded event stream replays bit-for-bit.
+//! - **All nondeterminism is injected** (time via the [`Envelope`] stamp, model
+//!   output, tool results, user input), so a recorded event stream replays
+//!   bit-for-bit.
 //! - **Strategy lives in a pluggable [`TurnPolicy`]**, not in the reducer.
 //!
 //! This crate has **no environmental dependencies** (only `serde`/`serde_json`,
@@ -38,7 +39,7 @@ mod state;
 
 pub use brain::Brain;
 pub use command::{Command, DoneReason, OutputEvent, PermissionRequest};
-pub use event::{Decision, Event};
+pub use event::{Decision, Envelope, Event};
 pub use model::{
     ContentPart, ContextBlock, ContextBudgetTotals, ContextDisposition, ContextPlan,
     ContextPlanEntry, ContextSource, ModelDelta, ModelOutput, ModelRequest, ModelSelector, Role,

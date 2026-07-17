@@ -1,14 +1,33 @@
 //! Events: the host → brain half of the contract.
 //!
-//! An [`Event`] is something that happened, fed into the brain's inbox. The
-//! host merges many concurrent sources (model stream, shell, user, timers) into
-//! one ordered, sequence-stamped stream; the brain reduces them one at a time,
-//! atomically. `#[non_exhaustive]` so new variants don't break hosts.
+//! An [`Event`] is something that happened, fed into the brain's inbox as an
+//! [`Envelope`] stamped with the host's injected time. The host merges many
+//! concurrent sources (model stream, shell, user, timers) into one ordered,
+//! time-stamped stream; the brain reduces them one at a time, atomically.
+//! `#[non_exhaustive]` so new variants don't break hosts.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ModelDelta, ModelOutput, Usage};
 use crate::primitives::{OpId, Timestamp, Value};
+
+/// One unit of brain input: an [`Event`] stamped with the host's injected
+/// wall-clock time. The brain has no clock; `at` is its only source of time,
+/// which keeps the fold pure and replay bit-for-bit deterministic.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Envelope {
+    /// Host-injected time at submission, stamped onto everything this event
+    /// makes durable (log entries, op start/end).
+    pub at: Timestamp,
+    pub event: Event,
+}
+
+impl Envelope {
+    /// Stamp `event` with the host's injected time.
+    pub fn new(at: Timestamp, event: Event) -> Self {
+        Self { at, event }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -78,11 +97,6 @@ pub enum Event {
     /// or externally).
     OpCancelled {
         op: OpId,
-    },
-
-    /// Injected time. The brain stamps log entries with the latest `now`.
-    Tick {
-        now: Timestamp,
     },
 }
 

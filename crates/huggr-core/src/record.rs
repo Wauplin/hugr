@@ -17,7 +17,7 @@ use crate::primitives::{OpId, Seq, Timestamp, Value};
 pub struct LogEntry {
     /// Host-assigned global order (also the replay key).
     pub seq: Seq,
-    /// From the latest injected [`Tick`](crate::Event::Tick), never a syscall.
+    /// From the submitted [`Envelope`](crate::Envelope)'s stamp, never a syscall.
     pub at: Timestamp,
     pub record: Record,
 }

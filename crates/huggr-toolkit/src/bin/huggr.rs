@@ -272,10 +272,11 @@ fn replay(args: ReplayArgs) {
         let total = inspector.len();
         while let Some(step) = inspector.step() {
             println!(
-                "[{}/{}] event={} → {} command(s), {} log entr(ies)",
+                "[{}/{}] at={} event={} → {} command(s), {} log entr(ies)",
                 step.index + 1,
                 total,
-                event_kind(&step.event),
+                step.event.at.0,
+                event_kind(&step.event.event),
                 step.commands.len(),
                 step.appended.len(),
             );

@@ -31,7 +31,7 @@ The storage default and path resolution are documented in `crates/huggr-toolkit/
 A trace is one JSON file keyed by a content-derived `trace_id` (sha256 of the trace, truncated; see `crates/huggr-agent/src/store.rs`). Its top-level shape lives in `crates/huggr-replay/src/lib.rs`:
 
 - **`meta`:** the header: codename, `format_version`, `trace_id`, `depends_on`, `agent_name`/`agent_version`, `question`, `status`, opaque `extra`. Live checkpoints use the open status string `interrupted`.
-- **`events`:** the ordered host→brain event stream and the input to replay (`Tick`s, model output, tool results, user input).
+- **`events`:** the ordered host→brain stream of time-stamped envelopes (`{ at, event }`) and the input to replay (model output, tool results, user input).
 - **`commands`:** the ordered brain→host command sequence drained by the live host and the recorded output checked by `verify` (empty in older traces → falls back to log-only comparison).
 - **`log`:** the consolidated, `seq`-stamped durable log and source of truth. It contains one `Record` per logical item (user message, consolidated model output, tool result, op-ended), never one per streaming delta.
 - **`blobs`:** references to content-addressed payloads. The bytes live in the blob store and are never inlined.
@@ -49,10 +49,10 @@ huggr replay ./examples/huglet-weather <trace_id> --step
 You'll see, per event:
 
 ```
-[3/12] event=ToolResult → 0 command(s), 1 log entr(ies)
+[3/12] at=1752745632000 event=ToolResult → 0 command(s), 1 log entr(ies)
 ```
 
-This is one line per replayed event (event kind, commands emitted, log entries appended), then a final `replayed N event(s)`. In inspection order, you see how each event (a streamed model output, a tool result, or a timeout tick) changed state and output. The `Inspector` driving this is in `crates/huggr-replay/src/replay.rs`.
+This is one line per replayed event (timestamp, event kind, commands emitted, log entries appended), then a final `replayed N event(s)`. In inspection order, you see how each event (a streamed model output or a tool result) changed state and output. The `Inspector` driving this is in `crates/huggr-replay/src/replay.rs`.
 
 Wrap a `replay` call in a script and diff outputs across runs: the same trace bytes always replay to the same commands. That is the determinism guarantee you're debugging against.
 
@@ -67,7 +67,7 @@ huggr verify ./examples/huglet-weather <trace_id>
 
 A `verify` failure means the recorded input now produces different output. The usual cause is a brain change that omitted a reducer arm or dropped an event field.
 
-`huggr-core` is **sans-IO and pure**: no clock, RNG, or IO. All nondeterminism is injected as events, including `Tick` for time and events for model output and tool results. The brain's output is therefore a pure function of its input log.
+`huggr-core` is **sans-IO and pure**: no clock, RNG, or IO. All nondeterminism is injected, including time as the envelope stamp on every submitted event and model output and tool results as events. The brain's output is therefore a pure function of its input log.
 
 Anything that breaks this property is a bug. See the ground rule in `AGENTS.md`.
 

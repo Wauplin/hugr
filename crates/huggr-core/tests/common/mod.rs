@@ -4,18 +4,29 @@
 //! dead-code lint is silenced here rather than per-item.
 #![allow(dead_code)]
 
-use huggr_core::{Brain, Command, Event, ModelOutput, ToolCall, Usage};
+use huggr_core::{Brain, Command, Envelope, Event, ModelOutput, Timestamp, ToolCall, Usage};
 use serde_json::json;
+
+/// Stamp an event with a fixed test timestamp. Command-logic tests don't care
+/// about time; time-sensitive tests build explicit [`Envelope`]s instead.
+pub fn stamp(event: Event) -> Envelope {
+    Envelope::new(Timestamp::default(), event)
+}
 
 /// Run a whole script of events through a brain, collecting every command the
 /// brain emits (across all `poll()`s), in order. This is the deterministic
 /// "function" we assert on: same events in → same commands out.
 pub fn run_script(brain: &mut Brain, events: Vec<Event>) -> Vec<Command> {
+    run_envelopes(brain, events.into_iter().map(stamp).collect())
+}
+
+/// [`run_script`] over explicitly time-stamped envelopes.
+pub fn run_envelopes(brain: &mut Brain, envelopes: Vec<Envelope>) -> Vec<Command> {
     let mut commands = Vec::new();
-    // Drain anything queued before the first event (none, normally).
+    // Drain anything queued before the first envelope (none, normally).
     commands.extend(brain.poll());
-    for event in events {
-        brain.submit(event);
+    for envelope in envelopes {
+        brain.submit(envelope);
         commands.extend(brain.poll());
     }
     commands

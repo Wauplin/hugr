@@ -73,7 +73,7 @@ pub struct TraceHead {
     pub agent_name: String,
     /// Version of the agent that recorded the trace.
     pub agent_version: String,
-    /// Host-defined logical creation timestamp (the session's `seq 0` tick).
+    /// Host-defined logical creation timestamp (the first envelope's stamp).
     pub created_at: Option<u64>,
     /// The question this ask answered.
     pub question: String,
