@@ -14,7 +14,7 @@
 - **Host:** the environment-specific layer that performs IO and drives the brain (`huggr-host`).
 - **Agent crate folder:** the auditable agent source folder (`Cargo.toml`, `huggr.toml`, `SYSTEM.md`, optional Rust code).
 - **Ask / Answer / Feedback:** the uniform invocation contract: question + metadata in; structured response + mandatory metadata out; optional opaque caller feedback appended later by trace id.
-- **Trace:** the durable, replayable event log of one session, identified by `trace_id` and optionally rooted on a parent via `depends_on`.
+- **Trace:** the durable replay container for one session: time-stamped input events, emitted commands, the consolidated log, and metadata, identified by `trace_id` and optionally rooted on a parent via `depends_on`.
 - **Fork:** starting a new session from an existing trace's log. The parent is immutable.
 - **Scratchpad:** the agent's private filesystem subtree, writable without gates and jailed to its root.
 - **Tool:** the model-facing view of an effect: a manifest grant that advertises one or more named, schema-described functions to the model. A built Huggr agent can itself be granted as a tool.

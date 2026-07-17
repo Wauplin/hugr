@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 pub const RESPONSE_RUST_TYPE: &str = "huglet_docs::DocsResponse";
 pub const MODEL_RESPONSE_RUST_TYPE: &str = "huglet_docs::DocsModelResponse";
 
-const HF_DOCS_BASE: &str = "https://huggingface.co/docs";
+const HUGGR_DOCS_BASE: &str = "https://github.com/Wauplin/huggr/blob/main/docs";
 
 /// Public response payload returned by the docs agent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -16,7 +16,7 @@ const HF_DOCS_BASE: &str = "https://huggingface.co/docs";
 pub struct DocsResponse {
     /// User-facing answer grounded in the retrieved documents.
     pub response: String,
-    /// Source documents enriched with public Hugging Face documentation URLs.
+    /// Source documents enriched with public Huggr documentation URLs.
     pub related_documents: Vec<Document>,
 }
 
@@ -26,7 +26,7 @@ pub struct DocsResponse {
 pub struct Document {
     /// Source path relative to the runtime docs root, excluding AI_INDEX.md.
     pub path: String,
-    /// Public URL for this document on huggingface.co/docs.
+    /// Public URL for this document in the Huggr repository.
     pub url: String,
 }
 
@@ -78,6 +78,33 @@ pub fn answer_hooks() -> Vec<AnswerHook> {
 
 fn document_url(path: &str) -> String {
     let normalized = path.trim_start_matches('/');
-    let slug = normalized.strip_suffix(".md").unwrap_or(normalized);
-    format!("{HF_DOCS_BASE}/{slug}")
+    format!("{HUGGR_DOCS_BASE}/{normalized}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use huggr_agent::Answer;
+
+    #[test]
+    fn answer_hook_adds_huggr_document_urls() {
+        let mut answer = Answer {
+            status: STATUS_SUCCESS.to_string(),
+            response: json!({
+                "response": "Use a time-stamped envelope.",
+                "related_documents": ["concepts/runtime.md"],
+            }),
+            ..Answer::default()
+        };
+
+        answer_hooks()[0].apply(&mut answer);
+
+        assert_eq!(
+            answer.response["related_documents"][0],
+            json!({
+                "path": "concepts/runtime.md",
+                "url": "https://github.com/Wauplin/huggr/blob/main/docs/concepts/runtime.md",
+            })
+        );
+    }
 }

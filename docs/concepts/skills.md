@@ -73,13 +73,13 @@ The corollary is about who supplies the path. Whoever controls a skill folder co
 
 ## Worked example
 
-The reference docs agent in `examples/huglet-docs` bundles one skill:
+A documentation agent can bundle a citation skill:
 
 ```toml
 skills = ["skills/source-citation"]
 ```
 
-On an ask, the system prompt lists `source-citation` with its description. A question that quotes documentation makes the model call `skill_read {"name": "source-citation"}`, follow the returned citation rules, and answer with sources; a question the skill does not match never loads it. In the trace, the `skill_read` call and its result are ordinary tool records, so `huggr replay` shows exactly which instructions the model was following.
+On an ask, the system prompt lists `source-citation` with its description. A question that quotes documentation can make the model call `skill_read {"name": "source-citation"}`, follow the returned citation rules, and answer with sources; a question the skill does not match need not load it. In the trace, the `skill_read` call and its result are ordinary tool records, so `huggr replay` shows exactly which instructions the model was following.
 
 ## Limitations
 

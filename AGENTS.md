@@ -65,7 +65,7 @@ crates/huggr-agent/      # the huglet runtime: Ask/Answer, trace/blob/scratch ba
                         #   limits, cost accounting, agent-as-tool (subprocess)
 crates/huggr-toolkit/    # agent crate manifests (huggr.toml + SYSTEM.md), the tool library
                         #   (filesystem, shell, web, state, delegation), and the `huggr`
-                        #   CLI: new / run / build / traces / replay / verify
+                        #   CLI: new / run / build / traces / stats / replay / verify
 crates/huggr-wasm/       # generic WASM bindings around huggr-core for browser/JS
                         #   hosts (submit/poll over JSON + browser tool schemas)
 crates/huggr-python/     # PyO3 runtime embedding (outside the cargo workspace;

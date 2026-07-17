@@ -47,5 +47,5 @@ Exit code is 0 on the CLI, as for every answer: callers branch on data, not on p
 
 - The cost cap is enforced between model calls, so the final spend can exceed the cap by the cost of the call in flight when it tripped. Size the cap with that margin.
 - Limits do not bound tool work: there is no `max_tool_calls`, and a tool that runs long is only caught by `timeout_s`.
-- A `timeout_s` abort drops the turn mid-flight; the trace is self-consistent up to the abort, but whatever the model was mid-way through is gone.
+- A `timeout_s` abort drops the turn mid-flight. Submitted deltas remain in the trace's replay input, but incomplete model output is not consolidated into the durable log or carried into resumed context.
 - Limits bound one ask. A caller that retries in a loop re-arms them each time; budget across asks belongs to the orchestrator (the caller can sum `AnswerMeta`, which is why it is mandatory).

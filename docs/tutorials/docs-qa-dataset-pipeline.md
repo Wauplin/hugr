@@ -34,7 +34,7 @@ description = "Mines a documentation folder and synthesizes grounded Q&A evaluat
 default = "powerful"
 
 [tools.fs_read]
-root = "."
+root = [{ name = "docs", path = "." }]
 
 [runtime.args.docs_path]
 target = "tools.fs_read.root"

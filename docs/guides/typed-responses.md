@@ -2,7 +2,7 @@
 
 This guide explains how a Huggr agent's response contract works. `RESPONSE_RUST_TYPE` turns a Rust struct into the provider's structured-output schema. The optional `MODEL_RESPONSE_RUST_TYPE` lets the model fill a simpler schema than the one users receive. `answer_hooks()` bridges the two with deterministic post-processing.
 
-The worked example is the checked-in reference agent `examples/huglet-docs`. It enriches model-cited document paths into public Hugging Face documentation URLs.
+The worked example is the checked-in reference agent `examples/huglet-docs`. It enriches model-cited document paths into public URLs for Huggr's documentation tree.
 
 Prerequisite: [Build your first agent](../tutorials/first-agent.md). For the design background, see [language surfaces](../reference/agents.md#language-surfaces).
 
@@ -18,7 +18,7 @@ There is no registration ceremony: export the const(s) and the function, and the
 
 ## The worked example: huglet-docs
 
-`examples/huglet-docs` answers questions from a read-only docs folder and cites its sources. The design problem: we want users to get *URLs*, but asking the model to construct `https://huggingface.co/docs/...` URLs invites hallucination. The fix is a split contract; the model cites bare paths, and a hook derives the URLs deterministically.
+`examples/huglet-docs` answers questions from a read-only docs folder and cites its sources. The design problem: we want users to get *URLs*, but asking the model to construct repository URLs invites hallucination. The fix is a split contract; the model cites bare paths, and a hook derives the URLs deterministically.
 
 ### Two response types
 
@@ -102,7 +102,7 @@ export HF_TOKEN=hf_...
 huggr run examples/huglet-docs ./docs "What is the narrow-waist rule?"
 ```
 
-(`./docs` fills the agent's required positional runtime argument `docs_path`, declared under `[runtime.args.docs_path]` in its `huggr.toml`; it re-jails `fs_read` to that folder per invocation.) The answer's `response.related_documents` comes back as `[{"path": "...", "url": "https://huggingface.co/docs/..."}]`; paths chosen by the model, URLs stamped by the hook.
+(`./docs` fills the agent's required positional runtime argument `docs_path`, declared under `[runtime.args.docs_path]` in its `huggr.toml`; it re-jails `fs_read` to that folder per invocation.) The answer's `response.related_documents` comes back as `[{"path": "concepts/runtime.md", "url": "https://github.com/Wauplin/huggr/blob/main/docs/concepts/runtime.md"}]`; paths chosen by the model, URLs stamped by the hook. The checked-in mapping assumes the Huggr repository's `docs/` layout; an adapted agent that reads another corpus should change the base URL or replace the hook.
 
 ## Growing your own contract
 

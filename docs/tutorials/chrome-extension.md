@@ -42,12 +42,11 @@ export const host = {
   loadSettings,                               // () => Promise<{apiKey, baseUrl, model, ...limits}>
   saveSession,                                // (record) => Promise; autosaved during the run
   systemPrompt: SYSTEM_PROMPT,
-  defaults: { baseUrl: "https://router.huggingface.co/v1", model: "google/gemma-4-31B-it:cerebras",
-              maxModelCalls: 20, maxCostMicroUsd: 50000 },
+  defaults: { baseUrl: "https://router.huggingface.co/v1", model: "google/gemma-4-31B-it:cerebras" },
 };
 ```
 
-Keep this shape (`loadWasm`, `invokeCapability`, `loadSettings`, `saveSession`, `systemPrompt`) and you can swap every implementation behind it. The UI then runs a whole ask in one call:
+Keep the five required fields (`loadWasm`, `invokeCapability`, `loadSettings`, `saveSession`, `systemPrompt`) and the optional `defaults` object, and you can swap every implementation behind them. The UI then runs a whole ask in one call:
 
 ```js
 import { runAgent } from "./vendor/agent_driver.js";
@@ -107,7 +106,7 @@ export async function invokeCapability(name, args) {
 ```
 
 3. **Write your prompt.** Replace `system_prompt.js` with instructions scoped to what you actually implemented; the shipped prompt talks about snapshots and file uploads your extension no longer has.
-4. **Assemble your `host`.** Same five keys, your implementations: `invokeCapability` from step 2, `loadSettings`/`saveSession` from the vendored `indexed_db.js` (or your own storage; the driver only awaits promises), the `loadWasm` body copied verbatim.
+4. **Assemble your `host`.** Provide the same five required fields with your implementations: `invokeCapability` from step 2, `loadSettings`/`saveSession` from the vendored `indexed_db.js` (or your own storage; the driver only awaits promises), the `loadWasm` body copied verbatim, and `systemPrompt`. Add `defaults` only when the host should supply fallback settings.
 5. **Build your UI.** Any HTML that calls `runAgent(question, host, { onEvent })` works; `sidepanel.js` is a good crib for rendering `model`/`tool`/`done` events and wiring an AbortController-style interrupt.
 6. **Reuse `build.sh` as-is** (adjust `HERE` if you moved out of `examples/`), reload the unpacked extension, and ask it to tidy your tabs.
 
