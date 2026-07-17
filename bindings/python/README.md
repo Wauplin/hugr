@@ -32,7 +32,7 @@ Config keys correspond to `huggr.toml`: `models`, `limits`, and `context` use th
 
 All structured outputs are dataclasses, recursively: `ask()` returns `Answer`; `run()` yields the `AgentEvent` union (`TextDeltaEvent`, `ToolStartedEvent`, `AnswerReadyEvent`, and the other variants); `describe()`, `traces()`, `feedback()`, and `stats()` return `AgentCard`, `TraceHead`, `Feedback`, and `AgentStats`. Domain-owned opaque JSON remains `JsonValue`/`JsonObject`: answer payloads, tool arguments/results, schemas, feedback payloads, and `extra`. Rust performs validation; the Python layer only casts validated JSON into these dataclasses.
 
-`ask()` and `run()` both use the shared signal-aware native event bridge. `Ctrl+C` aborts a blocking ask promptly. Cancelling the task reading `run()` or closing the iterator aborts the in-flight Rust ask instead of waiting for the model or tool call to finish.
+`ask()` and `run()` both use the shared signal-aware native event bridge. `Ctrl+C` aborts a blocking ask promptly. Cancelling the task reading `run()` or closing the iterator aborts the in-flight Rust ask and its cancellable native effects. Python callables already executing on a blocking worker cannot be preempted safely and may finish after the ask is cancelled; dropping the agent does not wait for those callables. Keep their side effects idempotent and add application-level cancellation where needed.
 
 Traces persist under `~/.huggr/<name>/` in the same `huggr-replay` format as a manifest-defined agent. Capability results are recorded events, so replay does not import Python. The `huggr` CLI currently needs an agent crate folder that resolves to the trace store; it does not accept a Python agent home or trace file directly.
 

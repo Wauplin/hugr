@@ -203,7 +203,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use huggr_toolkit::python_bridge::{{EventStream, answer_ready_event, forward_agent_events}};
+use huggr_toolkit::python_bridge::{{BridgeRuntime, EventStream, answer_ready_event, forward_agent_events}};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -244,12 +244,12 @@ fn ask_events_json(
     if let Some(api_token) = api_token {{
         options = options.with_api_token(api_token);
     }}
-    let runtime = Arc::new(
+    let runtime = Arc::new(BridgeRuntime::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("starting async runtime: {{e}}")))?,
-    );
+    ));
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = {{
         let _guard = runtime.enter();

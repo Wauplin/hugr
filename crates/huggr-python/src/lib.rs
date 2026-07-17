@@ -11,7 +11,7 @@ mod config;
 use std::sync::Arc;
 
 use huggr_agent::{Agent, Ask, StatsOptions, TraceId};
-use huggr_toolkit::python_bridge::{forward_agent_events, EventStream};
+use huggr_toolkit::python_bridge::{BridgeRuntime, EventStream, forward_agent_events};
 use huggr_toolkit::runtime::build_agent_with_options;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -42,7 +42,7 @@ type ToolSpec = (String, String, String, bool, bool, Py<PyAny>);
 struct NativeAgent {
     agent: Agent,
     warnings: Vec<String>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    runtime: Arc<BridgeRuntime>,
 }
 
 #[pymethods]
@@ -73,7 +73,7 @@ impl NativeAgent {
         Ok(Self {
             agent,
             warnings,
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(BridgeRuntime::new(runtime)),
         })
     }
 

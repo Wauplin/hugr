@@ -227,7 +227,7 @@ Every event dataclass retains its literal `type` attribute for discriminated-uni
 
 A successful stream starts with `AskStartedEvent` and ends with `AnswerReadyEvent`; the final answer is already available as `event.answer`. Infrastructure failures can terminate iteration without an answer and raise from the native stream.
 
-The blocking and streaming methods share the same native event bridge. Pressing `Ctrl+C` during `ask()` aborts the Rust ask promptly. Cancelling the task consuming `run()` or explicitly closing the async iterator also aborts the in-flight ask. Generated wheels for Rust-defined huglets expose the same `run()` method and event dataclasses; see [Package an agent for Python](../guides/package-agent-for-python.md).
+The blocking and streaming methods share the same native event bridge. Pressing `Ctrl+C` during `ask()` aborts the Rust ask promptly. Cancelling the task consuming `run()` or explicitly closing the async iterator also aborts the in-flight ask. A Python tool that is already running cannot be preempted safely and may finish after cancellation, so keep its side effects idempotent or add application-level cancellation. Dropping the agent does not wait for that callable. Generated wheels for Rust-defined huglets expose the same `run()` method and event dataclasses; see [Package an agent for Python](../guides/package-agent-for-python.md).
 
 ## File feedback
 

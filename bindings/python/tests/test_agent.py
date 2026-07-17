@@ -263,6 +263,78 @@ agent.ask("q")
             process.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX SIGINT")
+@pytest.mark.parametrize(
+    "tool_source",
+    [
+        """def slow(args):
+    started.write_text("started")
+    time.sleep(10)
+    completed.write_text("completed")
+    return {"ok": True}
+""",
+        """async def slow(args):
+    started.write_text("started")
+    await asyncio.sleep(10)
+    completed.write_text("completed")
+    return {"ok": True}
+""",
+    ],
+    ids=["sync", "async"],
+)
+def test_sigint_during_python_tool_does_not_deadlock_shutdown(
+    server, tmp_path, tool_source
+):
+    server.script_tool_call("slow", {})
+    started = tmp_path / "tool-started"
+    completed = tmp_path / "tool-completed"
+    code = f"""
+import asyncio
+import time
+from pathlib import Path
+import huggr_agents as huggr
+
+started = Path({str(started)!r})
+completed = Path({str(completed)!r})
+
+@huggr.tool(name="slow", description="d", schema={{"type": "object"}})
+{tool_source}
+
+agent = huggr.Agent(
+    name="signal-tool-test-agent",
+    system="Use the tool.",
+    providers={{"test": {{"base_url": {server.base_url!r}, "api_key_env": "TEST_KEY"}}}},
+    models={{"default": "balanced", "balanced": {{"provider": "test", "model": "mock-model"}}}},
+    tools=[slow],
+)
+agent.ask("q")
+"""
+    env = os.environ.copy()
+    env["HUGGR_HOME"] = str(tmp_path / "signal-tool-home")
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert started.exists(), "child entered the Python tool"
+
+        process.send_signal(signal.SIGINT)
+        _, stderr = process.communicate(timeout=2)
+
+        assert process.returncode != 0
+        assert "KeyboardInterrupt" in stderr
+        assert not completed.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def test_feedback_round_trip(server):
     agent = make_agent(server)
     server.script_text('{"answer": "x"}')
