@@ -1,6 +1,6 @@
 [agent]
 name = "huglet-docs"
-version = "0.0.8"
+version = "0.0.9"
 description = "Answers questions from a read-only documentation folder."
 
 [models]

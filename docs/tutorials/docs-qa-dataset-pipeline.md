@@ -347,7 +347,7 @@ tools:
   fs_search calls=19 errors=0 total_latency_ms=35 mean_latency_ms=1
 ```
 
-Ten asks, ~10.3¢, p95 under 4 seconds, and `fs_search`-heavy tool use show that the docs agent searches more than it reads, which is exactly what you want from a Q&A specialist. Because stats fold from traces, these numbers accumulate across runs: re-run the eval after changing `SYSTEM.md` and the deltas in cost, latency, and tool mix are your regression report. The `feedback=0` column is the reminder that verdicts can be attached back to traces (`agent.feedback(trace_id, ...)`), which the offline `examples/huglet-insights` agent then mines for improvement suggestions.
+Ten asks, ~10.3¢, p95 under 4 seconds, and the tool counts provide a baseline for retrieval behavior. A high `fs_search` count can indicate repeated broad or literal-query searches, so compare it with source reads and answer quality rather than treating it as a goal. Because stats fold from traces, these numbers accumulate across runs: re-run the eval after changing `SYSTEM.md` and the deltas in cost, latency, and tool mix are your regression report. The `feedback=0` column is the reminder that verdicts can be attached back to traces (`agent.feedback(trace_id, ...)`), which the offline `examples/huglet-insights` agent then mines for improvement suggestions.
 
 To see *inside* a single run rather than the aggregate, replay it deterministically to inspect every file the datasmith read before writing each pair, event by event:
 
