@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use huggr_core::{
-    Brain, BudgetPolicy, Command, ContextPlan, Decision, Event, ModelRequest, ModelSelector, OpId,
-    PolicyRegistry, StaticPolicy, Timestamp, TurnPolicy, Value,
+    Brain, BudgetPolicy, Command, ContextPlan, Decision, Envelope, Event, ModelRequest,
+    ModelSelector, OpId, PolicyRegistry, StaticPolicy, Timestamp, TurnPolicy, Value,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -25,7 +25,7 @@ use crate::capability::CapabilityRegistry;
 use crate::frontend::Frontend;
 use crate::model::{ModelRegistry, ModelSink};
 
-/// Captures the exact ordered [`Event`] stream the host feeds the brain **and**
+/// Captures the exact ordered [`Envelope`] stream the host feeds the brain **and**
 /// the ordered [`Command`] sequence the brain emits, so the session can be
 /// persisted as a [`Trace`] and replayed bit-for-bit later. The durable *log*
 /// is read from the brain at save time (it is always a fold over these events).
@@ -39,7 +39,7 @@ use crate::model::{ModelRegistry, ModelSink};
 /// pays nothing.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Recorder {
-    pub(crate) events: Vec<Event>,
+    pub(crate) events: Vec<Envelope>,
     /// Brain→host commands, in the order the driver drained them from
     /// `brain.poll()`.
     pub(crate) commands: Vec<Command>,
@@ -48,14 +48,12 @@ pub(crate) struct Recorder {
 }
 
 impl Recorder {
-    /// Record one event in submission order. The first `Tick` seeds `created_at`.
-    pub(crate) fn record(&mut self, event: &Event) {
+    /// Record one envelope in submission order. The first stamp seeds `created_at`.
+    pub(crate) fn record(&mut self, envelope: &Envelope) {
         if self.created_at.is_none() {
-            if let Event::Tick { now } = event {
-                self.created_at = Some(now.0);
-            }
+            self.created_at = Some(envelope.at.0);
         }
-        self.events.push(event.clone());
+        self.events.push(envelope.clone());
     }
 
     /// Record commands in the order the driver drained them from the brain, so
@@ -71,7 +69,7 @@ impl Recorder {
     /// old trace's `commands`, so a resumed trace with empty commands still gets
     /// a complete, self-consistent command sequence. `created_at` keeps the
     /// original session's creation time.
-    fn seed(events: Vec<Event>, commands: Vec<Command>, created_at: Option<u64>) -> Self {
+    fn seed(events: Vec<Envelope>, commands: Vec<Command>, created_at: Option<u64>) -> Self {
         Self {
             events,
             commands,
@@ -80,8 +78,8 @@ impl Recorder {
     }
 }
 
-/// A source of (host-side) wall-clock time, injected into the brain as `Tick`
-/// events so the brain itself never reads a clock.
+/// A source of (host-side) wall-clock time, stamped onto every submitted
+/// [`Envelope`] so the brain itself never reads a clock.
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// A handle for injecting [`Event`]s into a running [`Engine`] from outside a
@@ -192,24 +190,20 @@ impl Engine {
         self.frontend.on_session_end();
     }
 
-    /// Feed an event in, stamping it with a fresh injected `Tick` first.
+    /// Feed an event in, stamped with the injected clock's current time.
     ///
-    /// Both events go through here in submission order, so this is the single
+    /// Every event goes through here in submission order, so this is the single
     /// chokepoint where the [`Recorder`] captures the exact stream that produced
-    /// the session — the property replay depends on. The `Tick` is recorded too:
-    /// replay must re-feed it, or the fold diverges.
+    /// the session — the property replay depends on.
     fn submit(&mut self, event: Event) {
-        let now = Timestamp((self.clock)());
-        let tick = Event::Tick { now };
+        let envelope = Envelope::new(Timestamp((self.clock)()), event);
         if let Some(rec) = self.recorder.as_mut() {
-            rec.record(&tick);
-            rec.record(&event);
+            rec.record(&envelope);
         }
-        self.brain.submit(tick);
-        if checkpoint_boundary(&event) {
+        if checkpoint_boundary(&envelope.event) {
             self.checkpoint_dirty = true;
         }
-        self.brain.submit(event);
+        self.brain.submit(envelope);
     }
 
     /// Build a [`Trace`] of the session so far (the captured event stream + the
@@ -407,7 +401,7 @@ impl Drop for Engine {
 fn checkpoint_boundary(event: &Event) -> bool {
     !matches!(
         event,
-        Event::Tick { .. } | Event::ModelDelta { .. } | Event::CapabilityChunk { .. }
+        Event::ModelDelta { .. } | Event::CapabilityChunk { .. }
     )
 }
 
@@ -797,13 +791,7 @@ impl EngineBuilder {
 fn reconcile_crashed_ops(brain: &mut Brain, recorder: &mut Recorder, clock: &Clock) {
     let stale: Vec<OpId> = brain.state().inflight().keys().copied().collect();
     for op in stale {
-        let tick = Event::Tick {
-            now: Timestamp(clock()),
-        };
-        recorder.record(&tick);
-        brain.submit(tick);
-
-        let cancelled = Event::OpCancelled { op };
+        let cancelled = Envelope::new(Timestamp(clock()), Event::OpCancelled { op });
         recorder.record(&cancelled);
         brain.submit(cancelled);
     }

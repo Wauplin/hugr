@@ -4,54 +4,63 @@
 mod common;
 
 use common::*;
-use huggr_core::{Brain, Event, OpId, Timestamp};
+use huggr_core::{Brain, Envelope, Event, OpId, Timestamp};
 use serde_json::json;
 
-/// Build a representative script that exercises ticks, deltas (transport-only),
-/// a tool round-trip, and a final answer.
-fn representative_script() -> Vec<Event> {
+/// Build a representative script that exercises time stamps, deltas
+/// (transport-only), a tool round-trip, and a final answer.
+fn representative_script() -> Vec<Envelope> {
     use huggr_core::ModelDelta;
     vec![
-        Event::Tick {
-            now: Timestamp(1_000),
-        },
-        user("summarize the repo"),
+        Envelope::new(Timestamp(1_000), user("summarize the repo")),
         // Streamed deltas — transport only, must not change the command logic.
-        Event::ModelDelta {
-            op: OpId(0),
-            delta: ModelDelta::Text("Let me ".into()),
-        },
-        Event::ModelDelta {
-            op: OpId(0),
-            delta: ModelDelta::Text("look.".into()),
-        },
-        Event::Tick {
-            now: Timestamp(1_200),
-        },
-        Event::ModelDone {
-            op: OpId(0),
-            output: tool_output("c1", "shell", json!({ "cmd": "ls" })),
-            usage: usage(),
-            est_tokens: 1,
-        },
-        Event::CapabilityChunk {
-            op: OpId(1),
-            chunk: json!("a.txt\n"),
-        },
-        Event::CapabilityDone {
-            op: OpId(1),
-            result: json!({ "stdout": "a.txt" }),
-            est_tokens: 1,
-        },
-        Event::Tick {
-            now: Timestamp(1_500),
-        },
-        Event::ModelDone {
-            op: OpId(2),
-            output: text_output("One file: a.txt."),
-            usage: usage(),
-            est_tokens: 1,
-        },
+        Envelope::new(
+            Timestamp(1_050),
+            Event::ModelDelta {
+                op: OpId(0),
+                delta: ModelDelta::Text("Let me ".into()),
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_100),
+            Event::ModelDelta {
+                op: OpId(0),
+                delta: ModelDelta::Text("look.".into()),
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_200),
+            Event::ModelDone {
+                op: OpId(0),
+                output: tool_output("c1", "shell", json!({ "cmd": "ls" })),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_300),
+            Event::CapabilityChunk {
+                op: OpId(1),
+                chunk: json!("a.txt\n"),
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_400),
+            Event::CapabilityDone {
+                op: OpId(1),
+                result: json!({ "stdout": "a.txt" }),
+                est_tokens: 1,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_500),
+            Event::ModelDone {
+                op: OpId(2),
+                output: text_output("One file: a.txt."),
+                usage: usage(),
+                est_tokens: 1,
+            },
+        ),
     ]
 }
 
@@ -62,10 +71,10 @@ fn replay_yields_identical_commands() {
     let script = representative_script();
 
     let mut brain_a = Brain::with_default_policy();
-    let commands_a = run_script(&mut brain_a, script.clone());
+    let commands_a = run_envelopes(&mut brain_a, script.clone());
 
     let mut brain_b = Brain::with_default_policy();
-    let commands_b = run_script(&mut brain_b, script);
+    let commands_b = run_envelopes(&mut brain_b, script);
 
     assert_eq!(
         commands_a, commands_b,
@@ -80,11 +89,11 @@ fn replay_is_stable_across_instances() {
     let script = representative_script();
 
     let mut first = Brain::with_default_policy();
-    let commands_first = run_script(&mut first, script.clone());
+    let commands_first = run_envelopes(&mut first, script.clone());
 
     // A second, independent fold of the identical stream.
     let mut second = Brain::with_default_policy();
-    let commands_second = run_script(&mut second, script);
+    let commands_second = run_envelopes(&mut second, script);
 
     assert_eq!(commands_first, commands_second);
 
@@ -139,7 +148,7 @@ fn deltas_do_not_affect_the_log() {
 #[test]
 fn log_is_serializable() {
     let mut brain = Brain::with_default_policy();
-    run_script(&mut brain, representative_script());
+    run_envelopes(&mut brain, representative_script());
 
     let log = brain.state().log();
     let json = serde_json::to_string(log).expect("log serializes");

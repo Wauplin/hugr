@@ -3,49 +3,56 @@
 //! recorded log matches bit-for-bit — the Phase 3 exit criterion. Also covers
 //! the step-through [`Inspector`].
 
-use huggr_core::{Command, Event, ModelOutput, OpId, Timestamp, ToolCall, Usage, Value};
+use huggr_core::{Command, Envelope, Event, ModelOutput, OpId, Timestamp, ToolCall, Usage, Value};
 use huggr_replay::{Inspector, Trace, TraceError, replay, verify};
 use serde_json::json;
 
-/// The ordered host→brain event stream of a realistic Phase 1/2 session:
-/// `user → model (tool call) → tool result → model → done`, with the injected
-/// `Tick`s the host stamps before each event (the recorder captures both).
-fn session_events() -> Vec<Event> {
-    let tick = |n| Event::Tick { now: Timestamp(n) };
+/// The ordered host→brain envelope stream of a realistic Phase 1/2 session:
+/// `user → model (tool call) → tool result → model → done`, each stamped with
+/// the host's injected time.
+fn session_events() -> Vec<Envelope> {
     vec![
         // user message
-        tick(1),
-        Event::UserInput {
-            content: json!("run echo hi"),
-            est_tokens: 1,
-        },
+        Envelope::new(
+            Timestamp(1),
+            Event::UserInput {
+                content: json!("run echo hi"),
+                est_tokens: 1,
+            },
+        ),
         // model asks for a shell tool call (op 0 is the first model call)
-        tick(2),
-        Event::ModelDone {
-            op: OpId(0),
-            output: ModelOutput::tool_calls(vec![ToolCall::new(
-                "call_1",
-                "shell",
-                json!({ "cmd": "echo hi" }),
-            )]),
-            usage: Usage::new(10, 2),
-            est_tokens: 2,
-        },
+        Envelope::new(
+            Timestamp(2),
+            Event::ModelDone {
+                op: OpId(0),
+                output: ModelOutput::tool_calls(vec![ToolCall::new(
+                    "call_1",
+                    "shell",
+                    json!({ "cmd": "echo hi" }),
+                )]),
+                usage: Usage::new(10, 2),
+                est_tokens: 2,
+            },
+        ),
         // shell op (op 1) returns
-        tick(3),
-        Event::CapabilityDone {
-            op: OpId(1),
-            result: json!({ "stdout": "hi\n", "exit": 0 }),
-            est_tokens: 1,
-        },
+        Envelope::new(
+            Timestamp(3),
+            Event::CapabilityDone {
+                op: OpId(1),
+                result: json!({ "stdout": "hi\n", "exit": 0 }),
+                est_tokens: 1,
+            },
+        ),
         // model's final answer (op 2), no tool calls → turn ends
-        tick(4),
-        Event::ModelDone {
-            op: OpId(2),
-            output: ModelOutput::text("It printed: hi"),
-            usage: Usage::new(20, 5),
-            est_tokens: 5,
-        },
+        Envelope::new(
+            Timestamp(4),
+            Event::ModelDone {
+                op: OpId(2),
+                output: ModelOutput::text("It printed: hi"),
+                usage: Usage::new(20, 5),
+                est_tokens: 5,
+            },
+        ),
     ]
 }
 
@@ -276,7 +283,7 @@ fn inspector_run_collects_all_steps() {
     // the opening StartModelCall.
     let opening = steps
         .iter()
-        .find(|s| matches!(s.event, Event::UserInput { .. }))
+        .find(|s| matches!(s.event.event, Event::UserInput { .. }))
         .expect("there is a user-input step");
     assert!(
         opening

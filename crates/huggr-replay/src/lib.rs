@@ -1,18 +1,18 @@
 //! # huggr-replay — the durable trace format
 //!
 //! A **trace** is the saved form of a Huggr session: the ordered host→brain
-//! [`Event`] stream made durable, plus the [`LogEntry`] log and references to
-//! content-addressed blobs. Loading a trace and re-feeding its events into a
-//! fresh [`Brain`](huggr_core::Brain) reconstructs the session deterministically
-//! — [`replay`]/[`verify`] do exactly this, and an [`Inspector`] steps through
-//! it one event at a time.
+//! stream of time-stamped [`Envelope`]s made durable, plus the [`LogEntry`] log
+//! and references to content-addressed blobs. Loading a trace and re-feeding
+//! its envelopes into a fresh [`Brain`](huggr_core::Brain) reconstructs the
+//! session deterministically — [`replay`]/[`verify`] do exactly this, and an
+//! [`Inspector`] steps through it one envelope at a time.
 //!
 //! ## Trace shape
 //!
 //! ```text
 //! Trace
 //! ├── meta:     TraceMeta       // format version, codename, created-at
-//! ├── events:   Vec<Event>      // the ordered host→brain stream (the replay input)
+//! ├── events:   Vec<Envelope>   // the ordered, time-stamped host→brain stream (the replay input)
 //! ├── commands: Vec<Command>    // the ordered brain→host commands the host emitted (the replay *output*)
 //! ├── log:      Vec<LogEntry>   // the consolidated, seq-stamped durable log (the truth)
 //! └── blobs:    BlobManifest    // refs to content-addressed payloads (BlobStore; not inlined)
@@ -20,8 +20,8 @@
 //!
 //! Three complementary views are stored deliberately:
 //!
-//! - **`events`** is the *input* to replay — the exact ordered stream the host
-//!   fed the brain.
+//! - **`events`** is the *input* to replay — the exact ordered, time-stamped
+//!   stream the host fed the brain.
 //! - **`commands`** is the recorded *output* — the exact ordered [`Command`]
 //!   sequence the live host drained from the brain. [`verify`] asserts a replay
 //!   reproduces it, catching command-order nondeterminism (e.g. a
@@ -41,7 +41,7 @@
 
 use std::path::Path;
 
-use huggr_core::{Command, Event, LogEntry};
+use huggr_core::{Command, Envelope, LogEntry};
 use serde::{Deserialize, Serialize};
 
 mod blob;
@@ -57,7 +57,7 @@ pub use replay::{
 /// The current trace container format version. Bump on any breaking change to
 /// the [`Trace`] layout; older readers reject newer versions (see
 /// [`TraceError::UnsupportedVersion`]).
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// The codename written into every trace, so a file is self-identifying.
 pub const CODENAME: &str = "huggr-trace";
@@ -72,8 +72,9 @@ pub const CODENAME: &str = "huggr-trace";
 pub struct Trace {
     /// Format version, codename, creation time. Always present and checked first.
     pub meta: TraceMeta,
-    /// The ordered host→brain [`Event`] stream — the *input* to replay.
-    pub events: Vec<Event>,
+    /// The ordered, time-stamped host→brain [`Envelope`] stream — the *input*
+    /// to replay.
+    pub events: Vec<Envelope>,
     /// The ordered brain→host [`Command`] sequence the live host drained — the
     /// recorded *output* [`verify`] checks a replay against. An
     /// empty vec means "not recorded" (older traces); verify then falls back to
@@ -105,7 +106,7 @@ pub struct TraceMeta {
     /// Container layout version (see [`FORMAT_VERSION`]).
     pub format_version: u32,
     /// When the session was created, as a host-defined logical timestamp (the
-    /// `seq 0` tick). `None` for an empty trace.
+    /// first envelope's `at`). `None` for an empty trace.
     pub created_at: Option<u64>,
     /// Store-assigned identifier of this trace. Set by a `TraceStore` when the
     /// trace is persisted; `None` for traces recorded outside a store. Skipped
@@ -208,11 +209,11 @@ impl BlobManifest {
 }
 
 impl Trace {
-    /// A trace from an ordered event stream and a durable log, with no blobs.
+    /// A trace from an ordered envelope stream and a durable log, with no blobs.
     ///
-    /// `created_at` is the session's `seq 0` tick (a host-defined logical
+    /// `created_at` is the first envelope's `at` (a host-defined logical
     /// timestamp), or `None` for an empty session.
-    pub fn new(events: Vec<Event>, log: Vec<LogEntry>, created_at: Option<u64>) -> Self {
+    pub fn new(events: Vec<Envelope>, log: Vec<LogEntry>, created_at: Option<u64>) -> Self {
         Self {
             meta: TraceMeta::new(created_at),
             events,
@@ -226,7 +227,7 @@ impl Trace {
     /// A trace with an explicit blob manifest (for hosts that already offloaded
     /// large payloads to a content-addressed store).
     pub fn with_blobs(
-        events: Vec<Event>,
+        events: Vec<Envelope>,
         log: Vec<LogEntry>,
         created_at: Option<u64>,
         blobs: BlobManifest,

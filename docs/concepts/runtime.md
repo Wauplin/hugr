@@ -42,7 +42,7 @@ These separations provide the following behavior:
 
 ## Core and host contract
 
-The entire surface between brain and host is two enums plus two methods: `submit(event)` folds an event into state and queues commands, while `poll()` drains them. Both are synchronous and pure, with no `async` or IO. Awaiting effects and the next event belongs to the host.
+The entire surface between brain and host is two enums plus two methods: `submit(envelope)` folds a time-stamped event into state and queues commands, while `poll()` drains them. Both are synchronous and pure, with no `async` or IO. Awaiting effects and the next event belongs to the host.
 
 ```rust
 pub enum Command {
@@ -73,17 +73,20 @@ pub enum Event {
     CapabilityError { op: OpId, error: Value, est_tokens: u32 },
     PermissionDecision { op: OpId, decision: Decision, est_tokens: u32 },
     OpCancelled { op: OpId },
-    Tick { now: Timestamp },                             // injected time, the brain has no clock
 }
+
+/// The brain's input unit: every submitted event carries the host's injected
+/// time. The brain has no clock; `at` is stamped onto everything durable.
+pub struct Envelope { at: Timestamp, event: Event }
 ```
 
 The host driver loop is the entire integration surface:
 
 ```rust
 loop {
-    for cmd in brain.poll() { host.dispatch(cmd) }       // spawn model/tool tasks, abort, persist…
-    let event = host.next_event().await;                  // merged, ordered, stamped
-    brain.submit(event);                                  // pure, instant
+    for cmd in brain.poll() { host.dispatch(cmd) }        // spawn model/tool tasks, abort, persist…
+    let event = host.next_event().await;                  // merged, ordered
+    brain.submit(Envelope::new(host.now(), event));       // pure, instant
 }
 ```
 
@@ -154,16 +157,16 @@ It does not perform IO or model calls, run tools, render output, resolve selecto
 
 ## Determinism, replay, and traces
 
-All nondeterminism is injected: time via `Event::Tick`, model output and tool results as events. The brain never reads a clock or RNG. A pure fold over a recorded stream therefore reproduces every command bit-for-bit.
+All nondeterminism is injected: time via the `Envelope` stamp on every submitted event, model output and tool results as events. The brain never reads a clock or RNG. A pure fold over a recorded stream therefore reproduces every command bit-for-bit.
 
 ```rust
 pub struct Trace {
-    meta: TraceMeta,        // trace_id, depends_on, agent name/version, created_at, question, status
-    events: Vec<Event>,     // the ordered host→brain stream, the replay INPUT
-    log: Vec<LogEntry>,     // the consolidated record stream, the truth
-    commands: Vec<Command>, // the drained command sequence
-    blobs: BlobManifest,    // refs to content-addressed payloads (not inlined)
-    policy: Option<Value>,  // opaque TurnPolicy configuration
+    meta: TraceMeta,          // trace_id, depends_on, agent name/version, created_at, question, status
+    events: Vec<Envelope>,    // the ordered, time-stamped host→brain stream, the replay INPUT
+    log: Vec<LogEntry>,       // the consolidated record stream, the truth
+    commands: Vec<Command>,   // the drained command sequence
+    blobs: BlobManifest,      // refs to content-addressed payloads (not inlined)
+    policy: Option<Value>,    // opaque TurnPolicy configuration
 }
 ```
 

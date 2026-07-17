@@ -1,15 +1,15 @@
 //! # Replay & inspection
 //!
-//! Re-feeding a trace's recorded [`Event`]s into a *fresh*
+//! Re-feeding a trace's recorded [`Envelope`]s into a *fresh*
 //! [`Brain`](huggr_core::Brain) reproduces every [`Command`] it ever emitted,
 //! with no IO.
 //!
-//! - [`replay`] re-feeds the events and returns the reconstructed commands + log.
+//! - [`replay`] re-feeds the envelopes and returns the reconstructed commands + log.
 //! - [`verify`] does that and asserts the reconstruction equals the recording.
 //! - [`Inspector`] wraps the same reconstruction so a debugger can step through
-//!   the session one event at a time.
+//!   the session one envelope at a time.
 
-use huggr_core::{Brain, Command, Event, LogEntry, PolicyRegistry, StaticPolicy, TurnPolicy};
+use huggr_core::{Brain, Command, Envelope, LogEntry, PolicyRegistry, StaticPolicy, TurnPolicy};
 
 use crate::{Trace, TraceError};
 
@@ -64,18 +64,18 @@ pub fn policy_from_trace_with_registry(
         .unwrap_or_else(|| Box::new(StaticPolicy::default()))
 }
 
-/// Fold an ordered event stream into `brain`, draining and returning every
+/// Fold an ordered envelope stream into `brain`, draining and returning every
 /// [`Command`] it emits. Both replay (which keeps the commands) and the host's
 /// resume path (which rebuilds state and discards them) drive a brain this
 /// way, so the loop lives here once.
-pub fn drive(brain: &mut Brain, events: &[Event]) -> Vec<Command> {
+pub fn drive(brain: &mut Brain, events: &[Envelope]) -> Vec<Command> {
     let mut commands = Vec::new();
-    for event in events {
-        brain.submit(event.clone());
+    for envelope in events {
+        brain.submit(envelope.clone());
         commands.extend(brain.poll());
     }
-    // A final drain in case the last event queued commands the loop above did
-    // not pick up (it always polls after each submit, but be defensive).
+    // A final drain in case the last envelope queued commands the loop above
+    // did not pick up (it always polls after each submit, but be defensive).
     commands.extend(brain.poll());
     commands
 }
@@ -159,15 +159,15 @@ fn first_divergence(recorded: &[Command], reconstructed: &[Command]) -> usize {
         .unwrap_or_else(|| recorded.len().min(reconstructed.len()))
 }
 
-/// One step of a replay: the event that was fed, the commands it produced, and
-/// the log entries it appended. The unit an [`Inspector`] yields.
+/// One step of a replay: the envelope that was fed, the commands it produced,
+/// and the log entries it appended. The unit an [`Inspector`] yields.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Step {
-    /// 0-based index of this event in the trace's `events` stream.
+    /// 0-based index of this envelope in the trace's `events` stream.
     pub index: usize,
-    /// The event fed into the brain this step.
-    pub event: Event,
+    /// The time-stamped event fed into the brain this step.
+    pub event: Envelope,
     /// The commands the brain emitted *in response to this event*.
     pub commands: Vec<Command>,
     /// The log entries appended by this event (the new tail since the last step).
@@ -180,7 +180,7 @@ pub struct Step {
 /// produced.
 pub struct Inspector {
     brain: Brain,
-    events: Vec<Event>,
+    events: Vec<Envelope>,
     index: usize,
     /// Number of log entries already reported, so each step yields only the tail.
     reported_log: usize,

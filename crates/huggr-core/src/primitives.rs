@@ -25,8 +25,8 @@ impl std::fmt::Display for OpId {
 pub struct Seq(pub u64);
 
 /// A logical timestamp. The brain **never reads a clock**; time is injected via
-/// [`Event::Tick`](crate::Event::Tick) and stamped onto log entries. The unit
-/// is host-defined (milliseconds since epoch is the conventional choice).
+/// the [`Envelope`](crate::Envelope) stamp and stamped onto log entries. The
+/// unit is host-defined (milliseconds since epoch is the conventional choice).
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]

@@ -1,8 +1,8 @@
 use wasm_bindgen::prelude::*;
 
 use huggr_core::{
-    Brain, BudgetPolicy, Command, Decision, Event, ModelOutput, ModelSelector, OpId, StaticPolicy,
-    Timestamp, TurnPolicy, Usage,
+    Brain, BudgetPolicy, Command, Decision, Envelope, Event, ModelOutput, ModelSelector, OpId,
+    StaticPolicy, Timestamp, TurnPolicy, Usage,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ use crate::{BrowserAgentConfig, browser_capabilities, browser_tool_schemas};
 pub struct HuggrWasm {
     config: BrowserAgentConfig,
     brain: Brain,
-    events: Vec<Event>,
+    events: Vec<Envelope>,
     commands: Vec<Command>,
 }
 
@@ -79,13 +79,13 @@ impl HuggrWasm {
     }
 
     pub fn submit_user_input(&mut self, text: String, now_ms: f64) -> Result<String, JsValue> {
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::UserInput {
-            est_tokens: estimate_tokens(&text),
-            content: Value::String(text),
-        });
+        self.submit(
+            now_ms,
+            Event::UserInput {
+                est_tokens: estimate_tokens(&text),
+                content: Value::String(text),
+            },
+        );
         self.poll_commands_json()
     }
 
@@ -99,15 +99,15 @@ impl HuggrWasm {
     ) -> Result<String, JsValue> {
         let output: ModelOutput = from_json(&output_json)?;
         let usage: Usage = from_json(&usage_json)?;
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::ModelDone {
-            op: op_id(op),
-            output,
-            usage,
-            est_tokens,
-        });
+        self.submit(
+            now_ms,
+            Event::ModelDone {
+                op: op_id(op),
+                output,
+                usage,
+                est_tokens,
+            },
+        );
         self.poll_commands_json()
     }
 
@@ -118,13 +118,13 @@ impl HuggrWasm {
         now_ms: f64,
     ) -> Result<String, JsValue> {
         let error: Value = from_json(&error_json)?;
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::ModelError {
-            op: op_id(op),
-            error,
-        });
+        self.submit(
+            now_ms,
+            Event::ModelError {
+                op: op_id(op),
+                error,
+            },
+        );
         self.poll_commands_json()
     }
 
@@ -136,14 +136,14 @@ impl HuggrWasm {
     ) -> Result<String, JsValue> {
         let result: Value = from_json(&result_json)?;
         let est_tokens = estimate_tokens(&result.to_string());
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::CapabilityDone {
-            op: op_id(op),
-            result,
-            est_tokens,
-        });
+        self.submit(
+            now_ms,
+            Event::CapabilityDone {
+                op: op_id(op),
+                result,
+                est_tokens,
+            },
+        );
         self.poll_commands_json()
     }
 
@@ -155,22 +155,19 @@ impl HuggrWasm {
     ) -> Result<String, JsValue> {
         let error: Value = from_json(&error_json)?;
         let est_tokens = estimate_tokens(&error.to_string());
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::CapabilityError {
-            op: op_id(op),
-            error,
-            est_tokens,
-        });
+        self.submit(
+            now_ms,
+            Event::CapabilityError {
+                op: op_id(op),
+                error,
+                est_tokens,
+            },
+        );
         self.poll_commands_json()
     }
 
     pub fn submit_op_cancelled(&mut self, op: f64, now_ms: f64) -> Result<String, JsValue> {
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::OpCancelled { op: op_id(op) });
+        self.submit(now_ms, Event::OpCancelled { op: op_id(op) });
         self.poll_commands_json()
     }
 
@@ -188,22 +185,19 @@ impl HuggrWasm {
                 reason: reason.unwrap_or_else(|| "denied by user".to_string()),
             }
         };
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::PermissionDecision {
-            op: op_id(op),
-            decision,
-            est_tokens: 8,
-        });
+        self.submit(
+            now_ms,
+            Event::PermissionDecision {
+                op: op_id(op),
+                decision,
+                est_tokens: 8,
+            },
+        );
         self.poll_commands_json()
     }
 
     pub fn abort(&mut self, now_ms: f64) -> Result<String, JsValue> {
-        self.submit(Event::Tick {
-            now: timestamp(now_ms),
-        });
-        self.submit(Event::UserAbort);
+        self.submit(now_ms, Event::UserAbort);
         self.poll_commands_json()
     }
 
@@ -277,8 +271,9 @@ fn f64_to_u64(value: f64) -> u64 {
 }
 
 impl HuggrWasm {
-    fn submit(&mut self, event: Event) {
-        self.events.push(event.clone());
-        self.brain.submit(event);
+    fn submit(&mut self, now_ms: f64, event: Event) {
+        let envelope = Envelope::new(timestamp(now_ms), event);
+        self.events.push(envelope.clone());
+        self.brain.submit(envelope);
     }
 }

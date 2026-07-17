@@ -6,57 +6,75 @@
 //! build on: a trace persisted today reconstructs the same session later.
 
 use huggr_core::{
-    Decision, Event, LogEntry, ModelOutput, OpId, Record, Seq, Timestamp, ToolCall, Usage,
+    Decision, Envelope, Event, LogEntry, ModelOutput, OpId, Record, Seq, Timestamp, ToolCall, Usage,
 };
 use huggr_replay::{BlobManifest, BlobRef, FORMAT_VERSION, Trace};
 use serde_json::json;
 
-/// A representative event stream mirroring a Phase 1/2 session:
-/// user → model (with a tool call) → tool result → model → done, with a tick,
-/// a permission decision, and streaming deltas (transport) interleaved.
-fn sample_events() -> Vec<Event> {
+/// A representative envelope stream mirroring a Phase 1/2 session:
+/// user → model (with a tool call) → tool result → model → done, with a
+/// permission decision and streaming deltas (transport) interleaved.
+fn sample_events() -> Vec<Envelope> {
     vec![
-        Event::Tick {
-            now: Timestamp(1_000),
-        },
-        Event::UserInput {
-            content: json!("run `echo hi` and tell me the output"),
-            est_tokens: 1,
-        },
-        Event::ModelDelta {
-            op: OpId(1),
-            delta: huggr_core::ModelDelta::Text("Sure, ".to_string()),
-        },
-        Event::ModelDone {
-            op: OpId(1),
-            output: ModelOutput::tool_calls(vec![ToolCall::new(
-                "call_1",
-                "shell",
-                json!({ "cmd": "echo hi" }),
-            )]),
-            usage: Usage::new(42, 8),
-            est_tokens: 8,
-        },
-        Event::PermissionDecision {
-            op: OpId(2),
-            decision: Decision::Allow,
-            est_tokens: 1,
-        },
-        Event::CapabilityChunk {
-            op: OpId(2),
-            chunk: json!("hi\n"),
-        },
-        Event::CapabilityDone {
-            op: OpId(2),
-            result: json!({ "stdout": "hi\n", "exit": 0 }),
-            est_tokens: 1,
-        },
-        Event::ModelDone {
-            op: OpId(3),
-            output: ModelOutput::text("It printed: hi"),
-            usage: Usage::new(60, 5),
-            est_tokens: 5,
-        },
+        Envelope::new(
+            Timestamp(1_000),
+            Event::UserInput {
+                content: json!("run `echo hi` and tell me the output"),
+                est_tokens: 1,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_005),
+            Event::ModelDelta {
+                op: OpId(1),
+                delta: huggr_core::ModelDelta::Text("Sure, ".to_string()),
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_010),
+            Event::ModelDone {
+                op: OpId(1),
+                output: ModelOutput::tool_calls(vec![ToolCall::new(
+                    "call_1",
+                    "shell",
+                    json!({ "cmd": "echo hi" }),
+                )]),
+                usage: Usage::new(42, 8),
+                est_tokens: 8,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_011),
+            Event::PermissionDecision {
+                op: OpId(2),
+                decision: Decision::Allow,
+                est_tokens: 1,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_015),
+            Event::CapabilityChunk {
+                op: OpId(2),
+                chunk: json!("hi\n"),
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_020),
+            Event::CapabilityDone {
+                op: OpId(2),
+                result: json!({ "stdout": "hi\n", "exit": 0 }),
+                est_tokens: 1,
+            },
+        ),
+        Envelope::new(
+            Timestamp(1_030),
+            Event::ModelDone {
+                op: OpId(3),
+                output: ModelOutput::text("It printed: hi"),
+                usage: Usage::new(60, 5),
+                est_tokens: 5,
+            },
+        ),
     ]
 }
 

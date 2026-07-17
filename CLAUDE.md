@@ -14,13 +14,13 @@ The documentation under `docs/` contains the design, architecture, and threat mo
 
 ## The one rule that matters most
 
-**`huggr-core` is sans-IO and pure.** It is a reducer: `submit(event)` folds an event into state and queues commands; `poll()` drains them. It must never do IO.
+**`huggr-core` is sans-IO and pure.** It is a reducer: `submit(envelope)` folds a time-stamped event into state and queues commands; `poll()` drains them. It must never do IO.
 
 Hard invariants:
 
 - **No environmental dependencies in `huggr-core`.** No `tokio`, no `reqwest`, no `std::fs`, no sockets, no clock, no RNG, no threads. Only pure-data crates (`serde`, `serde_json`). Verify with `cargo tree -p huggr-core`.
 - **The brain is single-threaded.** All concurrency lives in the host. The moment the brain is multithreaded, we lose sans-IO, replay, and easy bindings.
-- **All nondeterminism is injected** as events (`Tick` for time; model output, tool results, user input as events). The brain never reads a clock or RNG. This makes replay bit-for-bit deterministic.
+- **All nondeterminism is injected** (time as the `Envelope` stamp on every submitted event; model output, tool results, user input as events). The brain never reads a clock or RNG. This makes replay bit-for-bit deterministic.
 - **The log is the source of truth.** `BrainState` is a *fold* over the log and must stay rebuildable from it. Don't add un-derived state.
 - **Deltas are transport, never durable.** `ModelDelta`/`CapabilityChunk` feed live op buffers but are *never* written to the log. One consolidated `Record` is appended per logical message/tool-result.
 - **Streaming is the only model mode.** Adapters stream deltas live via the sink and return the consolidated output; there is no non-streaming path.

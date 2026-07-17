@@ -82,7 +82,7 @@ fn user_model_tool_model_done() {
 #[test]
 fn wrong_kind_and_mid_turn_events_are_ignored() {
     let mut brain = Brain::with_default_policy();
-    brain.submit(user("first"));
+    brain.submit(stamp(user("first")));
     let start = brain.poll();
     assert!(matches!(
         start.as_slice(),
@@ -90,18 +90,18 @@ fn wrong_kind_and_mid_turn_events_are_ignored() {
     ));
     let baseline = brain.state().log().len();
 
-    brain.submit(Event::CapabilityDone {
+    brain.submit(stamp(Event::CapabilityDone {
         op: OpId(0),
         result: json!({ "wrong": true }),
         est_tokens: 1,
-    });
-    brain.submit(user("must not be stranded"));
-    brain.submit(Event::ModelDone {
+    }));
+    brain.submit(stamp(user("must not be stranded")));
+    brain.submit(stamp(Event::ModelDone {
         op: OpId(99),
         output: text_output("stale"),
         usage: usage(),
         est_tokens: 1,
-    });
+    }));
 
     assert_eq!(brain.state().log().len(), baseline);
     assert_eq!(brain.state().inflight_len(), 1);
@@ -343,7 +343,7 @@ fn projection_includes_tools_and_history() {
         .with_tools(tools);
     let mut brain = Brain::new(Box::new(policy));
 
-    brain.submit(user("hello"));
+    brain.submit(stamp(user("hello")));
     let commands = brain.poll();
 
     let Command::StartModelCall { model, request, .. } = &commands[0] else {

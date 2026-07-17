@@ -774,9 +774,9 @@ async fn run_chunked(answer: &str, chunk_size: usize) -> (Vec<huggr_core::LogEnt
 }
 
 /// Keep only the *logical* records (user/model/tool) — the consolidated content
-/// the durable trace is about. (`OpEnded` carries timestamps whose count tracks
-/// the number of injected ticks, which differs with delta count; the consolidated
-/// records do not, and they are what replay keys off.)
+/// the durable trace is about. (`OpEnded` carries timestamps that depend on how
+/// many envelopes advanced the clock, which differs with delta count; the
+/// consolidated records do not, and they are what replay keys off.)
 fn logical_records(log: &[huggr_core::LogEntry]) -> Vec<Record> {
     log.iter()
         .filter(|e| {
@@ -1233,15 +1233,13 @@ async fn resume_after_crash_starts_quiescent() {
     // Craft a "crashed" trace by hand: a recorded user turn whose model call
     // never completed. Folding these events leaves the model op in flight —
     // exactly what a checkpoint written mid-call would contain.
-    let events = vec![
-        huggr_core::Event::Tick {
-            now: huggr_core::Timestamp(1),
-        },
+    let events = vec![huggr_core::Envelope::new(
+        huggr_core::Timestamp(1),
         huggr_core::Event::UserInput {
             content: json!("start then crash"),
             est_tokens: 5,
         },
-    ];
+    )];
     let saved = huggr_host::Trace::new(events, Vec::new(), Some(1));
 
     let capture = Capture::default();
