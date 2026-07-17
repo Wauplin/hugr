@@ -12,7 +12,7 @@ huggr/
 │   ├── huggr-agent/         # huglet runtime: Ask/Answer/Feedback, storage backends (trace/blob/scratch),
 │   │                       #   resume/fork, blob exchange, limits, cost accounting, agent-as-tool
 │   ├── huggr-toolkit/       # agent crate manifests (huggr.toml + SYSTEM.md), the tool library, the `huggr` CLI
-│   │                       #   (new/run/build/traces/replay/verify), and the language-surface generators
+│   │                       #   (new/run/build/traces/stats/replay/verify), and the language-surface generators
 │   ├── huggr-wasm/          # generic WASM bindings around huggr-core for browser/JS hosts: submit/poll over
 │   │                       #   JSON, AgentSession + verify_trace_json, browser tool schemas
 │   └── huggr-python/        # PyO3 runtime embedding: define agents/tools in Python on the same runtime

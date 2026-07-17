@@ -72,7 +72,7 @@ cargo run -p huggr-toolkit --bin huggr -- run examples/huglet-docs ./docs "What 
   "status": "success",
   "response": {
     "response": "The narrow-waist rule is ...",
-    "related_documents": [{ "path": "docs/README.md", "url": "https://huggingface.co/docs/docs/README" }]
+    "related_documents": [{ "path": "README.md", "url": "https://github.com/Wauplin/huggr/blob/main/docs/README.md" }]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
   "metadata": { "duration_ms": 1234, "tokens_in": 1000, "tokens_out": 200, "cost_micro_usd": 1300, "models": ["zai-org/GLM-5.2:together"], "model_calls": 2, "tool_calls": 3 }
@@ -101,11 +101,11 @@ loop {
         host.perform(cmd);
     }
     let event = host.next_event().await;  // the only await; host-side only
-    brain.submit(event);             // pure, instant, no IO
+    brain.submit(Envelope::new(host.now(), event)); // pure, instant, no IO
 }
 ```
 
-All nondeterminism (time, model output, tool results) is injected as events, so any session replays bit-for-bit. A trace is the durable log; resume re-folds it, a fork copies a prefix, and cost is computed from per-op metadata in it. This is what lets the same brain run natively, in Python, and in the browser.
+All nondeterminism (time, model output, tool results) is injected through time-stamped events, so any session replays bit-for-bit. A trace stores that replay input plus the consolidated durable log and emitted commands. Resume re-folds the log, a fork copies a prefix, and cost is computed from per-op metadata in it. This is what lets the same brain run natively, in Python, and in the browser.
 
 ## What Huggr is not
 
@@ -125,7 +125,7 @@ huggr/
 │   ├── huggr-providers/     # OpenAI-compatible streaming model adapter
 │   ├── huggr-replay/        # trace format, content-addressed blob store, replay/verify/inspect
 │   ├── huggr-agent/         # huglet runtime: Ask/Answer, resume/fork, scratchpad, blobs, limits, cost
-│   ├── huggr-toolkit/       # manifests, the tool library, and the `huggr` CLI (new/run/build/traces/replay/verify)
+│   ├── huggr-toolkit/       # manifests, the tool library, and the `huggr` CLI (new/run/build/traces/stats/replay/verify)
 │   ├── huggr-wasm/          # WASM bindings around huggr-core for browser/JS hosts
 │   └── huggr-python/        # PyO3 runtime embedding (built by maturin from bindings/python)
 ├── bindings/

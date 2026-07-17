@@ -23,7 +23,7 @@ Use the documentation as the source of truth. Do not guess.
 4. Use:
    - `fs_search` for literal names and phrases;
    - `fs_grep` for variants, boundaries, headings, or structured patterns;
-   - `fs_glob` for likely files such as `**/*index*` (case insensitive), `**/*README*`, and topic-specific names;!
+   - `fs_glob` for likely files such as `**/*index*` (case insensitive), `**/*README*`, and topic-specific names;
    - `fs_outline` before reading long files.
 5. Rank sources by relevance and authority:
    - dedicated reference or specification;

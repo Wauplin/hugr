@@ -257,7 +257,7 @@ await agent.verify(traceId);   // replays bit-for-bit; throws on drift
 
 `examples/chrome-extension/` is one concrete browser host. It currently vendors the *plain-JS* extension host modules (`agent_driver.js`, `openai_adapter.js`, `indexed_db.js`) rather than the typed `huggr-agents` package; the typed package is the same driver factored into typed TS, and the example is migrating onto it. The wiring is still instructive for the platform pieces:
 
-- `host.js` assembles a host object (`loadWasm`, `invokeCapability`, settings, system prompt); the same five-key shape the typed `AgentRuntime` formalizes.
+- `host.js` assembles the legacy plain-JavaScript driver's host object (`loadWasm`, `invokeCapability`, settings storage, session storage, system prompt, and optional defaults). The typed package uses the narrower `AgentRuntime` storage and environment interface shown above and takes tools and system text from `AgentConfig`.
 - `chrome_api.js` is the capability dispatcher: one `switch` on tool name mapping `tabs_list`, `page_snapshot`, `page_click`, `file_download_url`, … onto `chrome.*` calls. Unknown names throw, routing back to the model as a tool error.
 - The manifest needs `content_security_policy.extension_pages` with `'wasm-unsafe-eval'` (required to instantiate the WASM brain), and the build vendors the generic modules because extensions can only load modules from inside their own folder.
 

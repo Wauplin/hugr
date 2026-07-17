@@ -1,6 +1,6 @@
 # huglet-docs
 
-`huglet-docs` is the checked-in reference documentation-retrieval agent crate. `huggr.toml` and `SYSTEM.md` live at the crate root beside the tiny Rust module that owns the typed `DocsResponse` contract. Its manifest also declares the standard `skills/source-citation/SKILL.md`; Huggr puts that skill's metadata in the system context and loads its instructions through `skill_read` when the task matches. `huggr-toolkit` does not depend on `huglet-docs`; generic `huggr run` works by compiling a cached dev shim that links this crate, matching the built-binary path.
+`huglet-docs` is the checked-in reference documentation-retrieval agent crate. `huggr.toml` and `SYSTEM.md` live at the crate root beside the tiny Rust module that owns the typed `DocsResponse` contract. `huggr-toolkit` does not depend on `huglet-docs`; generic `huggr run` works by compiling a cached dev shim that links this crate, matching the built-binary path.
 
 ## Usage
 
@@ -25,7 +25,7 @@ The output is the standard Huggr `Answer` JSON:
   "status": "success",
   "response": {
     "response": "...",
-    "related_documents": [{ "path": "docs/README.md", "url": "https://huggingface.co/docs/docs/README" }]
+    "related_documents": [{ "path": "README.md", "url": "https://github.com/Wauplin/huggr/blob/main/docs/README.md" }]
   },
   "trace_id": "1e4f7d0a9b2c3d44",
   "blobs": [],
@@ -54,7 +54,7 @@ Because the agent folder is also the Rust crate, `huggr run` and `huggr build` i
 
 ```toml
 [tools.fs_read]
-root = "."
+root = [{ name = "docs", path = "." }]
 
 [runtime.args.docs_path]
 target = "tools.fs_read.root"
@@ -65,6 +65,8 @@ help = "Folder containing the documentation to search."
 ```
 
 The toolkit uses that block to generate the CLI argument and the MCP `ask` schema. For MCP, `docs_path` is an `ask` argument, so one long-running server can answer against different docs folders on different calls.
+
+The retrieval jail accepts any documentation folder, but the example's deterministic answer hook maps cited paths to the public Huggr repository under `docs/`. Change `HUGGR_DOCS_BASE` or the hook when adapting this crate to another corpus.
 
 ## Tooling Model
 

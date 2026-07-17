@@ -24,11 +24,13 @@ Rust, Python, and TypeScript event streams use the same nine events, tagged by a
 
 A successful stream starts with `ask_started` and ends with `answer_ready`; an infrastructure failure can end after a `notice`. The `op` id correlates a start, its deltas, and its end, so an interleaved display can attribute every chunk. Tool args and results are the same opaque JSON the model saw; the events add no interpretation.
 
-## Where events come from, and where they do not go
+## Where events come from, and what is durable
 
-Events are host-layer observations. The brain already emits its command stream; the host's frontend hooks translate op lifecycle into `AgentEvent`s as they happen, and plain `ask()` uses a silent frontend that drops them all, producing an identical trace either way.
+`AgentEvent` values are host-layer observations. The brain already emits its command stream; the host's frontend hooks translate op lifecycle into `AgentEvent`s as they happen, and plain `ask()` uses a silent frontend that drops them all, producing an identical trace either way.
 
-That last clause is the design point: **events are never written to the trace.** The durable log records one consolidated entry per model output or tool result; per-token deltas are transport, discarded once consolidated. Watching a stream costs nothing in trace size, and replay does not replay deltas. If you need to reconstruct what happened after the fact, read the trace ([Inspect, replay, and verify traces](../guides/inspect-traces.md)); if you need to watch it live, subscribe to events. The two views never disagree about content, they differ in granularity and lifetime.
+The distinction is between the live `AgentEvent` view and the core event stream. `AgentEvent` values are not stored. The trace does store every time-stamped host-to-brain `Envelope`, including `ModelDelta` and `CapabilityChunk`, because those envelopes are the replay input. Replay re-feeds them and verifies the resulting commands and log. The durable log remains compact: deltas and chunks never become `Record`s, and each completed model output or tool result produces one consolidated entry.
+
+Watching through `ask_events`, `run(...)`, or `--stream` does not add anything to the trace. If you need to reconstruct the durable content and replay sequence after the fact, read the trace ([Inspect, replay, and verify traces](../guides/inspect-traces.md)); if you need the normalized UI lifecycle while the ask runs, subscribe to `AgentEvent`s.
 
 ## CLI: `--stream`
 
@@ -83,7 +85,7 @@ TypeScript's `AgentEvent` is a discriminated union on `type` with the identical 
 
 ## Limitations
 
-- Events are ephemeral by design. Nothing stores them; a consumer that wants history must build it from the trace, which holds the consolidated records but not per-token timing.
+- `AgentEvent` values are ephemeral by design. A trace stores the underlying time-stamped core envelopes and consolidated records, but not the normalized `ask_started` through `answer_ready` stream.
 - The stream observes; it does not control. There is no event-level cancel or reply channel; aborting an ask is the caller's process-level concern.
 - `tool_ended` carries the full result payload, which can be large; a UI should truncate for display rather than assume small events.
 - MCP callers get no events: the MCP `ask` returns once, when the answer is ready ([Serve and consume MCP](../guides/mcp.md)).

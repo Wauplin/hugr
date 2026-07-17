@@ -76,7 +76,7 @@ Sync and async tools are interchangeable from the agent's perspective, so choose
 
 ### The `requires_permission` and `background` flags
 
-`requires_permission=True` marks a tool as gated in the brain's recorded control flow; the current native host approves registered tools automatically. `background=True` marks a tool as fire-and-forget, so the result is not fed back to the model. Both are advanced flags for specific trust models; leave them at their defaults (`False`) for this tutorial.
+`requires_permission=True` marks a tool as gated in the brain's recorded control flow; the current native host approves registered tools automatically. `background=True` lets the model continue while the tool runs. The result is still folded into the conversation at the next turn boundary. Both are advanced flags for specific trust models; leave them at their defaults (`False`) for this tutorial.
 
 ## Assemble the agent
 
@@ -280,7 +280,7 @@ A trace written by a Python agent is a plain JSON file in the standard Huggr for
 
 Python runtime embedding is especially useful when the capabilities the agent needs already live in a Python SDK or data stack. This optional example gives a subscription-retention agent controlled access to a pandas `DataFrame`: pandas does the deterministic filtering and arithmetic, while the model explains the result and recommends follow-up actions. The same pattern works with a warehouse client, analytics SDK, notebook library, or an internal Python package without putting those implementation details into Huggr core.
 
-Pydantic is not required by Huggr, and it is not the default choice for a small agent: the raw schema and standard-library dataclass pattern above has no extra dependency and stays very transparent. Use Pydantic here when the surrounding application already depends on it, or when generated JSON Schema and stricter runtime validation outweigh another dependency. `TypeAdapter.json_schema()` produces the explicit schema that Huggr advertises to the model, and `TypeAdapter.validate_python()` validates decoded tool arguments before the callable uses them. Huggr does not depend on Pydantic or infer schemas from Python annotations; this is application code choosing Pydantic as its schema generator.
+Pydantic is not required by Huggr, and it is not the default choice for a small agent: the raw schema and standard-library dataclass pattern above has no extra dependency and stays very transparent. Use Pydantic here when the surrounding application already depends on it, or when generated JSON Schema and stricter runtime validation outweigh another dependency. `TypeAdapter.json_schema()` produces the explicit schema that Huggr advertises to the model, and `TypeAdapter.validate_python()` validates decoded tool arguments before the callable uses them. Huggr's decorator infers simple tool schemas from supported annotations, but it does not depend on Pydantic or infer nested Pydantic contracts automatically; this example passes the generated schema explicitly.
 
 If you choose this variant, install its application dependencies next to `huggr-agents`:
 

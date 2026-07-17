@@ -13,10 +13,6 @@ Reference pages describe the supported contracts, configuration, packages, and t
 - [Python runtime package](../../bindings/python/README.md): the `huggr-agents` Python API.
 - [TypeScript runtime package](../../bindings/typescript/README.md): the `huggr-agents` TypeScript API and entry points.
 
-## Landscape
-
-- [Agent framework comparison](framework-comparison.md): CrewAI, LangChain/LangGraph plus LangSmith, eve, and the prioritized capabilities Huggr is missing.
-
 ## Terminology and status
 
 - [Glossary and open questions](glossary.md): core terms, naming, and unresolved design work.

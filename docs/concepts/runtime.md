@@ -34,7 +34,7 @@ Most harness pain traces back to conflating four things that should be separate:
 
 These separations provide the following behavior:
 
-- **Trace = the log made durable.** `trace_id` names the saved file.
+- **Trace = replay input and derived history made durable.** `trace_id` names a file containing the time-stamped input events, emitted commands, and consolidated log.
 - **Resume = re-fold a trace.** Resume performs no IO beyond reading the file and makes no model calls, so it is immediate.
 - **Fork = copy a log prefix.** Sibling explorations share a prefix and diverge.
 - **Sandbox = what the host registers.** "This agent has no shell" is a fact about registration, not a policy hope.
