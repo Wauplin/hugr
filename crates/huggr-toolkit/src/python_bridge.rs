@@ -1,5 +1,6 @@
 //! Signal-aware PyO3 bridge shared by Huggr's Python surfaces.
 
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,19 +14,47 @@ fn runtime_err(message: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(message.to_string())
 }
 
+/// A Tokio runtime whose final release never waits for blocking work while Python holds the GIL.
+pub struct BridgeRuntime(Option<tokio::runtime::Runtime>);
+
+impl BridgeRuntime {
+    pub fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self(Some(runtime))
+    }
+}
+
+impl Deref for BridgeRuntime {
+    type Target = tokio::runtime::Runtime;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("bridge runtime is available")
+    }
+}
+
+impl Drop for BridgeRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            // PyO3 drops #[pyclass] values with the GIL held. A cancelled Python
+            // capability may still occupy spawn_blocking and need that GIL to
+            // return, so Runtime::drop would deadlock waiting for it here.
+            runtime.shutdown_background();
+        }
+    }
+}
+
 /// A blocking pull of one ask's events with prompt Python signal handling.
 #[pyclass]
 pub struct EventStream {
     rx: Mutex<UnboundedReceiver<AgentEvent>>,
     handle: Mutex<Option<JoinHandle<Result<Answer, String>>>>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    runtime: Arc<BridgeRuntime>,
 }
 
 impl EventStream {
     pub fn new(
         rx: UnboundedReceiver<AgentEvent>,
         handle: JoinHandle<Result<Answer, String>>,
-        runtime: Arc<tokio::runtime::Runtime>,
+        runtime: Arc<BridgeRuntime>,
     ) -> Self {
         Self {
             rx: Mutex::new(rx),
