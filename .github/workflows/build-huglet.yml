@@ -114,9 +114,11 @@ jobs:
           if [[ -n "$MODELS_FILE" ]]; then
             cp "$MODELS_FILE" "$huggr_home/models.toml"
           fi
-          echo "huggr_home=$huggr_home" >> "$GITHUB_OUTPUT"
-          echo "build_dir=$build_dir" >> "$GITHUB_OUTPUT"
-          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+          {
+            echo "huggr_home=$huggr_home"
+            echo "build_dir=$build_dir"
+            echo "artifact_dir=$artifact_dir"
+          } >> "$GITHUB_OUTPUT"
       - name: Build huglet
         env:
           AGENT_DIR: ${{ steps.inputs.outputs.agent_dir }}
@@ -160,7 +162,9 @@ jobs:
             cp "$wheel" "$ARTIFACT_DIR/python/"
           done < <(find "$BUILD_DIR" -path '*-python/target/wheels/*.whl' -type f -print)
           find "$ARTIFACT_DIR" -type d -empty -delete
-          (cd "$ARTIFACT_DIR" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          checksums=$(mktemp)
+          (cd "$ARTIFACT_DIR" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$checksums"
+          mv "$checksums" "$ARTIFACT_DIR/SHA256SUMS"
       - id: upload
         name: Upload huglet artifact
         uses: actions/upload-artifact@v4
