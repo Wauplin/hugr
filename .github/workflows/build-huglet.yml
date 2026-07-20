@@ -1,0 +1,171 @@
+name: Build a Huggr huglet
+
+on:
+  workflow_call:
+    inputs:
+      agent_dir:
+        description: Repository-relative folder containing huggr.toml
+        required: false
+        default: .
+        type: string
+      huggr_version:
+        description: Exact published huggr-toolkit version
+        required: true
+        type: string
+      surfaces:
+        description: cli, python, or cli,python
+        required: false
+        default: cli
+        type: string
+      release:
+        description: Build optimized release artifacts
+        required: false
+        default: true
+        type: boolean
+      models_file:
+        description: Optional repository-relative models.toml to embed
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        description: Name of the uploaded GitHub artifact
+        required: false
+        default: huglet
+        type: string
+      retention_days:
+        description: Number of days GitHub retains the build artifact
+        required: false
+        default: 14
+        type: number
+    outputs:
+      artifact_name:
+        description: Uploaded artifact name
+        value: ${{ jobs.build.outputs.artifact_name }}
+      artifact_url:
+        description: URL of the uploaded artifact
+        value: ${{ jobs.build.outputs.artifact_url }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    outputs:
+      artifact_name: ${{ inputs.artifact_name }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        if: contains(inputs.surfaces, 'python')
+        with:
+          python-version: "3.12"
+      - id: inputs
+        name: Validate build inputs
+        env:
+          AGENT_DIR: ${{ inputs.agent_dir }}
+          HUGGR_VERSION: ${{ inputs.huggr_version }}
+          MODELS_FILE: ${{ inputs.models_file }}
+          SURFACES: ${{ inputs.surfaces }}
+        run: |
+          if [[ ! "$HUGGR_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "huggr_version must be an exact MAJOR.MINOR.PATCH version" >&2
+            exit 1
+          fi
+          case "$SURFACES" in
+            cli|python|cli,python|python,cli) ;;
+            *) echo "surfaces must be cli, python, or cli,python" >&2; exit 1 ;;
+          esac
+          agent_dir=$(realpath "$AGENT_DIR")
+          case "$agent_dir/" in
+            "$GITHUB_WORKSPACE"/*) ;;
+            *) echo "agent_dir must resolve inside the checked-out repository" >&2; exit 1 ;;
+          esac
+          test -f "$agent_dir/Cargo.toml"
+          test -f "$agent_dir/huggr.toml"
+          echo "agent_dir=$agent_dir" >> "$GITHUB_OUTPUT"
+          if [[ -n "$MODELS_FILE" ]]; then
+            models_file=$(realpath "$MODELS_FILE")
+            case "$models_file" in
+              "$GITHUB_WORKSPACE"/*) ;;
+              *) echo "models_file must resolve inside the checked-out repository" >&2; exit 1 ;;
+            esac
+            test -f "$models_file"
+            echo "models_file=$models_file" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install huggr-toolkit
+        env:
+          HUGGR_VERSION: ${{ inputs.huggr_version }}
+        run: cargo install huggr-toolkit --version "=$HUGGR_VERSION" --locked --registry crates-io
+      - name: Install Python surface builder
+        if: contains(inputs.surfaces, 'python')
+        run: python -m pip install --disable-pip-version-check maturin
+      - id: paths
+        name: Prepare isolated build directories
+        env:
+          MODELS_FILE: ${{ steps.inputs.outputs.models_file }}
+        run: |
+          huggr_home="$RUNNER_TEMP/huggr-home"
+          build_dir="$RUNNER_TEMP/huggr-build"
+          artifact_dir="$RUNNER_TEMP/huggr-artifact"
+          mkdir -p "$huggr_home" "$build_dir" "$artifact_dir/bin" "$artifact_dir/config" "$artifact_dir/python"
+          if [[ -n "$MODELS_FILE" ]]; then
+            cp "$MODELS_FILE" "$huggr_home/models.toml"
+          fi
+          echo "huggr_home=$huggr_home" >> "$GITHUB_OUTPUT"
+          echo "build_dir=$build_dir" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+      - name: Build huglet
+        env:
+          AGENT_DIR: ${{ steps.inputs.outputs.agent_dir }}
+          BUILD_DIR: ${{ steps.paths.outputs.build_dir }}
+          HUGGR_HOME: ${{ steps.paths.outputs.huggr_home }}
+          RELEASE: ${{ inputs.release }}
+          SURFACES: ${{ inputs.surfaces }}
+        run: |
+          args=(build "$AGENT_DIR" --out "$BUILD_DIR" --surface "$SURFACES")
+          if [[ "$RELEASE" == "true" ]]; then
+            args+=(--release)
+          fi
+          huggr "${args[@]}"
+      - name: Collect and inspect artifacts
+        env:
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+          BUILD_DIR: ${{ steps.paths.outputs.build_dir }}
+          HUGGR_HOME: ${{ steps.paths.outputs.huggr_home }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          profile=debug
+          if [[ "$RELEASE" == "true" ]]; then
+            profile=release
+          fi
+          cli_dir=$(find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -type d -name '*-cli' -print -quit)
+          if [[ -z "$cli_dir" ]]; then
+            echo "generated CLI crate was not found" >&2
+            exit 1
+          fi
+          binary_name=$(basename "$cli_dir")
+          binary_name=${binary_name%-cli}
+          binary="$cli_dir/target/$profile/$binary_name"
+          if [[ ! -x "$binary" ]]; then
+            echo "built CLI binary was not found" >&2
+            exit 1
+          fi
+          cp "$binary" "$ARTIFACT_DIR/bin/"
+          "$binary" --describe > "$ARTIFACT_DIR/config/agent-card.json"
+          "$binary" --config > "$ARTIFACT_DIR/config/effective-config.json"
+          while IFS= read -r wheel; do
+            cp "$wheel" "$ARTIFACT_DIR/python/"
+          done < <(find "$BUILD_DIR" -path '*-python/target/wheels/*.whl' -type f -print)
+          find "$ARTIFACT_DIR" -type d -empty -delete
+          (cd "$ARTIFACT_DIR" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - id: upload
+        name: Upload huglet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ steps.paths.outputs.artifact_dir }}
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error

@@ -25,6 +25,19 @@ class ReleaseTest(unittest.TestCase):
             for name in release.CRATES:
                 self.assertIn(f'{name} = {{ version = "=1.2.3",', rendered)
 
+    def test_set_updates_the_downstream_workflow_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "examples/workflows").mkdir(parents=True)
+            (root / "Cargo.toml").write_bytes((release.ROOT / "Cargo.toml").read_bytes())
+            template = release.ROOT / "examples/workflows/release-huglet.yml"
+            target = root / "examples/workflows/release-huglet.yml"
+            target.write_bytes(template.read_bytes())
+            release.set_version("1.2.3", root)
+            rendered = target.read_text()
+            self.assertIn("build-huglet.yml@v1.2.3", rendered)
+            self.assertIn("huggr_version: 1.2.3", rendered)
+
     def test_rejects_non_release_versions(self) -> None:
         with self.assertRaises(ValueError):
             release.next_version("1.2.3-beta.1", "patch")

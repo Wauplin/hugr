@@ -79,6 +79,23 @@ def set_version(version: str, root: Path = ROOT) -> None:
         detail = ", ".join(sorted(missing)) if missing else "workspace version"
         raise ValueError(f"release version fields are missing: {detail}")
     path.write_text("".join(rendered))
+    template = root / "examples/workflows/release-huglet.yml"
+    if template.exists():
+        contents = template.read_text()
+        contents, ref_count = re.subn(
+            r"(Wauplin/huggr/\.github/workflows/build-huglet\.yml@v)[0-9]+\.[0-9]+\.[0-9]+",
+            rf"\g<1>{version}",
+            contents,
+        )
+        contents, input_count = re.subn(
+            r"(^      huggr_version: )[0-9]+\.[0-9]+\.[0-9]+$",
+            rf"\g<1>{version}",
+            contents,
+            flags=re.MULTILINE,
+        )
+        if ref_count != 1 or input_count != 1:
+            raise ValueError("downstream release template has unexpected version fields")
+        template.write_text(contents)
 
 
 def check(root: Path = ROOT) -> list[str]:
@@ -96,6 +113,14 @@ def check(root: Path = ROOT) -> list[str]:
             errors.append(f"{name} does not inherit the workspace version")
         if 'publish = ["crates-io"]' not in manifest:
             errors.append(f"{name} is not restricted to crates.io publication")
+
+    downstream = root / "examples/workflows/release-huglet.yml"
+    if downstream.exists():
+        contents = downstream.read_text()
+        if f"build-huglet.yml@v{version}" not in contents:
+            errors.append("downstream release template does not pin the workspace release tag")
+        if f"huggr_version: {version}" not in contents:
+            errors.append("downstream release template does not install the workspace release")
 
     sync_pairs = (
         ("examples/huglet-weather/Cargo.toml", "crates/huggr-toolkit/assets/weather-template/Cargo.toml.txt"),

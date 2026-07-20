@@ -1,0 +1,46 @@
+name: Release huglet
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Huglet release version without a leading v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    uses: Wauplin/huggr/.github/workflows/build-huglet.yml@v0.0.2
+    with:
+      agent_dir: .
+      huggr_version: 0.0.2
+      surfaces: cli
+      release: true
+      artifact_name: huglet
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: dist
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "version must be MAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          mapfile -d '' assets < <(find dist -type f -print0)
+          gh release create "v${VERSION}" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "v${VERSION}"
