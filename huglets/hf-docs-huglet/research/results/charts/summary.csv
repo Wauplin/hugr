@@ -1,0 +1,2 @@
+variant,created_at,dataset,split,accuracy,mean_score,grounded_rate,citation_recall,cost_usd_per_question,latency_p50_ms,latency_p95_ms,failed
+baseline-v0.1.0,2026-07-20T16:18:15.407716+00:00,hf-docs-v1,test,0.6666666666666666,3.0,0.5555555555555556,0.8888888888888888,0.026306555555555555,3294,5571,0

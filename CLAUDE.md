@@ -87,6 +87,7 @@ examples/hf-librarian/  # Python-surface pipeline: datasmith wheel → jailed Hu
                         #   publisher → judge-graded eval of huglet-docs
 examples/chrome-extension/ # a concrete browser host: chrome.* capabilities,
                         #   side-panel UI, MV3 manifest (vendors the generic JS)
+huglets/hf-docs-huglet/  # production HF docs assistant + fixed-dataset research harness
 .agents/skills/          # concise coding-agent workflows for building Huggr agents,
                         #   language/browser surfaces, and trace debugging
 ```

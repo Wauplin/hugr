@@ -1,0 +1,17 @@
+[agent]
+name = "hf-docs-huglet"
+version = "0.1.0"
+description = "Answers questions from a read-only Hugging Face documentation dump."
+
+[models]
+default = "balanced"
+
+[tools.fs_read]
+root = [{ name = "docs", path = "." }]
+
+[runtime.args.docs_path]
+target = "tools.fs_read.root"
+positional = true
+required = true
+env = "HF_DOCS_PATH"
+help = "Folder containing the Hugging Face documentation dump to search."

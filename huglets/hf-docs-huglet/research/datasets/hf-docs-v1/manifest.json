@@ -1,0 +1,92 @@
+{
+  "counts": {
+    "by_difficulty": {
+      "advanced": 10,
+      "basic": 10,
+      "intermediate": 10
+    },
+    "test": 9,
+    "total": 30,
+    "train": 21
+  },
+  "created_at": "2026-07-20T15:59:49.029445+00:00",
+  "dataset_sha256": "bdaaa3f37ff95eaf6cd82bdac54bb829fdd85d376f235e6db569c172ae0d866e",
+  "docs": {
+    "markdown_files": 579,
+    "sha256": "92dfe88356de3208aec41d53a3ff2f2a8e8da39b35ee02f74a64ad4f4602a9d7"
+  },
+  "generation": {
+    "cost_micro_usd": 536444,
+    "model_tier": "powerful",
+    "traces": [
+      {
+        "attempt": 1,
+        "batch": 1,
+        "count": 5,
+        "difficulty": "basic",
+        "ok": true,
+        "trace_id": "619547e4411f688a"
+      },
+      {
+        "attempt": 1,
+        "batch": 2,
+        "count": 5,
+        "difficulty": "basic",
+        "ok": true,
+        "trace_id": "c1f953e1c187aa73"
+      },
+      {
+        "attempt": 1,
+        "batch": 1,
+        "count": 5,
+        "difficulty": "intermediate",
+        "ok": true,
+        "trace_id": "2afbafa4421d3cb3"
+      },
+      {
+        "attempt": 1,
+        "batch": 2,
+        "count": 5,
+        "difficulty": "intermediate",
+        "ok": true,
+        "trace_id": "1ae32086f916f414"
+      },
+      {
+        "attempt": 1,
+        "batch": 1,
+        "count": 5,
+        "difficulty": "advanced",
+        "ok": true,
+        "trace_id": "040786709ce2370a"
+      },
+      {
+        "attempt": 2,
+        "batch": 1,
+        "count": 5,
+        "difficulty": "advanced",
+        "ok": true,
+        "trace_id": "f6994c1c9f96828a"
+      },
+      {
+        "attempt": 1,
+        "batch": 2,
+        "count": 5,
+        "difficulty": "advanced",
+        "ok": true,
+        "trace_id": "0fa6de59bd447fd7"
+      },
+      {
+        "attempt": 1,
+        "batch": 2,
+        "count": 5,
+        "difficulty": "basic",
+        "ok": true,
+        "trace_id": "dc9f893ac4fbc0fc"
+      }
+    ]
+  },
+  "name": "hf-docs-v1",
+  "schema_version": 1,
+  "seed": "hf-docs-v1",
+  "test_fraction": 0.3
+}

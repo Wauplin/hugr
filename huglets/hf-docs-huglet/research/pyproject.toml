@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hf-docs-huglet-research"
+version = "0.1.0"
+description = "Reproducible dataset generation, evaluation, and reporting for hf-docs-huglet."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["matplotlib>=3.8"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+hf-docs-research = "hf_docs_research.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hf_docs_research"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
