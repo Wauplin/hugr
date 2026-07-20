@@ -12,6 +12,7 @@ members = [
     "examples/huglet-docs",
     "examples/huglet-insights",
     "examples/huglet-weather",
+    "huglets/hf-docs-huglet",
 ]
 # The PyO3 embedding crate needs a Python toolchain; it builds via maturin
 # (bindings/python), never via `cargo test --workspace`.

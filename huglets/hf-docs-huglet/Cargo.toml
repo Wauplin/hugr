@@ -1,0 +1,18 @@
+[package]
+name = "hf-docs-huglet"
+description = "Typed response contract for the Hugging Face documentation huglet."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "hf_docs_huglet"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+huggr-agent = { workspace = true }

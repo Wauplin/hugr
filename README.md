@@ -139,6 +139,8 @@ huggr/
 │   ├── huglet-datasmith/     # docs-QA dataset synthesizer with a typed QaDataset contract
 │   ├── hf-librarian/       # Python pipeline: datasmith wheel, jailed Hub publisher, judge-graded eval
 │   └── chrome-extension/   # a concrete browser host: chrome.* capabilities, side-panel UI, MV3
+├── huglets/
+│   └── hf-docs-huglet/     # production HF docs assistant with fixed-dataset research and evaluation tooling
 └── docs/                   # tutorials, task guides, concepts, and reference
 ```
 

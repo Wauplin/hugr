@@ -31,9 +31,14 @@ huggr/
 │   │                       #   publisher, and a judge-graded eval of huglet-docs
 │   └── chrome-extension/   # a concrete browser host: chrome.* capability dispatcher, side-panel UI,
 │                           #   MV3 manifest; vendors the generic JS at build time
+├── huglets/
+│   └── hf-docs-huglet/     # production HF docs assistant with immutable datasets, evaluation results,
+│                           #   and quality/cost/latency comparison charts
 ├── docs/                   # tutorials, task guides, concepts, and reference
 └── .agents/skills/         # coding-agent cheat sheets kept in sync with the docs
 ```
+
+`examples/` contains self-contained teaching projects. `huglets/` contains agents for real workloads and may include operational data-generation, evaluation, and research tooling alongside the agent crate.
 
 **`huggr-core` depends on nothing environmental.** Verify this with `cargo tree -p huggr-core`.
 

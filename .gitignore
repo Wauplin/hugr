@@ -5,6 +5,7 @@ crates/huggr-python/target
 # Python (bindings/python)
 .venv/
 __pycache__/
+.pytest_cache/
 *.egg-info/
 *.so
 Cargo.lock.orig
@@ -35,5 +36,12 @@ examples/chrome-extension/vendor/
 # Built agent surfaces and pipeline artifacts (examples)
 examples/*/dist/
 examples/hf-librarian/qa.jsonl
+
+# Local Hugging Face documentation dumps (refreshed independently of this repo)
+/hf-dump-light.tar
+/hf-dump-full.tar
+/hf-dump-light/
+/hf-dump-full/
+/huglets/hf-docs-huglet/research/datasets/.*.generation.json
 
 dev/
